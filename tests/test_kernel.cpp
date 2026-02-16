@@ -211,6 +211,45 @@ void test_commit_pending_retains_uncommitted_ops() {
   check(pending.empty(), "pending queue should be empty after all ops commit");
 }
 
+void test_commit_pending_waits_for_both_progress_watermarks() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 100U);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 5U, 0, saturnis::bus::BusKind::Write, 0x7030U, 4, 0xA0U}};
+  const auto blocked = arbiter.commit_pending(pending);
+  check(blocked.empty(), "commit_pending should defer work until both CPU progress watermarks exist");
+  check(pending.size() == 1U, "pending queue should be unchanged while horizon is unsafe");
+
+  arbiter.update_progress(1, 200U);
+  const auto committed = arbiter.commit_pending(pending);
+  check(committed.size() == 1U, "pending op should commit once both CPU progress watermarks are available");
+  check(pending.empty(), "pending queue should drain after commit succeeds");
+}
+
+void test_commit_pending_preserves_order_of_remaining_ops() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 6U);
+  arbiter.update_progress(1, 100U);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 1U, 0, saturnis::bus::BusKind::Write, 0x7040U, 4, 0x10U},
+                                            {1, 20U, 1, saturnis::bus::BusKind::Write, 0x7044U, 4, 0x20U},
+                                            {0, 30U, 2, saturnis::bus::BusKind::Write, 0x7048U, 4, 0x30U}};
+
+  const auto first = arbiter.commit_pending(pending);
+  check(first.size() == 1U, "only safe-horizon op should commit from mixed pending queue");
+  check(pending.size() == 2U, "two horizon-blocked ops should stay pending");
+  check(pending[0].phys_addr == 0x7044U, "first blocked op should keep original relative order");
+  check(pending[1].phys_addr == 0x7048U, "second blocked op should keep original relative order");
+}
+
 void test_store_to_load_forwarding() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -272,6 +311,8 @@ int main() {
   test_commit_horizon_correctness();
   test_commit_horizon_requires_both_watermarks();
   test_commit_pending_retains_uncommitted_ops();
+  test_commit_pending_waits_for_both_progress_watermarks();
+  test_commit_pending_preserves_order_of_remaining_ops();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_sh2_ifetch_cache_runahead();
