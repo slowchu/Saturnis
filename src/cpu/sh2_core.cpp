@@ -72,7 +72,7 @@ bus::BusOp SH2Core::produce_ifetch(std::uint64_t seq) const {
 }
 
 void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::TraceLog &trace) {
-  t_ = response.commit_time;
+  t_ += response.stall;
   if (!response.line_data.empty()) {
     icache_.fill_line(response.line_base, response.line_data);
   }
