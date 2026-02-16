@@ -7,10 +7,11 @@ namespace saturnis::core {
 void TraceLog::add_commit(const CommitEvent &event) {
   std::ostringstream ss;
   ss << "COMMIT "
-     << "{\"t\":" << event.t << ",\"kind\":\"" << bus::kind_name(event.op.kind)
-     << "\",\"cpu\":" << event.op.cpu_id << ",\"phys\":" << event.op.phys_addr
+     << "{\"t_start\":" << event.t_start << ",\"t_end\":" << event.t_end
+     << ",\"stall\":" << event.stall << ",\"cpu\":" << event.op.cpu_id
+     << ",\"kind\":\"" << bus::kind_name(event.op.kind) << "\",\"phys\":" << event.op.phys_addr
      << ",\"size\":" << static_cast<unsigned>(event.op.size) << ",\"val\":" << event.value
-     << ",\"stall\":" << event.stall << ",\"src\":\"" << bus::source_name(event.op.kind)
+     << ",\"src\":\"" << bus::source_name(event.op.kind)
      << "\",\"cache_hit\":" << (event.cache_hit ? "true" : "false")
      << "}";
   lines_.push_back(ss.str());
