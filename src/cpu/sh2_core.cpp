@@ -13,21 +13,59 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   pending_ = PendingBus{};
 }
 
-bool SH2Core::decode_movl_store(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m) const {
-  if ((instr & 0xF00FU) != 0x2002U) {
+bool SH2Core::decode_mov_store(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const {
+  if ((instr & 0xF000U) != 0x2000U) {
+    return false;
+  }
+  const std::uint8_t low = static_cast<std::uint8_t>(instr & 0x0FU);
+  if (low > 2U) {
     return false;
   }
   n = static_cast<std::uint8_t>((instr >> 8U) & 0x0FU);
   m = static_cast<std::uint8_t>((instr >> 4U) & 0x0FU);
+  size = static_cast<std::uint8_t>(1U << low);
   return true;
 }
 
-bool SH2Core::decode_movl_load(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m) const {
-  if ((instr & 0xF00FU) != 0x6002U) {
+bool SH2Core::decode_mov_load(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const {
+  if ((instr & 0xF000U) != 0x6000U) {
+    return false;
+  }
+  const std::uint8_t low = static_cast<std::uint8_t>(instr & 0x0FU);
+  if (low > 2U) {
     return false;
   }
   n = static_cast<std::uint8_t>((instr >> 8U) & 0x0FU);
   m = static_cast<std::uint8_t>((instr >> 4U) & 0x0FU);
+  size = static_cast<std::uint8_t>(1U << low);
+  return true;
+}
+
+bool SH2Core::decode_mov_store_predec(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const {
+  if ((instr & 0xF000U) != 0x2000U) {
+    return false;
+  }
+  const std::uint8_t low = static_cast<std::uint8_t>(instr & 0x0FU);
+  if (low < 4U || low > 6U) {
+    return false;
+  }
+  n = static_cast<std::uint8_t>((instr >> 8U) & 0x0FU);
+  m = static_cast<std::uint8_t>((instr >> 4U) & 0x0FU);
+  size = static_cast<std::uint8_t>(1U << (low - 4U));
+  return true;
+}
+
+bool SH2Core::decode_mov_load_postinc(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const {
+  if ((instr & 0xF000U) != 0x6000U) {
+    return false;
+  }
+  const std::uint8_t low = static_cast<std::uint8_t>(instr & 0x0FU);
+  if (low < 4U || low > 6U) {
+    return false;
+  }
+  n = static_cast<std::uint8_t>((instr >> 8U) & 0x0FU);
+  m = static_cast<std::uint8_t>((instr >> 4U) & 0x0FU);
+  size = static_cast<std::uint8_t>(1U << (low - 4U));
   return true;
 }
 
@@ -47,49 +85,92 @@ std::optional<bus::BusOp> SH2Core::execute_instruction(std::uint16_t instr, core
   // Minimal subset: NOP (0009), BRA disp12 (Axxx), MOV #imm,Rn (Ennn), RTS (000B)
   std::uint8_t n = 0;
   std::uint8_t m = 0;
-  if (decode_movl_store(instr, n, m)) {
+  std::uint8_t size = 0;
+  if (decode_mov_store(instr, n, m, size)) {
     const std::uint32_t vaddr = r_[n];
     const std::uint32_t phys = mem::to_phys(vaddr);
     const bool cacheable = cacheable_data(vaddr, phys);
     const std::uint32_t value = r_[m];
 
-    store_buffer_.push(mem::StoreEntry{phys, 4U, value});
+    store_buffer_.push(mem::StoreEntry{phys, size, value});
     if (cacheable) {
-      dcache_.write(phys, 4U, value);
+      dcache_.write(phys, size, value);
     }
 
-    bus::BusOp op{cpu_id_, t_, 0, mem::is_mmio(phys) ? bus::BusKind::MmioWrite : bus::BusKind::Write, phys, 4U, value};
-    pending_ = PendingBus{PendingKind::DataWrite, op, 0U, phys, 4U, cacheable};
+    bus::BusOp op{cpu_id_, t_, 0, mem::is_mmio(phys) ? bus::BusKind::MmioWrite : bus::BusKind::Write, phys, size, value};
+    pending_ = PendingBus{PendingKind::DataWrite, op, 0U, phys, size, cacheable};
     pc_ += 2U;
     return op;
   }
 
-  if (decode_movl_load(instr, n, m)) {
+  if (decode_mov_store_predec(instr, n, m, size)) {
+    r_[n] -= size;
+    const std::uint32_t vaddr = r_[n];
+    const std::uint32_t phys = mem::to_phys(vaddr);
+    const bool cacheable = cacheable_data(vaddr, phys);
+    const std::uint32_t value = r_[m];
+    store_buffer_.push(mem::StoreEntry{phys, size, value});
+    if (cacheable) {
+      dcache_.write(phys, size, value);
+    }
+    bus::BusOp op{cpu_id_, t_, 0, mem::is_mmio(phys) ? bus::BusKind::MmioWrite : bus::BusKind::Write, phys, size, value};
+    pending_ = PendingBus{PendingKind::DataWrite, op, 0U, phys, size, cacheable};
+    pc_ += 2U;
+    return op;
+  }
+
+  if (decode_mov_load(instr, n, m, size) || decode_mov_load_postinc(instr, n, m, size)) {
+    const bool post_inc = decode_mov_load_postinc(instr, n, m, size);
     const std::uint32_t vaddr = r_[m];
     const std::uint32_t phys = mem::to_phys(vaddr);
     const bool cacheable = cacheable_data(vaddr, phys);
     if (cacheable) {
-      if (const auto fwd = store_buffer_.forward(phys, 4U)) {
-        r_[n] = *fwd;
+      if (const auto fwd = store_buffer_.forward(phys, size)) {
+        if (size == 1U) {
+          r_[n] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(*fwd & 0xFFU)));
+        } else if (size == 2U) {
+          r_[n] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(*fwd & 0xFFFFU)));
+        } else {
+          r_[n] = *fwd;
+        }
+        if (post_inc) {
+          r_[m] += size;
+        }
         pc_ += 2U;
         retire_instruction(trace, from_bus_commit);
         return std::nullopt;
       }
       std::uint32_t cached = 0;
-      if (dcache_.read(phys, 4U, cached)) {
-        r_[n] = cached;
+      if (dcache_.read(phys, size, cached)) {
+        if (size == 1U) {
+          r_[n] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(cached & 0xFFU)));
+        } else if (size == 2U) {
+          r_[n] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(cached & 0xFFFFU)));
+        } else {
+          r_[n] = cached;
+        }
+        if (post_inc) {
+          r_[m] += size;
+        }
         pc_ += 2U;
         retire_instruction(trace, from_bus_commit);
         return std::nullopt;
       }
     }
 
-    bus::BusOp op{cpu_id_, t_, 0, mem::is_mmio(phys) ? bus::BusKind::MmioRead : bus::BusKind::Read, phys, 4U, 0U};
+    bus::BusOp op{cpu_id_, t_, 0, mem::is_mmio(phys) ? bus::BusKind::MmioRead : bus::BusKind::Read, phys, size, 0U};
     if (cacheable) {
       op.fill_cache_line = true;
       op.cache_line_size = static_cast<std::uint8_t>(dcache_.line_size());
     }
-    pending_ = PendingBus{PendingKind::DataRead, op, n, phys, 4U, cacheable};
+    pending_ = PendingBus{PendingKind::DataRead,
+                          op,
+                          n,
+                          phys,
+                          size,
+                          cacheable,
+                          post_inc ? m : static_cast<std::uint8_t>(0xFFU),
+                          post_inc ? size : static_cast<std::uint8_t>(0U)};
     return op;
   }
 
@@ -180,9 +261,20 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     break;
   }
   case PendingKind::DataRead: {
-    r_[pending_.dst_reg] = response.value;
+    if (pending_.size == 1U) {
+      r_[pending_.dst_reg] =
+          static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(response.value & 0xFFU)));
+    } else if (pending_.size == 2U) {
+      r_[pending_.dst_reg] =
+          static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(response.value & 0xFFFFU)));
+    } else {
+      r_[pending_.dst_reg] = response.value;
+    }
     if (pending_.cacheable && !response.line_data.empty()) {
       dcache_.fill_line(response.line_base, response.line_data);
+    }
+    if (pending_.post_inc_reg != 0xFFU) {
+      r_[pending_.post_inc_reg] += pending_.post_inc_amount;
     }
     pc_ += 2U;
     pending_ = PendingBus{};

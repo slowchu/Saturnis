@@ -39,12 +39,18 @@ private:
     std::uint32_t addr = 0;
     std::uint8_t size = 4;
     bool cacheable = false;
+    std::uint8_t post_inc_reg = 0xFFU;
+    std::uint8_t post_inc_amount = 0;
   };
 
   [[nodiscard]] std::optional<bus::BusOp> execute_instruction(std::uint16_t instr, core::TraceLog &trace,
                                                                bool from_bus_commit);
-  [[nodiscard]] bool decode_movl_store(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m) const;
-  [[nodiscard]] bool decode_movl_load(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m) const;
+  [[nodiscard]] bool decode_mov_store(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const;
+  [[nodiscard]] bool decode_mov_load(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const;
+  [[nodiscard]] bool decode_mov_store_predec(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m,
+                                             std::uint8_t &size) const;
+  [[nodiscard]] bool decode_mov_load_postinc(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m,
+                                             std::uint8_t &size) const;
   void retire_instruction(core::TraceLog &trace, bool from_bus_commit);
   [[nodiscard]] bool cacheable_data(std::uint32_t vaddr, std::uint32_t phys) const;
 
