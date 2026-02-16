@@ -34,9 +34,8 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   }
 
-  if (!from_bus_commit) {
-    t_ += 1; // local execute cost for icache hit.
-  }
+  (void)from_bus_commit;
+  t_ += 1; // intrinsic execute cost for each retired instruction.
   ++executed_;
   trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
 }
@@ -72,7 +71,7 @@ bus::BusOp SH2Core::produce_ifetch(std::uint64_t seq) const {
 }
 
 void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::TraceLog &trace) {
-  t_ = response.commit_time;
+  t_ += response.stall;
   if (!response.line_data.empty()) {
     icache_.fill_line(response.line_base, response.line_data);
   }
