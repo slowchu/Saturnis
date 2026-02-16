@@ -53,7 +53,8 @@ The arbiter computes:
 
 - `commit_horizon = min(executed_up_to_cpu0, executed_up_to_cpu1)`
 
-Only ops with `req_time < commit_horizon` are committable when horizon gating is active.
+Only ops with `req_time < commit_horizon` are committable once both CPU progress watermarks exist
+(and immediately if tracking was never enabled).
 This provides deterministic safety for producer/arbiter decoupling.
 
 ## Trace format
