@@ -168,7 +168,7 @@ void test_commit_horizon_correctness() {
 }
 
 
-void test_commit_horizon_requires_both_watermarks() {
+void test_commit_horizon_requires_both_progress_watermarks() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -178,11 +178,11 @@ void test_commit_horizon_requires_both_watermarks() {
 
   const saturnis::bus::BusOp cpu0_op{0, 5U, 0, saturnis::bus::BusKind::Write, 0x7010U, 4, 0xAAU};
   const auto blocked = arbiter.commit_batch({cpu0_op});
-  check(blocked.empty(), "horizon gating must block commits until both CPU watermarks are initialized");
+  check(blocked.empty(), "horizon gating must block commits until both CPU progress watermarks are initialized");
 
   arbiter.update_progress(1, 200U);
   const auto committed = arbiter.commit_batch({cpu0_op});
-  check(committed.size() == 1U, "op should commit once both CPU watermarks are available");
+  check(committed.size() == 1U, "op should commit once both CPU progress watermarks are available");
 }
 
 
@@ -309,7 +309,7 @@ int main() {
   test_stall_applies_to_current_op();
   test_no_host_order_dependence();
   test_commit_horizon_correctness();
-  test_commit_horizon_requires_both_watermarks();
+  test_commit_horizon_requires_both_progress_watermarks();
   test_commit_pending_retains_uncommitted_ops();
   test_commit_pending_waits_for_both_progress_watermarks();
   test_commit_pending_preserves_order_of_remaining_ops();
