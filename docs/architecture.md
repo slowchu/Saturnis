@@ -32,13 +32,11 @@ Each CPU tracks local request time. A bus commit returns a stall and commit time
 - Regression test compares dual-demo traces byte-for-byte across repeated runs.
 - BIOS/runtime bring-up uses per-CPU IFETCH production with arbiter `commit_batch()` ordering rather than fixed lockstep bus commits.
 - SH-2 cores can run ahead through local IFETCH cache hits; only misses/uncached fetches emit arbiter bus ops.
-- Runtime bounds producer run-ahead by remaining global instruction budget to keep `max_steps` deterministic and strict.
-- Interpreter now has a minimal data local-view path for register-indirect `mov.b/mov.w/mov.l` and `@-Rn`/`@Rm+` subset (store buffer forwarding + tiny D-cache), with uncached/MMIO accesses synchronized via arbiter.
 
 ## Current limitations / TODO
 
 - SH-2 interpreter is intentionally minimal (bring-up subset).
-- SH-2 data-memory semantics are currently implemented for a small register-indirect MOV subset; broader instruction coverage (displacement/GBR forms, atomics, edge cases) is TODO.
+- SH-2 data-memory ops are still skeletal; full store-buffer/cached data-path integration for interpreter ops is TODO.
 - Saturn device models are stubs with safe default reads and MMIO logging.
 - VDP rendering is placeholder/debug-oriented.
 - BIOS execution support is partial and not cycle-accurate.

@@ -5,7 +5,6 @@
 #include "mem/memory.hpp"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -28,31 +27,9 @@ public:
   [[nodiscard]] std::uint32_t pc() const;
   [[nodiscard]] core::Tick local_time() const;
   [[nodiscard]] std::uint64_t executed_instructions() const;
-  [[nodiscard]] std::uint32_t reg(std::size_t index) const;
 
 private:
-  enum class PendingKind { None, IFetch, DataRead, DataWrite };
-  struct PendingBus {
-    PendingKind kind = PendingKind::None;
-    bus::BusOp op{};
-    std::uint8_t dst_reg = 0;
-    std::uint32_t addr = 0;
-    std::uint8_t size = 4;
-    bool cacheable = false;
-    std::uint8_t post_inc_reg = 0xFFU;
-    std::uint8_t post_inc_amount = 0;
-  };
-
-  [[nodiscard]] std::optional<bus::BusOp> execute_instruction(std::uint16_t instr, core::TraceLog &trace,
-                                                               bool from_bus_commit);
-  [[nodiscard]] bool decode_mov_store(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const;
-  [[nodiscard]] bool decode_mov_load(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m, std::uint8_t &size) const;
-  [[nodiscard]] bool decode_mov_store_predec(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m,
-                                             std::uint8_t &size) const;
-  [[nodiscard]] bool decode_mov_load_postinc(std::uint16_t instr, std::uint8_t &n, std::uint8_t &m,
-                                             std::uint8_t &size) const;
-  void retire_instruction(core::TraceLog &trace, bool from_bus_commit);
-  [[nodiscard]] bool cacheable_data(std::uint32_t vaddr, std::uint32_t phys) const;
+  void execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit);
 
   int cpu_id_;
   std::uint32_t pc_ = 0;
@@ -61,9 +38,6 @@ private:
   core::Tick t_ = 0;
   std::uint64_t executed_ = 0;
   mem::TinyCache icache_{16, 64};
-  mem::TinyCache dcache_{16, 64};
-  mem::StoreBuffer store_buffer_{};
-  PendingBus pending_{};
 };
 
 } // namespace saturnis::cpu

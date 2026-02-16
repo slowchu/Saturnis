@@ -111,18 +111,8 @@ int Emulator::run(const RunConfig &config) {
 
   std::uint64_t seq = 0;
   while ((master.executed_instructions() + slave.executed_instructions()) < config.max_steps) {
-    const std::uint64_t total_before = master.executed_instructions() + slave.executed_instructions();
-    const std::uint64_t remaining_before = config.max_steps - total_before;
-    const std::uint32_t b0 = static_cast<std::uint32_t>((remaining_before < 16U) ? remaining_before : 16U);
-    const auto p0 = master.produce_until_bus(seq++, trace, b0);
-
-    const std::uint64_t total_mid = master.executed_instructions() + slave.executed_instructions();
-    if (total_mid >= config.max_steps) {
-      break;
-    }
-    const std::uint64_t remaining_mid = config.max_steps - total_mid;
-    const std::uint32_t b1 = static_cast<std::uint32_t>((remaining_mid < 16U) ? remaining_mid : 16U);
-    const auto p1 = slave.produce_until_bus(seq++, trace, b1);
+    const auto p0 = master.produce_until_bus(seq++, trace, 16);
+    const auto p1 = slave.produce_until_bus(seq++, trace, 16);
 
     std::vector<bus::BusOp> fetches;
     if (p0.op.has_value()) {

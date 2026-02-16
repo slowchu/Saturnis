@@ -219,112 +219,6 @@ void test_sh2_ifetch_cache_runahead() {
   check(second.executed > 0U, "cache run-ahead should execute instructions without bus");
 }
 
-void test_sh2_runahead_budget_is_respected() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  for (std::uint32_t addr = 0; addr < 16U; addr += 2U) {
-    mem.write(addr, 2U, 0x0009U);
-  }
-
-  saturnis::cpu::SH2Core core(0);
-  core.reset(0U, 0x0001FFF0U);
-  const auto first = core.produce_until_bus(0, trace, 1);
-  check(first.op.has_value(), "first IFETCH should miss cache");
-  const auto resp = arbiter.commit(*first.op);
-  core.apply_ifetch_and_step(resp, trace);
-
-  const auto before = core.executed_instructions();
-  const auto second = core.produce_until_bus(1, trace, 3);
-  const auto after = core.executed_instructions();
-  check(!second.op.has_value(), "cached runahead should stay local when line already present");
-  check(after - before <= 3U, "produce_until_bus must honor runahead budget");
-}
-
-void test_sh2_data_local_view_store_and_load() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  // Program:
-  // mov #0x10,r1
-  // mov #5,r2
-  // mov.l r2,@r1
-  // mov.l @r1,r3
-  // nop
-  mem.write(0x00U, 2U, 0xE110U);
-  mem.write(0x02U, 2U, 0xE205U);
-  mem.write(0x04U, 2U, 0x2122U);
-  mem.write(0x06U, 2U, 0x6312U);
-  mem.write(0x08U, 2U, 0x0009U);
-
-  saturnis::cpu::SH2Core core(0);
-  core.reset(0U, 0x0001FFF0U);
-
-  std::uint64_t seq = 0;
-  while (core.executed_instructions() < 5U) {
-    const auto produced = core.produce_until_bus(seq++, trace, 8);
-    if (!produced.op.has_value()) {
-      continue;
-    }
-    const auto resp = arbiter.commit(*produced.op);
-    core.apply_ifetch_and_step(resp, trace);
-  }
-
-  check(core.reg(3) == 5U, "mov.l load should observe local/committed write value");
-  check(mem.read(0x10U, 4U) == 5U, "mov.l store should become globally visible after arbiter commit");
-}
-
-void test_sh2_data_byte_word_and_predec_postinc() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  // Program:
-  // mov #0x24,r1
-  // mov #0x7f,r2
-  // mov.b r2,@r1
-  // mov.b @r1,r3
-  // mov #0x28,r4
-  // mov #0x34,r5
-  // mov #0x11,r6
-  // mov.b r6,@-r5
-  // mov.b @r5+,r7
-  // mov #0x12,r8
-  // mov.w r8,@r4
-  // mov.w @r4,r9
-  // nop
-  const std::uint16_t prog[] = {0xE124U, 0xE27FU, 0x2120U, 0x6310U, 0xE428U, 0xE534U, 0xE611U,
-                                0x2564U, 0x6754U, 0xE812U, 0x2481U, 0x6941U, 0x0009U};
-  for (std::size_t i = 0; i < (sizeof(prog) / sizeof(prog[0])); ++i) {
-    mem.write(static_cast<std::uint32_t>(i * 2U), 2U, prog[i]);
-  }
-
-  saturnis::cpu::SH2Core core(0);
-  core.reset(0U, 0x0001FFF0U);
-
-  std::uint64_t seq = 0;
-  while (core.executed_instructions() < (sizeof(prog) / sizeof(prog[0]))) {
-    const auto produced = core.produce_until_bus(seq++, trace, 8);
-    if (!produced.op.has_value()) {
-      continue;
-    }
-    const auto resp = arbiter.commit(*produced.op);
-    core.apply_ifetch_and_step(resp, trace);
-  }
-
-  check((core.reg(3) & 0xFFU) == 0x7FU, "mov.b load should read stored byte");
-  check((core.reg(7) & 0xFFU) == 0x11U, "mov.b post-inc load should read pre-dec stored byte");
-  check(core.reg(5) == 0x34U, "post-inc should restore register after pre-dec+load pair");
-  check((core.reg(9) & 0xFFFFU) == 0x0012U, "mov.w load should read stored word");
-  check((mem.read(0x24U, 1U) & 0xFFU) == 0x7FU, "byte store should commit globally");
-  check((mem.read(0x28U, 2U) & 0xFFFFU) == 0x0012U, "word store should commit globally");
-}
-
 } // namespace
 
 int main() {
@@ -339,9 +233,6 @@ int main() {
   test_barrier_is_not_memory_read();
   test_barrier_does_not_change_contention_address_history();
   test_sh2_ifetch_cache_runahead();
-  test_sh2_runahead_budget_is_respected();
-  test_sh2_data_local_view_store_and_load();
-  test_sh2_data_byte_word_and_predec_postinc();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }
