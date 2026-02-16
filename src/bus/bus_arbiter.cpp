@@ -170,16 +170,21 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
 
 BusResponse BusArbiter::commit(const BusOp &op) { return execute_commit(op, false); }
 
-
-std::vector<CommitResult> BusArbiter::commit_pending(std::vector<BusOp> &pending_ops) {
+std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops) {
   std::vector<CommitResult> pending;
-  pending.reserve(pending_ops.size());
-  for (std::size_t i = 0; i < pending_ops.size(); ++i) {
-    pending.push_back(CommitResult{i, pending_ops[i], {}});
+  pending.reserve(ops.size());
+  for (std::size_t i = 0; i < ops.size(); ++i) {
+    pending.push_back(CommitResult{i, ops[i], {}});
   }
+  progress_tracking_enabled_ = true;
+  auto &slot = progress_up_to_[static_cast<std::size_t>(cpu_id)];
+  if (slot == std::numeric_limits<core::Tick>::max() || executed_up_to > slot) {
+    slot = executed_up_to;
+  }
+}
 
   std::vector<CommitResult> committed;
-  committed.reserve(pending_ops.size());
+  committed.reserve(ops.size());
 
   while (!pending.empty()) {
     std::vector<std::size_t> committable;
@@ -217,24 +222,7 @@ std::vector<CommitResult> BusArbiter::commit_pending(std::vector<BusOp> &pending
     pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(next_idx));
   }
 
-  if (!committed.empty()) {
-    std::vector<std::size_t> erase_indices;
-    erase_indices.reserve(committed.size());
-    for (const auto &entry : committed) {
-      erase_indices.push_back(entry.input_index);
-    }
-    std::sort(erase_indices.begin(), erase_indices.end(), std::greater<>());
-    for (const auto idx : erase_indices) {
-      pending_ops.erase(pending_ops.begin() + static_cast<std::ptrdiff_t>(idx));
-    }
-  }
-
   return committed;
-}
-
-std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops) {
-  std::vector<BusOp> pending = ops;
-  return commit_pending(pending);
 }
 
 } // namespace saturnis::bus

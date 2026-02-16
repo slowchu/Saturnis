@@ -44,10 +44,6 @@ Selection uses deterministic keys:
 
 This guarantees identical traces even when producers submit in different host orders.
 
-A producer/arbiter multithread mode uses per-CPU single-producer/single-consumer mailboxes;
-ordering remains deterministic because commit selection depends only on emulated-time keys
-and policy tie-break rules (never host arrival order).
-
 ## Commit safety with progress watermarks
 
 To avoid committing time `T` before all earlier ops can exist, each CPU reports
@@ -59,8 +55,6 @@ The arbiter computes:
 
 Only ops with `req_time < commit_horizon` are committable when horizon gating is active.
 This provides deterministic safety for producer/arbiter decoupling.
-
-Deferred ops that are not yet committable must remain queued and retried; they are never dropped.
 
 ## Trace format
 

@@ -185,27 +185,6 @@ void test_commit_horizon_requires_both_watermarks() {
   check(committed.size() == 1U, "op should commit once both CPU watermarks are available");
 }
 
-
-void test_commit_pending_preserves_deferred_ops() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  std::vector<saturnis::bus::BusOp> pending{{1, 10U, 0, saturnis::bus::BusKind::Write, 0x7020U, 4, 0x55U}};
-  arbiter.update_progress(0, 5U);
-  arbiter.update_progress(1, 100U);
-
-  const auto none = arbiter.commit_pending(pending);
-  check(none.empty(), "deferred pending ops should remain queued when horizon blocks commit");
-  check(pending.size() == 1U, "deferred pending op must not be dropped");
-
-  arbiter.update_progress(0, 12U);
-  const auto committed = arbiter.commit_pending(pending);
-  check(committed.size() == 1U, "pending op should commit once horizon advances");
-  check(pending.empty(), "pending queue should remove committed ops");
-}
-
 void test_store_to_load_forwarding() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -266,7 +245,6 @@ int main() {
   test_no_host_order_dependence();
   test_commit_horizon_correctness();
   test_commit_horizon_requires_both_watermarks();
-  test_commit_pending_preserves_deferred_ops();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_sh2_ifetch_cache_runahead();
