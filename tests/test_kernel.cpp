@@ -278,6 +278,37 @@ void test_barrier_does_not_change_contention_address_history() {
   check(r.stall > 4U, "barrier must not alter last-address contention history");
 }
 
+
+void test_mmio_write_is_visible_to_subsequent_reads() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp write_mmio{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 4, 0x12345678U};
+  const saturnis::bus::BusOp read_mmio{1, 1U, 0, saturnis::bus::BusKind::MmioRead, 0x05F00020U, 4, 0U};
+
+  (void)arbiter.commit(write_mmio);
+  const auto r = arbiter.commit(read_mmio);
+  check(r.value == 0x12345678U, "MMIO read should return last written 32-bit register value");
+}
+
+void test_mmio_subword_write_updates_correct_lane() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05F00024U, 4, 0x11223344U});
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00025U, 1, 0xAAU});
+
+  const auto byte_read = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05F00025U, 1, 0U});
+  check(byte_read.value == 0xAAU, "byte MMIO read should observe byte-lane write");
+
+  const auto word_read = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00024U, 4, 0U});
+  check(word_read.value == 0x1122AA44U, "subword MMIO write should patch only targeted byte lane");
+}
+
 void test_sh2_ifetch_cache_runahead() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -315,6 +346,8 @@ int main() {
   test_commit_pending_preserves_order_of_remaining_ops();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
+  test_mmio_write_is_visible_to_subsequent_reads();
+  test_mmio_subword_write_updates_correct_lane();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
