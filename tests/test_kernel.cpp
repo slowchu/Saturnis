@@ -149,6 +149,24 @@ void test_commit_horizon_correctness() {
   check(unblocked.size() == 1U, "op should commit once horizon moves forward");
 }
 
+
+void test_commit_horizon_requires_both_watermarks() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 100U);
+
+  const saturnis::bus::BusOp cpu0_op{0, 5U, 0, saturnis::bus::BusKind::Write, 0x7010U, 4, 0xAAU};
+  const auto blocked = arbiter.commit_batch({cpu0_op});
+  check(blocked.empty(), "horizon gating must remain disabled until both CPU watermarks are initialized");
+
+  arbiter.update_progress(1, 200U);
+  const auto committed = arbiter.commit_batch({cpu0_op});
+  check(committed.size() == 1U, "op should commit once both CPU watermarks are available");
+}
+
 void test_store_to_load_forwarding() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -207,6 +225,7 @@ int main() {
   test_stall_applies_to_current_op();
   test_no_host_order_dependence();
   test_commit_horizon_correctness();
+  test_commit_horizon_requires_both_watermarks();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_sh2_ifetch_cache_runahead();

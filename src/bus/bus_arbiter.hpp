@@ -84,6 +84,7 @@ private:
   bool has_last_addr_ = false;
   std::uint32_t last_addr_ = 0;
 
+  bool progress_tracking_enabled_ = false;
   std::array<core::Tick, 2> progress_up_to_{{std::numeric_limits<core::Tick>::max(),
                                               std::numeric_limits<core::Tick>::max()}};
 };

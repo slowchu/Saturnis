@@ -96,7 +96,10 @@ BusResponse BusArbiter::execute_commit(const BusOp &op, bool had_tie) {
 }
 
 bool BusArbiter::has_safe_horizon() const {
-  return progress_up_to_[0] != std::numeric_limits<core::Tick>::max() ||
+  if (!progress_tracking_enabled_) {
+    return true;
+  }
+  return progress_up_to_[0] != std::numeric_limits<core::Tick>::max() &&
          progress_up_to_[1] != std::numeric_limits<core::Tick>::max();
 }
 
@@ -108,6 +111,7 @@ void BusArbiter::update_progress(int cpu_id, core::Tick executed_up_to) {
   if (!is_cpu(cpu_id)) {
     return;
   }
+  progress_tracking_enabled_ = true;
   auto &slot = progress_up_to_[static_cast<std::size_t>(cpu_id)];
   if (slot == std::numeric_limits<core::Tick>::max() || executed_up_to > slot) {
     slot = executed_up_to;
@@ -181,7 +185,7 @@ std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops
     committable.reserve(pending.size());
     const core::Tick horizon = commit_horizon();
     for (std::size_t i = 0; i < pending.size(); ++i) {
-      if (!has_safe_horizon() || pending[i].op.req_time < horizon) {
+      if (!progress_tracking_enabled_ || (has_safe_horizon() && pending[i].op.req_time < horizon)) {
         committable.push_back(i);
       }
     }
