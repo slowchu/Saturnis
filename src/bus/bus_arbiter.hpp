@@ -64,9 +64,6 @@ public:
   void update_progress(int cpu_id, core::Tick executed_up_to);
   [[nodiscard]] core::Tick commit_horizon() const;
 
-  void update_progress(int cpu_id, core::Tick executed_up_to);
-  [[nodiscard]] core::Tick commit_horizon() const;
-
 private:
   [[nodiscard]] bool is_cpu(int cpu_id) const;
   [[nodiscard]] core::Tick base_latency(const BusOp &op) const;
