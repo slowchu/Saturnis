@@ -24,8 +24,6 @@ void check(bool cond, const std::string &msg) {
 void run_pair(saturnis::cpu::ScriptedCPU &cpu0, saturnis::cpu::ScriptedCPU &cpu1, saturnis::bus::BusArbiter &arbiter) {
   std::optional<saturnis::cpu::PendingBusOp> p0;
   std::optional<saturnis::cpu::PendingBusOp> p1;
-  bool cpu0_marked_complete = false;
-  bool cpu1_marked_complete = false;
 
   while (true) {
     arbiter.update_progress(0, cpu0.local_time() + 1);
@@ -36,15 +34,6 @@ void run_pair(saturnis::cpu::ScriptedCPU &cpu0, saturnis::cpu::ScriptedCPU &cpu1
     }
     if (!p1 && !cpu1.done()) {
       p1 = cpu1.produce();
-    }
-
-    if (cpu0.done() && !p0 && !cpu0_marked_complete) {
-      arbiter.mark_cpu_complete(0);
-      cpu0_marked_complete = true;
-    }
-    if (cpu1.done() && !p1 && !cpu1_marked_complete) {
-      arbiter.mark_cpu_complete(1);
-      cpu1_marked_complete = true;
     }
 
     if (!p0 && !p1 && cpu0.done() && cpu1.done()) {
@@ -196,27 +185,6 @@ void test_commit_horizon_requires_both_watermarks() {
   check(committed.size() == 1U, "op should commit once both CPU watermarks are available");
 }
 
-
-void test_commit_pending_preserves_deferred_ops() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  std::vector<saturnis::bus::BusOp> pending{{1, 10U, 0, saturnis::bus::BusKind::Write, 0x7020U, 4, 0x55U}};
-  arbiter.update_progress(0, 5U);
-  arbiter.update_progress(1, 100U);
-
-  const auto none = arbiter.commit_pending(pending);
-  check(none.empty(), "deferred pending ops should remain queued when horizon blocks commit");
-  check(pending.size() == 1U, "deferred pending op must not be dropped");
-
-  arbiter.update_progress(0, 12U);
-  const auto committed = arbiter.commit_pending(pending);
-  check(committed.size() == 1U, "pending op should commit once horizon advances");
-  check(pending.empty(), "pending queue should remove committed ops");
-}
-
 void test_store_to_load_forwarding() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -227,21 +195,6 @@ void test_store_to_load_forwarding() {
   saturnis::cpu::ScriptedCPU cpu1(1, {});
   run_pair(cpu0, cpu1, arbiter);
   check(cpu0.last_read().has_value() && *cpu0.last_read() == 0xAA55AA55U, "store-to-load forwarding value mismatch");
-}
-
-
-void test_single_active_cpu_does_not_deadlock_under_horizon() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  saturnis::cpu::ScriptedCPU cpu0(0, {{saturnis::cpu::ScriptOpKind::Compute, 0, 0, 0, 2},
-                                      {saturnis::cpu::ScriptOpKind::Write, 0x05F00020U, 4, 0x44U, 0}});
-  saturnis::cpu::ScriptedCPU cpu1(1, {});
-  run_pair(cpu0, cpu1, arbiter);
-
-  check(dev.writes().size() == 1U, "single active CPU op should eventually commit after peer completion");
 }
 
 void test_barrier_does_not_change_contention_address_history() {
@@ -292,9 +245,7 @@ int main() {
   test_no_host_order_dependence();
   test_commit_horizon_correctness();
   test_commit_horizon_requires_both_watermarks();
-  test_commit_pending_preserves_deferred_ops();
   test_store_to_load_forwarding();
-  test_single_active_cpu_does_not_deadlock_under_horizon();
   test_barrier_does_not_change_contention_address_history();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";

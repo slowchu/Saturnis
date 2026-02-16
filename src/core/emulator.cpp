@@ -8,10 +8,11 @@
 #include "platform/file_io.hpp"
 #include "platform/sdl_window.hpp"
 
-#include <array>
 #include <atomic>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -25,40 +26,31 @@ struct ScriptResponse {
   bus::BusResponse response{};
 };
 
-template <typename T, std::size_t Capacity> class SpscQueue {
+template <typename T> class Mailbox {
 public:
-  bool push(const T &value) {
-    const std::size_t tail = tail_.load(std::memory_order_relaxed);
-    const std::size_t next = (tail + 1U) % Capacity;
-    if (next == head_.load(std::memory_order_acquire)) {
-      return false;
-    }
-    buffer_[tail] = value;
-    tail_.store(next, std::memory_order_release);
-    return true;
+  void push(const T &value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.push_back(value);
   }
 
   [[nodiscard]] bool try_pop(T &out) {
-    const std::size_t head = head_.load(std::memory_order_relaxed);
-    if (head == tail_.load(std::memory_order_acquire)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (queue_.empty()) {
       return false;
     }
-    out = buffer_[head];
-    head_.store((head + 1U) % Capacity, std::memory_order_release);
+    out = queue_.front();
+    queue_.pop_front();
     return true;
   }
 
 private:
-  std::array<T, Capacity> buffer_{};
-  std::atomic<std::size_t> head_{0};
-  std::atomic<std::size_t> tail_{0};
+  std::mutex mutex_;
+  std::deque<T> queue_;
 };
 
 void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
   std::optional<cpu::PendingBusOp> p0;
   std::optional<cpu::PendingBusOp> p1;
-  bool cpu0_marked_complete = false;
-  bool cpu1_marked_complete = false;
 
   while (true) {
     arbiter.update_progress(0, cpu0.local_time() + 1);
@@ -69,15 +61,6 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
     }
     if (!p1 && !cpu1.done()) {
       p1 = cpu1.produce();
-    }
-
-    if (cpu0.done() && !p0 && !cpu0_marked_complete) {
-      arbiter.mark_cpu_complete(0);
-      cpu0_marked_complete = true;
-    }
-    if (cpu1.done() && !p1 && !cpu1_marked_complete) {
-      arbiter.mark_cpu_complete(1);
-      cpu1_marked_complete = true;
     }
 
     if (!p0 && !p1 && cpu0.done() && cpu1.done()) {
@@ -118,37 +101,30 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
 }
 
 void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
-  SpscQueue<cpu::PendingBusOp, 64> req0;
-  SpscQueue<cpu::PendingBusOp, 64> req1;
-  SpscQueue<ScriptResponse, 64> resp0;
-  SpscQueue<ScriptResponse, 64> resp1;
-  SpscQueue<core::Tick, 128> progress0;
-  SpscQueue<core::Tick, 128> progress1;
+  Mailbox<cpu::PendingBusOp> req0;
+  Mailbox<cpu::PendingBusOp> req1;
+  Mailbox<ScriptResponse> resp0;
+  Mailbox<ScriptResponse> resp1;
+  Mailbox<core::Tick> progress0;
+  Mailbox<core::Tick> progress1;
 
   std::atomic<bool> done0{false};
   std::atomic<bool> done1{false};
 
-  auto producer = [](int cpu_id, cpu::ScriptedCPU &cpu, SpscQueue<cpu::PendingBusOp, 64> &req,
-                     SpscQueue<ScriptResponse, 64> &resp, SpscQueue<core::Tick, 128> &progress,
-                     std::atomic<bool> &done) {
+  auto producer = [](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
+                     Mailbox<core::Tick> &progress, std::atomic<bool> &done) {
     std::optional<cpu::PendingBusOp> waiting;
     while (true) {
       if (!waiting && !cpu.done()) {
         waiting = cpu.produce();
         if (waiting) {
-          while (!req.push(*waiting)) {
-            std::this_thread::yield();
-          }
-          while (!progress.push(waiting->op.req_time + 1)) {
-            std::this_thread::yield();
-          }
+          req.push(*waiting);
+          progress.push(waiting->op.req_time + 1);
         }
       }
 
       if (!waiting && cpu.done()) {
-        while (!progress.push(cpu.local_time() + 1)) {
-          std::this_thread::yield();
-        }
+        progress.push(cpu.local_time() + 1);
         done.store(true);
         return;
       }
@@ -156,9 +132,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       ScriptResponse response;
       if (resp.try_pop(response)) {
         cpu.apply_response(response.script_index, response.response);
-        while (!progress.push(cpu.local_time() + 1)) {
-          std::this_thread::yield();
-        }
+        progress.push(cpu.local_time() + 1);
         waiting.reset();
         continue;
       }
@@ -173,8 +147,6 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
 
   std::optional<cpu::PendingBusOp> p0;
   std::optional<cpu::PendingBusOp> p1;
-  bool cpu0_marked_complete = false;
-  bool cpu1_marked_complete = false;
 
   while (true) {
     core::Tick prog = 0;
@@ -183,15 +155,6 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
     }
     while (progress1.try_pop(prog)) {
       arbiter.update_progress(1, prog);
-    }
-
-    if (done0.load() && !cpu0_marked_complete && !p0) {
-      arbiter.mark_cpu_complete(0);
-      cpu0_marked_complete = true;
-    }
-    if (done1.load() && !cpu1_marked_complete && !p1) {
-      arbiter.mark_cpu_complete(1);
-      cpu1_marked_complete = true;
     }
 
     if (!p0) {
@@ -232,14 +195,10 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
         const int cpu = pending_cpu[result.input_index];
         const auto script_index = pending_script[result.input_index];
         if (cpu == 0) {
-          while (!resp0.push(ScriptResponse{script_index, result.response})) {
-            std::this_thread::yield();
-          }
+          resp0.push(ScriptResponse{script_index, result.response});
           p0.reset();
         } else {
-          while (!resp1.push(ScriptResponse{script_index, result.response})) {
-            std::this_thread::yield();
-          }
+          resp1.push(ScriptResponse{script_index, result.response});
           p1.reset();
         }
       }

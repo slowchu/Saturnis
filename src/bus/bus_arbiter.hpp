@@ -62,7 +62,9 @@ public:
   [[nodiscard]] std::vector<CommitResult> commit_pending(std::vector<BusOp> &pending_ops);
 
   void update_progress(int cpu_id, core::Tick executed_up_to);
-  void mark_cpu_complete(int cpu_id);
+  [[nodiscard]] core::Tick commit_horizon() const;
+
+  void update_progress(int cpu_id, core::Tick executed_up_to);
   [[nodiscard]] core::Tick commit_horizon() const;
 
 private:
@@ -87,9 +89,8 @@ private:
   std::uint32_t last_addr_ = 0;
 
   bool progress_tracking_enabled_ = false;
-  std::array<bool, 2> progress_known_{{false, false}};
-  std::array<bool, 2> cpu_complete_{{false, false}};
-  std::array<core::Tick, 2> progress_up_to_{{0, 0}};
+  std::array<core::Tick, 2> progress_up_to_{{std::numeric_limits<core::Tick>::max(),
+                                              std::numeric_limits<core::Tick>::max()}};
 };
 
 } // namespace saturnis::bus
