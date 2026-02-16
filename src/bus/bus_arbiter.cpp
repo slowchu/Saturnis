@@ -176,13 +176,6 @@ std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops
   for (std::size_t i = 0; i < ops.size(); ++i) {
     pending.push_back(CommitResult{i, ops[i], {}});
   }
-  progress_tracking_enabled_ = true;
-  auto &slot = progress_up_to_[static_cast<std::size_t>(cpu_id)];
-  if (slot == std::numeric_limits<core::Tick>::max() || executed_up_to > slot) {
-    slot = executed_up_to;
-  }
-}
-
   std::vector<CommitResult> committed;
   committed.reserve(ops.size());
 
@@ -222,6 +215,30 @@ std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops
     pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(next_idx));
   }
 
+  return committed;
+}
+
+std::vector<CommitResult> BusArbiter::commit_pending(std::vector<BusOp> &pending_ops) {
+  const auto committed = commit_batch(pending_ops);
+  if (committed.empty()) {
+    return committed;
+  }
+
+  std::vector<bool> was_committed(pending_ops.size(), false);
+  for (const auto &result : committed) {
+    if (result.input_index < was_committed.size()) {
+      was_committed[result.input_index] = true;
+    }
+  }
+
+  std::vector<BusOp> remaining;
+  remaining.reserve(pending_ops.size() - committed.size());
+  for (std::size_t i = 0; i < pending_ops.size(); ++i) {
+    if (!was_committed[i]) {
+      remaining.push_back(pending_ops[i]);
+    }
+  }
+  pending_ops = std::move(remaining);
   return committed;
 }
 
