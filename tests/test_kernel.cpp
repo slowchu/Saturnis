@@ -178,11 +178,37 @@ void test_commit_horizon_requires_both_watermarks() {
 
   const saturnis::bus::BusOp cpu0_op{0, 5U, 0, saturnis::bus::BusKind::Write, 0x7010U, 4, 0xAAU};
   const auto blocked = arbiter.commit_batch({cpu0_op});
-  check(blocked.empty(), "horizon gating must remain disabled until both CPU watermarks are initialized");
+  check(blocked.empty(), "horizon gating must block commits until both CPU watermarks are initialized");
 
   arbiter.update_progress(1, 200U);
   const auto committed = arbiter.commit_batch({cpu0_op});
   check(committed.size() == 1U, "op should commit once both CPU watermarks are available");
+}
+
+
+void test_commit_pending_retains_uncommitted_ops() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 5U);
+  arbiter.update_progress(1, 100U);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 3U, 0, saturnis::bus::BusKind::Write, 0x7020U, 4, 0x10U},
+                                            {1, 10U, 1, saturnis::bus::BusKind::Write, 0x7024U, 4, 0x20U}};
+
+  const auto first = arbiter.commit_pending(pending);
+  check(first.size() == 1U, "only op below current horizon should commit");
+  check(first[0].input_index == 0U, "committed index should reference original pending position");
+  check(pending.size() == 1U, "uncommitted op must remain queued");
+  check(pending[0].phys_addr == 0x7024U, "remaining queued op should be the horizon-blocked op");
+
+  arbiter.update_progress(0, 11U);
+  const auto second = arbiter.commit_pending(pending);
+  check(second.size() == 1U, "queued op should commit after horizon advances");
+  check(second[0].input_index == 0U, "single remaining pending op should commit at index zero");
+  check(pending.empty(), "pending queue should be empty after all ops commit");
 }
 
 void test_store_to_load_forwarding() {
@@ -245,6 +271,7 @@ int main() {
   test_no_host_order_dependence();
   test_commit_horizon_correctness();
   test_commit_horizon_requires_both_watermarks();
+  test_commit_pending_retains_uncommitted_ops();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_sh2_ifetch_cache_runahead();
