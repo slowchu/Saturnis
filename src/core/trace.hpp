@@ -21,7 +21,8 @@ struct CpuSnapshot {
 };
 
 struct CommitEvent {
-  Tick t = 0;
+  Tick t_start = 0;
+  Tick t_end = 0;
   bus::BusOp op{};
   Tick stall = 0;
   std::uint32_t value = 0;

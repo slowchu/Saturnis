@@ -8,54 +8,214 @@
 #include "platform/file_io.hpp"
 #include "platform/sdl_window.hpp"
 
+#include <atomic>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <mutex>
+#include <optional>
+#include <thread>
 #include <vector>
 
 namespace saturnis::core {
 
 namespace {
+
+struct ScriptResponse {
+  std::size_t script_index = 0;
+  bus::BusResponse response{};
+};
+
+template <typename T> class Mailbox {
+public:
+  void push(const T &value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.push_back(value);
+  }
+
+  [[nodiscard]] bool try_pop(T &out) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (queue_.empty()) {
+      return false;
+    }
+    out = queue_.front();
+    queue_.pop_front();
+    return true;
+  }
+
+private:
+  std::mutex mutex_;
+  std::deque<T> queue_;
+};
+
 void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
-  while (!(cpu0.done() && cpu1.done())) {
-    auto p0 = cpu0.produce();
-    auto p1 = cpu1.produce();
-    if (!p0 && !p1) {
+  std::optional<cpu::PendingBusOp> p0;
+  std::optional<cpu::PendingBusOp> p1;
+
+  while (true) {
+    arbiter.update_progress(0, cpu0.local_time() + 1);
+    arbiter.update_progress(1, cpu1.local_time() + 1);
+
+    if (!p0 && !cpu0.done()) {
+      p0 = cpu0.produce();
+    }
+    if (!p1 && !cpu1.done()) {
+      p1 = cpu1.produce();
+    }
+
+    if (!p0 && !p1 && cpu0.done() && cpu1.done()) {
       break;
     }
 
-    std::vector<std::pair<int, cpu::PendingBusOp>> pending;
+    std::vector<bus::BusOp> pending_ops;
+    std::vector<int> pending_cpu;
+    std::vector<std::size_t> pending_script;
     if (p0) {
-      pending.emplace_back(0, *p0);
+      pending_ops.push_back(p0->op);
+      pending_cpu.push_back(0);
+      pending_script.push_back(p0->script_index);
     }
     if (p1) {
-      pending.emplace_back(1, *p1);
-    }
-    std::vector<bus::BusOp> ops;
-    ops.reserve(pending.size());
-    for (const auto &entry : pending) {
-      ops.push_back(entry.second.op);
+      pending_ops.push_back(p1->op);
+      pending_cpu.push_back(1);
+      pending_script.push_back(p1->script_index);
     }
 
-    const auto committed = arbiter.commit_batch(ops);
+    if (pending_ops.empty()) {
+      continue;
+    }
+
+    const auto committed = arbiter.commit_batch(pending_ops);
     for (const auto &result : committed) {
-      const auto &entry = pending[result.input_index];
-      const auto &resp = result.response;
-      if (entry.first == 0) {
-        cpu0.apply_response(entry.second.script_index, resp);
+      const int cpu = pending_cpu[result.input_index];
+      const auto script_index = pending_script[result.input_index];
+      if (cpu == 0) {
+        cpu0.apply_response(script_index, result.response);
+        p0.reset();
       } else {
-        cpu1.apply_response(entry.second.script_index, resp);
+        cpu1.apply_response(script_index, result.response);
+        p1.reset();
       }
     }
   }
 }
-} // namespace
 
-std::string Emulator::run_dual_demo_trace() {
-  TraceLog trace;
-  mem::CommittedMemory mem;
-  dev::DeviceHub dev;
-  bus::BusArbiter arbiter(mem, dev, trace);
+void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
+  Mailbox<cpu::PendingBusOp> req0;
+  Mailbox<cpu::PendingBusOp> req1;
+  Mailbox<ScriptResponse> resp0;
+  Mailbox<ScriptResponse> resp1;
+  Mailbox<core::Tick> progress0;
+  Mailbox<core::Tick> progress1;
 
+  std::atomic<bool> done0{false};
+  std::atomic<bool> done1{false};
+
+  auto producer = [](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
+                     Mailbox<core::Tick> &progress, std::atomic<bool> &done) {
+    std::optional<cpu::PendingBusOp> waiting;
+    while (true) {
+      if (!waiting && !cpu.done()) {
+        waiting = cpu.produce();
+        if (waiting) {
+          req.push(*waiting);
+          progress.push(waiting->op.req_time + 1);
+        }
+      }
+
+      if (!waiting && cpu.done()) {
+        progress.push(cpu.local_time() + 1);
+        done.store(true);
+        return;
+      }
+
+      ScriptResponse response;
+      if (resp.try_pop(response)) {
+        cpu.apply_response(response.script_index, response.response);
+        progress.push(cpu.local_time() + 1);
+        waiting.reset();
+        continue;
+      }
+
+      std::this_thread::yield();
+      (void)cpu_id;
+    }
+  };
+
+  std::thread t0(producer, 0, std::ref(cpu0), std::ref(req0), std::ref(resp0), std::ref(progress0), std::ref(done0));
+  std::thread t1(producer, 1, std::ref(cpu1), std::ref(req1), std::ref(resp1), std::ref(progress1), std::ref(done1));
+
+  std::optional<cpu::PendingBusOp> p0;
+  std::optional<cpu::PendingBusOp> p1;
+
+  while (true) {
+    core::Tick prog = 0;
+    while (progress0.try_pop(prog)) {
+      arbiter.update_progress(0, prog);
+    }
+    while (progress1.try_pop(prog)) {
+      arbiter.update_progress(1, prog);
+    }
+
+    if (!p0) {
+      cpu::PendingBusOp msg;
+      if (req0.try_pop(msg)) {
+        p0 = msg;
+      }
+    }
+    if (!p1) {
+      cpu::PendingBusOp msg;
+      if (req1.try_pop(msg)) {
+        p1 = msg;
+      }
+    }
+
+    std::vector<bus::BusOp> pending_ops;
+    std::vector<int> pending_cpu;
+    std::vector<std::size_t> pending_script;
+    if (p0) {
+      pending_ops.push_back(p0->op);
+      pending_cpu.push_back(0);
+      pending_script.push_back(p0->script_index);
+    }
+    if (p1) {
+      pending_ops.push_back(p1->op);
+      pending_cpu.push_back(1);
+      pending_script.push_back(p1->script_index);
+    }
+
+    if ((p0 && !p1 && !done1.load()) || (p1 && !p0 && !done0.load())) {
+      std::this_thread::yield();
+      continue;
+    }
+
+    if (!pending_ops.empty()) {
+      const auto committed = arbiter.commit_batch(pending_ops);
+      for (const auto &result : committed) {
+        const int cpu = pending_cpu[result.input_index];
+        const auto script_index = pending_script[result.input_index];
+        if (cpu == 0) {
+          resp0.push(ScriptResponse{script_index, result.response});
+          p0.reset();
+        } else {
+          resp1.push(ScriptResponse{script_index, result.response});
+          p1.reset();
+        }
+      }
+    }
+
+    if (done0.load() && done1.load() && !p0 && !p1) {
+      break;
+    }
+
+    std::this_thread::yield();
+  }
+
+  t0.join();
+  t1.join();
+}
+
+std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> dual_demo_scripts() {
   std::vector<cpu::ScriptOp> cpu0_ops{{cpu::ScriptOpKind::Write, 0x00001000U, 4, 0xDEADBEEFU, 0},
                                       {cpu::ScriptOpKind::Compute, 0, 0, 0, 3},
                                       {cpu::ScriptOpKind::Write, 0x20001000U, 4, 0xC0FFEE11U, 0},
@@ -64,10 +224,35 @@ std::string Emulator::run_dual_demo_trace() {
                                       {cpu::ScriptOpKind::Compute, 0, 0, 0, 2},
                                       {cpu::ScriptOpKind::Read, 0x20001000U, 4, 0, 0},
                                       {cpu::ScriptOpKind::Read, 0x05F00010U, 4, 0, 0}};
+  return {cpu0_ops, cpu1_ops};
+}
 
+} // namespace
+
+std::string Emulator::run_dual_demo_trace() {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = dual_demo_scripts();
   cpu::ScriptedCPU cpu0(0, cpu0_ops);
   cpu::ScriptedCPU cpu1(1, cpu1_ops);
   run_scripted_pair(cpu0, cpu1, arbiter);
+
+  return trace.to_jsonl();
+}
+
+std::string Emulator::run_dual_demo_trace_multithread() {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = dual_demo_scripts();
+  cpu::ScriptedCPU cpu0(0, cpu0_ops);
+  cpu::ScriptedCPU cpu1(1, cpu1_ops);
+  run_scripted_pair_multithread(cpu0, cpu1, arbiter);
 
   return trace.to_jsonl();
 }
@@ -110,31 +295,55 @@ int Emulator::run(const RunConfig &config) {
   slave.reset(0x00000000U, 0x0001FFF0U);
 
   std::uint64_t seq = 0;
+  std::optional<bus::BusOp> p0;
+  std::optional<bus::BusOp> p1;
+
   while ((master.executed_instructions() + slave.executed_instructions()) < config.max_steps) {
-    const auto p0 = master.produce_until_bus(seq++, trace, 16);
-    const auto p1 = slave.produce_until_bus(seq++, trace, 16);
+    arbiter.update_progress(0, master.local_time() + 1);
+    arbiter.update_progress(1, slave.local_time() + 1);
+
+    if (!p0) {
+      const auto next = master.produce_until_bus(seq++, trace, 16);
+      if (next.op.has_value()) {
+        p0 = *next.op;
+      }
+    }
+    if (!p1) {
+      const auto next = slave.produce_until_bus(seq++, trace, 16);
+      if (next.op.has_value()) {
+        p1 = *next.op;
+      }
+    }
 
     std::vector<bus::BusOp> fetches;
-    if (p0.op.has_value()) {
-      fetches.push_back(*p0.op);
+    std::vector<int> cpus;
+    if (p0) {
+      fetches.push_back(*p0);
+      cpus.push_back(0);
     }
-    if (p1.op.has_value()) {
-      fetches.push_back(*p1.op);
+    if (p1) {
+      fetches.push_back(*p1);
+      cpus.push_back(1);
     }
 
     if (fetches.empty()) {
-      if (p0.executed == 0U && p1.executed == 0U) {
+      if ((master.executed_instructions() + slave.executed_instructions()) >= config.max_steps) {
         break;
       }
       continue;
     }
 
     const auto committed = arbiter.commit_batch(fetches);
+    if (committed.empty()) {
+      continue;
+    }
     for (const auto &result : committed) {
-      if (result.op.cpu_id == 0) {
+      if (cpus[result.input_index] == 0) {
         master.apply_ifetch_and_step(result.response, trace);
+        p0.reset();
       } else {
         slave.apply_ifetch_and_step(result.response, trace);
+        p1.reset();
       }
     }
   }
