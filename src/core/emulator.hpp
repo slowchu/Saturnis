@@ -19,6 +19,7 @@ class Emulator {
 public:
   int run(const RunConfig &config);
   [[nodiscard]] std::string run_dual_demo_trace();
+  [[nodiscard]] std::string run_dual_demo_trace_multithread();
 
 private:
   void maybe_write_trace(const RunConfig &config, const TraceLog &trace) const;

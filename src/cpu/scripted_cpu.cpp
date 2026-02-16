@@ -61,7 +61,7 @@ std::optional<PendingBusOp> ScriptedCPU::produce() {
 }
 
 void ScriptedCPU::apply_response(std::size_t script_index, const bus::BusResponse &response) {
-  local_time_ = response.commit_time;
+  local_time_ += response.stall;
   const auto &ins = script_[script_index];
   const std::uint32_t phys = mem::to_phys(ins.vaddr);
   if (ins.kind == ScriptOpKind::Read) {
