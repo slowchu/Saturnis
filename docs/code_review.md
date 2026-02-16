@@ -16,18 +16,15 @@ Date: 2026-02-16
 4. **DeviceHub semantics expanded incrementally.**
    - MMIO writes now latch into deterministic register storage with byte/halfword lane updates.
    - MMIO reads now return latched values (with deterministic defaults for unwritten status registers) and have focused kernel coverage.
-5. **Initial device-specific register behavior added.**
-   - Display status register is modeled as deterministic read-only ready (`0x05F00010`).
-   - SCU IMS (`0x05FE00A0`) now enforces a deterministic writable-bit mask with focused tests.
 
 ## Remaining high-value work
 
 1. **Expand device model semantics further.**
-   - `DeviceHub` now has initial explicit register behavior, but broader SMPC/SCU/VDP/SCSP register maps are still incomplete.
+   - `DeviceHub` now supports deterministic register latching/readback but still lacks explicit SMPC/SCU/VDP/SCSP behavior.
 2. **Complete SH-2 data-memory execution path.**
    - Architecture notes still call out partial data-memory integration.
 
 ## Recommended next implementation order
 
-1. Continue adding explicit SMPC/SCU/VDP/SCSP register semantics with deterministic tests.
+1. Continue device-specific semantics (SMPC/SCU/VDP/SCSP) with deterministic tests.
 2. Continue SH-2 data-memory integration behind regression traces.
