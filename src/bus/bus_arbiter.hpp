@@ -59,6 +59,10 @@ public:
 
   [[nodiscard]] BusResponse commit(const BusOp &op);
   [[nodiscard]] std::vector<CommitResult> commit_batch(const std::vector<BusOp> &ops);
+  [[nodiscard]] std::vector<CommitResult> commit_pending(std::vector<BusOp> &pending_ops);
+
+  void update_progress(int cpu_id, core::Tick executed_up_to);
+  [[nodiscard]] core::Tick commit_horizon() const;
 
   void update_progress(int cpu_id, core::Tick executed_up_to);
   [[nodiscard]] core::Tick commit_horizon() const;

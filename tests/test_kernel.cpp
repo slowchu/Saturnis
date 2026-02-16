@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,35 +22,52 @@ void check(bool cond, const std::string &msg) {
 }
 
 void run_pair(saturnis::cpu::ScriptedCPU &cpu0, saturnis::cpu::ScriptedCPU &cpu1, saturnis::bus::BusArbiter &arbiter) {
-  while (!(cpu0.done() && cpu1.done())) {
-    auto p0 = cpu0.produce();
-    auto p1 = cpu1.produce();
+  std::optional<saturnis::cpu::PendingBusOp> p0;
+  std::optional<saturnis::cpu::PendingBusOp> p1;
 
-    std::vector<std::pair<int, saturnis::cpu::PendingBusOp>> pending;
-    if (p0) {
-      pending.emplace_back(0, *p0);
+  while (true) {
+    arbiter.update_progress(0, cpu0.local_time() + 1);
+    arbiter.update_progress(1, cpu1.local_time() + 1);
+
+    if (!p0 && !cpu0.done()) {
+      p0 = cpu0.produce();
     }
-    if (p1) {
-      pending.emplace_back(1, *p1);
+    if (!p1 && !cpu1.done()) {
+      p1 = cpu1.produce();
     }
-    if (pending.empty()) {
+
+    if (!p0 && !p1 && cpu0.done() && cpu1.done()) {
       break;
     }
 
-    std::vector<saturnis::bus::BusOp> ops;
-    ops.reserve(pending.size());
-    for (const auto &e : pending) {
-      ops.push_back(e.second.op);
+    std::vector<saturnis::bus::BusOp> pending_ops;
+    std::vector<int> pending_cpu;
+    std::vector<std::size_t> pending_script;
+    if (p0) {
+      pending_ops.push_back(p0->op);
+      pending_cpu.push_back(0);
+      pending_script.push_back(p0->script_index);
+    }
+    if (p1) {
+      pending_ops.push_back(p1->op);
+      pending_cpu.push_back(1);
+      pending_script.push_back(p1->script_index);
     }
 
-    const auto committed = arbiter.commit_batch(ops);
+    if (pending_ops.empty()) {
+      continue;
+    }
+
+    const auto committed = arbiter.commit_batch(pending_ops);
     for (const auto &result : committed) {
-      const auto &e = pending[result.input_index];
-      auto resp = result.response;
-      if (e.first == 0) {
-        cpu0.apply_response(e.second.script_index, resp);
+      const auto cpu = pending_cpu[result.input_index];
+      const auto script_index = pending_script[result.input_index];
+      if (cpu == 0) {
+        cpu0.apply_response(script_index, result.response);
+        p0.reset();
       } else {
-        cpu1.apply_response(e.second.script_index, resp);
+        cpu1.apply_response(script_index, result.response);
+        p1.reset();
       }
     }
   }
@@ -212,6 +230,7 @@ void test_sh2_ifetch_cache_runahead() {
   check(first.op.has_value(), "first fetch should be a bus miss");
   auto resp = arbiter.commit(*first.op);
   core.apply_ifetch_and_step(resp, trace);
+  check(core.local_time() == (resp.stall + 1U), "IFETCH miss path must include intrinsic execute cost");
 
   const auto second = core.produce_until_bus(1, trace, 6);
   check(!second.op.has_value(), "subsequent IFETCHes in same line should be cache hits");

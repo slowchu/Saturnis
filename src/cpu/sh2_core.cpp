@@ -34,9 +34,8 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   }
 
-  if (!from_bus_commit) {
-    t_ += 1; // local execute cost for icache hit.
-  }
+  (void)from_bus_commit;
+  t_ += 1; // intrinsic execute cost for each retired instruction.
   ++executed_;
   trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
 }

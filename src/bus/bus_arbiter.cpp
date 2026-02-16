@@ -176,6 +176,12 @@ std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops
   for (std::size_t i = 0; i < ops.size(); ++i) {
     pending.push_back(CommitResult{i, ops[i], {}});
   }
+  progress_tracking_enabled_ = true;
+  auto &slot = progress_up_to_[static_cast<std::size_t>(cpu_id)];
+  if (slot == std::numeric_limits<core::Tick>::max() || executed_up_to > slot) {
+    slot = executed_up_to;
+  }
+}
 
   std::vector<CommitResult> committed;
   committed.reserve(ops.size());
