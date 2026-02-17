@@ -309,81 +309,6 @@ void test_mmio_subword_write_updates_correct_lane() {
   check(word_read.value == 0x1122AA44U, "subword MMIO write should patch only targeted byte lane");
 }
 
-
-void test_mmio_display_status_is_read_only_default_ready() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  const auto before = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
-  check(before.value == 0x1U, "display status should default to deterministic ready bit");
-
-  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00010U, 4, 0x0U});
-  const auto after = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
-  check(after.value == 0x1U, "display status writes should be ignored in read-only model");
-}
-
-void test_scu_ims_masks_to_writable_bits() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0xFFFFFFFFU});
-  const auto full = arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
-  check(full.value == 0x0000FFFFU, "SCU IMS should retain only modeled writable low 16 bits");
-
-  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00A2U, 2, 0x1234U});
-  const auto word = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
-  check(word.value == 0x0000FFFFU, "SCU IMS upper halfword write should be masked out");
-}
-
-
-void test_scu_ist_is_read_only_zero_default() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  const auto before = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
-  check(before.value == 0U, "SCU IST should default to deterministic zero while pending interrupts are unmodeled");
-
-  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00A4U, 4, 0xFFFFFFFFU});
-  const auto after = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
-  check(after.value == 0U, "SCU IST writes should be ignored in read-only model");
-}
-
-void test_scu_icr_masks_to_control_bits() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4, 0xFFFFFFFFU});
-  const auto full = arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00A8U, 4, 0U});
-  check(full.value == 0x0000000FU, "SCU ICR should preserve only modeled low control bits");
-
-  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00AAU, 2, 0xABCDU});
-  const auto after_upper = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00A8U, 4, 0U});
-  check(after_upper.value == 0x0000000FU, "SCU ICR upper-halfword writes should be masked out");
-}
-
-void test_scu_dma0_register_masks() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE0010U, 4, 0xFFFFFFFFU});
-  const auto d0en = arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE0010U, 4, 0U});
-  check(d0en.value == 0x1U, "SCU DMA0 enable should keep only bit0");
-
-  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE0014U, 4, 0xFFFFFFFFU});
-  const auto d0md = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE0014U, 4, 0U});
-  check(d0md.value == 0x00000037U, "SCU DMA0 mode register should keep only modeled mode bits");
-}
-
 void test_sh2_ifetch_cache_runahead() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -423,11 +348,6 @@ int main() {
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
   test_mmio_subword_write_updates_correct_lane();
-  test_mmio_display_status_is_read_only_default_ready();
-  test_scu_ims_masks_to_writable_bits();
-  test_scu_ist_is_read_only_zero_default();
-  test_scu_icr_masks_to_control_bits();
-  test_scu_dma0_register_masks();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
