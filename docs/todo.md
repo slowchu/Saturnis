@@ -35,12 +35,31 @@
 15. [x] Expand SH-2 delay-slot matrix to include MOV.W/MOV.L store delay-slot combinations under BRA/RTS.
 16. [x] Add deterministic commit-horizon tests that cycle progress updates between CPUs while pending queues carry mixed RAM/MMIO operations.
 
+## Challenge session tasks (expanded to 16 and completed)
+
+1. [x] Add deterministic SCU same-batch overlapping source-set/source-clear contention coverage.
+2. [x] Add deterministic repeated-run coverage for overlapping mixed-size SCU source set/clear contention.
+3. [x] Add deterministic SCU overlap coverage that validates masked IST visibility through IMS.
+4. [x] Add deterministic BIOS fixture count-stability checks for `cache_hit:true` commits.
+5. [x] Add deterministic BIOS fixture count-stability checks for `cache_hit:false` commits.
+6. [x] Keep BIOS `BARRIER` commit-count stability assertions active across repeated runs.
+7. [x] Keep BIOS DMA-tagged commit-count checks pinned to deterministic zero until DMA modeling exists.
+8. [x] Add deterministic dual-demo multithread repeated-run checks for stable `BARRIER` commit counts.
+9. [x] Expand SH-2 delay-slot matrix with BRA + MOV.W store cases where delay-slot and target both write the same address.
+10. [x] Expand SH-2 delay-slot matrix with RTS + MOV.W store cases where delay-slot and target both write the same address.
+11. [x] Expand SH-2 delay-slot matrix with BRA + MOV.L store cases where delay-slot and target both write the same address.
+12. [x] Expand SH-2 delay-slot matrix with RTS + MOV.L store cases where delay-slot and target both write the same address.
+13. [x] Add deterministic commit-horizon coverage for mixed RAM/MMIO queues that drain across three horizon-advance cycles.
+14. [x] Add deterministic commit-horizon coverage asserting pending-order preservation across long queue drain cycles.
+15. [x] Refresh architecture notes to describe the expanded overlap, count-stability, and delay-slot coverage.
+16. [x] Refresh code-review snapshot to document the completed 16-item challenge and residual risks.
+
 ## Next tasks
 
-1. [ ] Add deterministic SCU source-mask contention tests that interleave overlapping source-set and source-clear writes in the same arbitration batch.
-2. [ ] Add deterministic BIOS trace count assertions for cache-hit (`"cache_hit":true`) versus miss commits across repeated runs.
-3. [ ] Expand SH-2 delay-slot matrix to include branch-target-side memory validation when both delay-slot and target perform writes to the same address.
-4. [ ] Add deterministic commit-horizon regression coverage for longer pending queues that require three or more horizon-advance cycles to drain.
+1. [ ] Add deterministic SCU source-mask contention tests that interleave overlapping source-set and source-clear writes across two consecutive batches with round-robin winner rotation checks.
+2. [ ] Add deterministic BIOS trace assertions comparing per-kind commit counts between single-thread and multithread dual-demo runs (`IFETCH/READ/WRITE/MMIO/BARRIER`).
+3. [ ] Expand SH-2 delay-slot matrix with mixed-width target-side overwrite checks (delay-slot MOV.W store then target MOV.L store to same address, and inverse).
+4. [ ] Add deterministic commit-horizon regression coverage for queues requiring four or more horizon-advance cycles with interleaved MMIO reads/writes and RAM writes.
 
 ## Notes
 

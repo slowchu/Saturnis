@@ -75,6 +75,15 @@ int main() {
     return 1;
   }
 
+  const std::size_t demo_barrier = count_occurrences(single_a, R"("kind":"BARRIER")");
+  for (int run = 0; run < 5; ++run) {
+    const auto mt_trace = emu.run_dual_demo_trace_multithread();
+    if (count_occurrences(mt_trace, R"("kind":"BARRIER")") != demo_barrier) {
+      std::cerr << "dual-demo BARRIER commit counts changed on multithread run " << run << '\n';
+      return 1;
+    }
+  }
+
   const auto bios_image = make_deterministic_bios_image();
   const auto bios_fixture = emu.run_bios_trace(bios_image, 32U);
   for (int run = 0; run < 5; ++run) {
@@ -141,6 +150,20 @@ int main() {
   if (fixture_dma_tagged != 0U) {
     std::cerr << "bios fixture unexpectedly contains DMA-tagged commits before DMA path modeling exists\n";
     return 1;
+  }
+
+  const std::size_t fixture_cache_hit_true = count_occurrences(bios_fixture, R"("cache_hit":true)");
+  const std::size_t fixture_cache_hit_false = count_occurrences(bios_fixture, R"("cache_hit":false)");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (count_occurrences(bios_trace, R"("cache_hit":true)") != fixture_cache_hit_true) {
+      std::cerr << "bios fixture cache-hit=true commit counts changed on run " << run << '\n';
+      return 1;
+    }
+    if (count_occurrences(bios_trace, R"("cache_hit":false)") != fixture_cache_hit_false) {
+      std::cerr << "bios fixture cache-hit=false commit counts changed on run " << run << '\n';
+      return 1;
+    }
   }
 
   if (!trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||

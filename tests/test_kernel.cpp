@@ -1138,6 +1138,167 @@ void test_sh2_rts_with_movl_store_delay_slot_applies_branch_after_memory_slot() 
   check(core.reg(0) == 1U, "RTS target instruction should execute after MOV.L store delay-slot memory commit");
 }
 
+
+void test_scu_synthetic_source_overlapping_set_and_clear_same_batch_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000000U});
+  const saturnis::bus::BusOp cpu0_set{0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000FF0U};
+  const saturnis::bus::BusOp cpu1_clear{1, 1U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x000000F0U};
+  const auto committed = arbiter.commit_batch({cpu0_set, cpu1_clear});
+
+  check(committed.size() == 2U, "same-batch overlap set/clear should commit both source ops");
+  check(committed[0].op.cpu_id == 0 && committed[1].op.cpu_id == 1,
+        "same-batch overlap set/clear should use deterministic arbitration ordering");
+
+  const auto source_after = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_after.value == 0x00000F00U,
+        "same-batch overlap set/clear should deterministically leave expected overlapping bits");
+}
+
+void test_scu_synthetic_source_overlapping_set_and_clear_is_stable_across_runs() {
+  std::uint32_t baseline = 0;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000000U});
+    const saturnis::bus::BusOp cpu0_set{0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ADU, 1, 0x5AU};
+    const saturnis::bus::BusOp cpu1_clear{1, 1U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x0AU};
+    (void)arbiter.commit_batch({cpu0_set, cpu1_clear});
+
+    const auto source_after = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+    if (run == 0) {
+      baseline = source_after.value;
+    } else {
+      check(source_after.value == baseline, "overlapping set/clear mixed-byte contention should be deterministic across runs");
+    }
+  }
+}
+
+void test_scu_overlapping_set_clear_respects_ims_masked_ist_view() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000F00U});
+  const saturnis::bus::BusOp cpu0_set{0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000FF0U};
+  const saturnis::bus::BusOp cpu1_clear{1, 1U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000030U};
+  (void)arbiter.commit_batch({cpu0_set, cpu1_clear});
+
+  const auto ist = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(ist.value == 0x000000C0U,
+        "SCU IST should deterministically report overlap set/clear pending bits after IMS masking");
+}
+
+void test_commit_horizon_long_queue_drains_in_three_cycles() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 1U, 0, saturnis::bus::BusKind::Write, 0x7100U, 4, 0x11U},
+                                            {1, 2U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000001U},
+                                            {0, 6U, 2, saturnis::bus::BusKind::Write, 0x7104U, 4, 0x22U},
+                                            {1, 9U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000001U},
+                                            {0, 12U, 4, saturnis::bus::BusKind::Write, 0x7108U, 4, 0x33U}};
+
+  arbiter.update_progress(0, 4U);
+  arbiter.update_progress(1, 4U);
+  const auto first = arbiter.commit_pending(pending);
+  check(first.size() == 2U, "first cycle should drain only req_time values below initial horizon");
+
+  arbiter.update_progress(0, 10U);
+  arbiter.update_progress(1, 10U);
+  const auto second = arbiter.commit_pending(pending);
+  check(second.size() == 2U, "second cycle should drain middle req_time values once horizon advances");
+
+  arbiter.update_progress(0, 20U);
+  arbiter.update_progress(1, 20U);
+  const auto third = arbiter.commit_pending(pending);
+  check(third.size() == 1U, "third cycle should drain the final horizon-blocked op");
+  check(pending.empty(), "long pending queue should be empty after three horizon cycles");
+}
+
+void test_commit_horizon_long_queue_preserves_remaining_order_each_cycle() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 2U, 0, saturnis::bus::BusKind::Write, 0x7200U, 4, 0xA1U},
+                                            {1, 5U, 1, saturnis::bus::BusKind::Write, 0x7204U, 4, 0xA2U},
+                                            {0, 8U, 2, saturnis::bus::BusKind::Write, 0x7208U, 4, 0xA3U},
+                                            {1, 11U, 3, saturnis::bus::BusKind::Write, 0x720CU, 4, 0xA4U}};
+
+  arbiter.update_progress(0, 6U);
+  arbiter.update_progress(1, 6U);
+  (void)arbiter.commit_pending(pending);
+  check(pending.size() == 2U, "first long-queue cycle should leave two blocked ops");
+  check(pending[0].phys_addr == 0x7208U && pending[1].phys_addr == 0x720CU,
+        "remaining long-queue ops should keep deterministic relative order after first cycle");
+
+  arbiter.update_progress(0, 20U);
+  arbiter.update_progress(1, 20U);
+  (void)arbiter.commit_pending(pending);
+  check(pending.empty(), "second long-queue cycle should drain remaining ordered ops");
+}
+
+void test_sh2_bra_delay_slot_store_then_target_store_same_addr_resolves_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE122U); // MOV #0x22,R1
+  mem.write(0x0002U, 2U, 0xE2AAU); // MOV #0xAA,R2
+  mem.write(0x0004U, 2U, 0xA002U); // BRA +2 (target 0x000C)
+  mem.write(0x0006U, 2U, 0x2121U); // MOV.W R2,@R1 (delay slot)
+  mem.write(0x000CU, 2U, 0xE355U); // MOV #0x55,R3
+  mem.write(0x000EU, 2U, 0x2131U); // MOV.W R3,@R1 (target path store)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  for (int i = 0; i < 7; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(mem.read(0x0022U, 2U) == 0x0055U,
+        "BRA delay-slot store followed by target store to same addr should deterministically leave target value");
+}
+
+void test_sh2_rts_delay_slot_store_then_target_store_same_addr_resolves_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0EU); // MOV #14,R15
+  mem.write(0x0002U, 2U, 0xE122U); // MOV #0x22,R1
+  mem.write(0x0004U, 2U, 0xE2AAU); // MOV #0xAA,R2
+  mem.write(0x0006U, 2U, 0x000BU); // RTS
+  mem.write(0x0008U, 2U, 0x2121U); // MOV.W R2,@R1 (delay slot)
+  mem.write(0x000EU, 2U, 0xE355U); // MOV #0x55,R3 (target)
+  mem.write(0x0010U, 2U, 0x2131U); // MOV.W R3,@R1 (target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  for (int i = 0; i < 10; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(mem.read(0x0022U, 2U) == 0xFFAAU,
+        "RTS same-address delay-slot/target store sequence should deterministically retain the modeled RTS-path value");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -1240,6 +1401,8 @@ int main() {
   test_commit_pending_preserves_order_of_remaining_ops();
   test_commit_horizon_interleaves_mmio_and_ram_deterministically();
   test_commit_horizon_cycles_progress_with_mixed_pending_ram_and_mmio();
+  test_commit_horizon_long_queue_drains_in_three_cycles();
+  test_commit_horizon_long_queue_preserves_remaining_order_each_cycle();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
@@ -1251,6 +1414,9 @@ int main() {
   test_scu_synthetic_source_mixed_size_contention_is_deterministic();
   test_scu_synthetic_source_mixed_size_concurrent_clears_are_deterministic();
   test_scu_synthetic_source_mixed_size_overlapping_clears_are_deterministic();
+  test_scu_synthetic_source_overlapping_set_and_clear_same_batch_is_deterministic();
+  test_scu_synthetic_source_overlapping_set_and_clear_is_stable_across_runs();
+  test_scu_overlapping_set_clear_respects_ims_masked_ist_view();
   test_scu_synthetic_source_mixed_cpu_contention_is_deterministic();
   test_scu_synthetic_source_mmio_stall_is_stable_across_runs();
   test_scu_interrupt_source_subword_writes_apply_lane_masks();
@@ -1275,6 +1441,8 @@ int main() {
   test_sh2_rts_with_movw_store_delay_slot_applies_branch_after_memory_slot();
   test_sh2_bra_with_movl_store_delay_slot_applies_branch_after_memory_slot();
   test_sh2_rts_with_movl_store_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_bra_delay_slot_store_then_target_store_same_addr_resolves_deterministically();
+  test_sh2_rts_delay_slot_store_then_target_store_same_addr_resolves_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
