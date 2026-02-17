@@ -148,7 +148,7 @@
    Ensure all cache-miss/uncached/MMIO cases remain blocking BusOps + tests.
 6. [x] SH-2: Add shifts/rotates/bit ops subset required for common bring-up code paths + flag-edge tests.
 7. [x] SH-2: Add exception/interrupt entry + return scaffolding (vector fetch + RTE) in a deterministic form.
-8. [ ] SCU DMA: Add deterministic register file for DMA channels (reset defaults + R/W masks + lane semantics) + tests.
+8. [x] SCU DMA: Add deterministic register file for DMA channels (reset defaults + R/W masks + lane semantics) + tests.
 9. [ ] SCU DMA: Implement DMA engine as a BusOp producer emitting DMA-tagged ops (non-zero),
    respecting arbiter priority class (DMA > CPU-MMIO > CPU-RAM) + trace assertions.
 10. [ ] SCU DMA: Add DMA completion interrupt delivery into SCU pending/IST path + IMS masking regressions.
