@@ -58,6 +58,7 @@ public:
              const ArbitrationPolicy *policy = nullptr, LatencyModel latency = {});
 
   [[nodiscard]] BusResponse commit(const BusOp &op);
+  [[nodiscard]] BusResponse commit_dma(BusOp op);
   [[nodiscard]] std::vector<CommitResult> commit_batch(const std::vector<BusOp> &ops);
   [[nodiscard]] std::vector<CommitResult> commit_pending(std::vector<BusOp> &pending_ops);
 

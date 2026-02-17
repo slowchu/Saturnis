@@ -172,6 +172,12 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
 
 BusResponse BusArbiter::commit(const BusOp &op) { return execute_commit(op, false); }
 
+BusResponse BusArbiter::commit_dma(BusOp op) {
+  op.cpu_id = -1;
+  op.producer = BusProducer::Dma;
+  return execute_commit(op, false);
+}
+
 std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops) {
   std::vector<CommitResult> pending;
   pending.reserve(ops.size());
