@@ -53,15 +53,15 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
   std::optional<cpu::PendingBusOp> p1;
 
   while (true) {
-    arbiter.update_progress(0, cpu0.local_time() + 1);
-    arbiter.update_progress(1, cpu1.local_time() + 1);
-
     if (!p0 && !cpu0.done()) {
       p0 = cpu0.produce();
     }
     if (!p1 && !cpu1.done()) {
       p1 = cpu1.produce();
     }
+
+    arbiter.update_progress(0, p0 ? (p0->op.req_time + 1U) : cpu0.local_time());
+    arbiter.update_progress(1, p1 ? (p1->op.req_time + 1U) : cpu1.local_time());
 
     if (!p0 && !p1 && cpu0.done() && cpu1.done()) {
       break;
@@ -101,8 +101,8 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
 }
 
 void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
-  arbiter.update_progress(0, 1U);
-  arbiter.update_progress(1, 1U);
+  arbiter.update_progress(0, 0U);
+  arbiter.update_progress(1, 0U);
 
   Mailbox<cpu::PendingBusOp> req0;
   Mailbox<cpu::PendingBusOp> req1;
@@ -127,7 +127,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       }
 
       if (!waiting && cpu.done()) {
-        progress.push(cpu.local_time() + 1);
+        progress.push(cpu.local_time());
         done.store(true);
         return;
       }
@@ -135,7 +135,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       ScriptResponse response;
       if (resp.try_pop(response)) {
         cpu.apply_response(response.script_index, response.response);
-        progress.push(cpu.local_time() + 1);
+        progress.push(cpu.local_time());
         waiting.reset();
         continue;
       }
@@ -152,14 +152,6 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
   std::optional<cpu::PendingBusOp> p1;
 
   while (true) {
-    core::Tick prog = 0;
-    while (progress0.try_pop(prog)) {
-      arbiter.update_progress(0, prog);
-    }
-    while (progress1.try_pop(prog)) {
-      arbiter.update_progress(1, prog);
-    }
-
     if (!p0) {
       cpu::PendingBusOp msg;
       if (req0.try_pop(msg)) {
@@ -171,6 +163,14 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       if (req1.try_pop(msg)) {
         p1 = msg;
       }
+    }
+
+    core::Tick prog = 0;
+    while (progress0.try_pop(prog)) {
+      arbiter.update_progress(0, prog);
+    }
+    while (progress1.try_pop(prog)) {
+      arbiter.update_progress(1, prog);
     }
 
     std::vector<bus::BusOp> pending_ops;
@@ -280,9 +280,6 @@ std::string Emulator::run_bios_trace(const std::vector<std::uint8_t> &bios_image
   std::optional<bus::BusOp> p1;
 
   while ((master.executed_instructions() + slave.executed_instructions()) < max_steps) {
-    arbiter.update_progress(0, master.local_time() + 1);
-    arbiter.update_progress(1, slave.local_time() + 1);
-
     if (!p0) {
       const auto next = master.produce_until_bus(seq++, trace, 16);
       if (next.op.has_value()) {
@@ -295,6 +292,9 @@ std::string Emulator::run_bios_trace(const std::vector<std::uint8_t> &bios_image
         p1 = *next.op;
       }
     }
+
+    arbiter.update_progress(0, p0 ? (p0->req_time + 1U) : master.local_time());
+    arbiter.update_progress(1, p1 ? (p1->req_time + 1U) : slave.local_time());
 
     std::vector<bus::BusOp> fetches;
     std::vector<int> cpus;
