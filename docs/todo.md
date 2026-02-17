@@ -185,6 +185,7 @@
 13. [ ] Add deterministic dual-demo per-CPU IFETCH timing tuple parity checks for selected IFETCH lines.
 14. [ ] Add deterministic dual-demo per-CPU READ/MMIO timing tuple parity checks for second-occurrence lines.
 15. [ ] Add deterministic trace-prefix assertions for the first 28 commit lines across repeated multithread runs.
+Part 2:
 1. [ ] Finish remaining dual-demo timing-tuple parity checks for per-CPU READ/MMIO and selected BARRIER lines.
 2. [ ] Finish BIOS per-CPU IFETCH timing-tuple parity checks across repeated runs.
 3. [ ] Add deterministic dual-demo trace-prefix assertions for first 24 commit lines.
