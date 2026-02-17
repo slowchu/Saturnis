@@ -11,7 +11,7 @@
 
 1. [x] Add deterministic SH-2 delayed-branch behavior coverage (BRA/RTS delay-slot semantics + regression tests).
 2. [x] Add focused MMIO interrupt-source wiring into SCU pending bits (deterministic synthetic source model).
-3. [ ] Expand BIOS bring-up trace assertions to cover stable state snapshots (PC/register checkpoints).
+3. [x] Expand BIOS bring-up trace assertions to cover stable state snapshots (PC/register checkpoints).
 4. [ ] Add deterministic trace fixture comparison for a fixed BIOS mini-program across single/multirun execution.
 5. [ ] Add deterministic MMIO side-effect tracing assertions for SCU synthetic source register transitions.
 

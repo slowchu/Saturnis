@@ -31,6 +31,12 @@ std::vector<std::uint8_t> make_deterministic_bios_image() {
   return bios;
 }
 
+
+
+bool trace_contains_checkpoint(const std::string &trace, const std::string &needle) {
+  return trace.find(needle) != std::string::npos;
+}
+
 } // namespace
 
 int main() {
@@ -76,6 +82,14 @@ int main() {
   if (bios_trace_a.find("\"kind\":\"READ\"") == std::string::npos ||
       bios_trace_a.find("\"kind\":\"WRITE\"") == std::string::npos) {
     std::cerr << "bios bring-up trace missing expected data read/write commits\n";
+    return 1;
+  }
+
+  if (!trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||
+      !trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":4,\"sr\":240,\"r\":[0,64,4294967168") ||
+      !trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":6,\"sr\":240,\"r\":[0,64,4294967169") ||
+      !trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":8,\"sr\":240,\"r\":[0,64,4294967169")) {
+    std::cerr << "bios bring-up trace missing expected deterministic state checkpoints\n";
     return 1;
   }
 
