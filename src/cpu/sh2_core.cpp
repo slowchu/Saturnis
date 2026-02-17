@@ -3,6 +3,8 @@
 namespace saturnis::cpu {
 namespace {
 
+constexpr std::uint32_t kSrTBit = 0x00000001U;
+
 [[nodiscard]] bool is_movl_mem_to_reg(std::uint16_t instr, std::uint32_t &n, std::uint32_t &m) {
   if ((instr & 0xF00FU) != 0x6002U) {
     return false;
@@ -68,6 +70,30 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   std::optional<std::uint32_t> next_branch_target;
   if (instr == 0x0009U) {
     pc_ += 2U;
+  } else if (instr == 0x0018U) {
+    set_t_flag(true);
+    pc_ += 2U;
+  } else if (instr == 0x0008U) {
+    set_t_flag(false);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x0029U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    r_[n] = t_flag() ? 1U : 0U;
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x3000U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    set_t_flag(r_[n] == r_[m]);
+    pc_ += 2U;
+  } else if ((instr & 0xFF00U) == 0x8800U) {
+    const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
+    set_t_flag(r_[0] == static_cast<std::uint32_t>(imm));
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x2008U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    set_t_flag((r_[n] & r_[m]) == 0U);
+    pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
@@ -87,6 +113,28 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
     r_[n] = r_[m];
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4000U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    set_t_flag((r_[n] & 0x80000000U) != 0U);
+    r_[n] <<= 1U;
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4001U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    set_t_flag((r_[n] & 0x1U) != 0U);
+    r_[n] >>= 1U;
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4004U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const bool msb = (r_[n] & 0x80000000U) != 0U;
+    set_t_flag(msb);
+    r_[n] = (r_[n] << 1U) | (msb ? 1U : 0U);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4005U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const bool lsb = (r_[n] & 0x1U) != 0U;
+    set_t_flag(lsb);
+    r_[n] = (r_[n] >> 1U) | (lsb ? 0x80000000U : 0U);
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
     const std::uint32_t branch_pc = pc_;
@@ -118,12 +166,24 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
 }
 
+
 Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &trace, std::uint32_t runahead_budget) {
   Sh2ProduceResult out;
 
+  if (pending_exception_vector_.has_value()) {
+    const std::uint32_t vector_phys = mem::to_phys(static_cast<std::uint32_t>(*pending_exception_vector_) * 4U);
+    pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ExceptionVectorRead, vector_phys, 4U, 0U, 0U};
+    pending_exception_vector_.reset();
+    out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(vector_phys, false), vector_phys, 4U, 0U};
+    return out;
+  }
+
   if (pending_mem_op_.has_value()) {
     const auto &pending = *pending_mem_op_;
-    out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(pending.phys_addr, pending.kind == PendingMemOp::Kind::WriteLong),
+    const bool is_write = pending.kind == PendingMemOp::Kind::WriteByte ||
+                          pending.kind == PendingMemOp::Kind::WriteWord ||
+                          pending.kind == PendingMemOp::Kind::WriteLong;
+    out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(pending.phys_addr, is_write),
                         pending.phys_addr, pending.size, pending.value};
     return out;
   }
@@ -140,10 +200,47 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
       const auto instr = static_cast<std::uint16_t>(cached & 0xFFFFU);
       std::uint32_t n = 0;
       std::uint32_t m = 0;
+      if ((instr & 0xF00FU) == 0x6000U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint32_t data_phys = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadByte, data_phys, 1U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 1U, 0U};
+        return out;
+      }
+      if (is_movw_mem_to_reg(instr, n, m)) {
+        const std::uint32_t data_phys = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadWord, data_phys, 2U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 2U, 0U};
+        return out;
+      }
       if (is_movl_mem_to_reg(instr, n, m)) {
         const std::uint32_t data_phys = mem::to_phys(r_[m]);
         pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, data_phys, 4U, 0U, n};
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 4U, 0U};
+        return out;
+      }
+      if ((instr & 0xF00FU) == 0x6004U || (instr & 0xF00FU) == 0x6005U || (instr & 0xF00FU) == 0x6006U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint8_t sz = ((instr & 0x000FU) == 0x4U) ? 1U : (((instr & 0x000FU) == 0x5U) ? 2U : 4U);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::ReadByte : ((sz == 2U) ? PendingMemOp::Kind::ReadWord : PendingMemOp::Kind::ReadLong);
+        const std::uint32_t data_phys = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, 0U, n, m, sz};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, sz, 0U};
+        return out;
+      }
+      if ((instr & 0xF00FU) == 0x2000U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint32_t data_phys = mem::to_phys(r_[n]);
+        const std::uint32_t write_value = r_[m] & 0xFFU;
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteByte, data_phys, 1U, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 1U, write_value};
+        return out;
+      }
+      if (is_movw_reg_to_mem(instr, n, m)) {
+        const std::uint32_t data_phys = mem::to_phys(r_[n]);
+        const std::uint32_t write_value = r_[m] & 0xFFFFU;
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteWord, data_phys, 2U, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 2U, write_value};
         return out;
       }
       if (is_movl_reg_to_mem(instr, n, m)) {
@@ -191,7 +288,11 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
   if (pending_mem_op_.has_value()) {
     const auto pending = *pending_mem_op_;
     pending_mem_op_.reset();
-    if (pending.kind == PendingMemOp::Kind::ReadLong) {
+    if (pending.kind == PendingMemOp::Kind::ExceptionVectorRead) {
+      exception_return_pc_ = pc_;
+      exception_return_sr_ = sr_;
+      pc_ = response.value;
+    } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
@@ -234,5 +335,7 @@ core::Tick SH2Core::local_time() const { return t_; }
 std::uint64_t SH2Core::executed_instructions() const { return executed_; }
 
 std::uint32_t SH2Core::reg(std::size_t index) const { return r_[index & 0xFU]; }
+
+std::uint32_t SH2Core::sr() const { return sr_; }
 
 } // namespace saturnis::cpu
