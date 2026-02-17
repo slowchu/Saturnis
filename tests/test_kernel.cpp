@@ -336,6 +336,28 @@ void test_display_status_register_is_read_only_and_ready() {
         "write log should keep display-status register address");
 }
 
+void test_scu_ims_register_masks_to_low_16_bits() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
+  check(initial.value == 0U, "SCU IMS reset value should be deterministic zero");
+
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0xA5A5BEEF});
+  const auto after_word_write = arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
+  check(after_word_write.value == 0x0000BEEFU, "SCU IMS should ignore upper 16 bits on 32-bit writes");
+
+  (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00A2U, 2, 0xFFFFU});
+  const auto after_high_half_write = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
+  check(after_high_half_write.value == 0x0000BEEFU, "SCU IMS high-halfword writes should be masked out");
+
+  (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00A1U, 1, 0x11U});
+  const auto low_byte = arbiter.commit({1, 6U, 6, saturnis::bus::BusKind::MmioRead, 0x05FE00A1U, 1, 0U});
+  check(low_byte.value == 0x11U, "SCU IMS byte-lane writes in writable region should be visible");
+}
+
 void test_sh2_ifetch_cache_runahead() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -376,6 +398,7 @@ int main() {
   test_mmio_write_is_visible_to_subsequent_reads();
   test_mmio_subword_write_updates_correct_lane();
   test_display_status_register_is_read_only_and_ready();
+  test_scu_ims_register_masks_to_low_16_bits();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
