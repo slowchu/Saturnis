@@ -309,6 +309,33 @@ void test_mmio_subword_write_updates_correct_lane() {
   check(word_read.value == 0x1122AA44U, "subword MMIO write should patch only targeted byte lane");
 }
 
+void test_display_status_register_is_read_only_and_ready() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
+  check(initial.value == 0x1U, "display status should expose deterministic ready bit");
+
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00010U, 4, 0xFFFFFFFFU});
+  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05F00010U, 1, 0x00U});
+
+  const auto after = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
+  check(after.value == 0x1U, "display status writes should not overwrite read-only ready bit");
+
+  const auto low_byte = arbiter.commit({1, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 1, 0U});
+  check(low_byte.value == 0x1U, "display-status low byte should retain ready bit after writes");
+
+  const auto high_byte = arbiter.commit({1, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05F00013U, 1, 0U});
+  check(high_byte.value == 0U, "upper display-status byte lanes should stay clear");
+
+  const auto &writes = dev.writes();
+  check(writes.size() == 2U, "display-status writes should still be logged for traceability");
+  check(writes[0].addr == 0x05F00010U && writes[1].addr == 0x05F00010U,
+        "write log should keep display-status register address");
+}
+
 void test_sh2_ifetch_cache_runahead() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -348,6 +375,7 @@ int main() {
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
   test_mmio_subword_write_updates_correct_lane();
+  test_display_status_register_is_read_only_and_ready();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
