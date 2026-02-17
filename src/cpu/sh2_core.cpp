@@ -60,6 +60,9 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   executed_ = 0;
   pending_mem_op_.reset();
   pending_branch_target_.reset();
+  pending_exception_vector_.reset();
+  exception_return_pc_.reset();
+  exception_return_sr_.reset();
   pr_ = 0;
   gbr_ = 0;
 }
@@ -207,6 +210,20 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   } else if (instr == 0x000BU) {
     next_branch_target = (pr_ != 0U) ? pr_ : r_[15];
     pc_ += 2U;
+  } else if (instr == 0x002BU) {
+    if (exception_return_pc_.has_value()) {
+      pc_ = *exception_return_pc_;
+      if (exception_return_sr_.has_value()) {
+        sr_ = *exception_return_sr_;
+      }
+      exception_return_pc_.reset();
+      exception_return_sr_.reset();
+    } else {
+      pc_ += 2U;
+    }
+  } else if ((instr & 0xFF00U) == 0xC300U) {
+    pending_exception_vector_ = static_cast<std::uint8_t>(instr & 0xFFU);
+    pc_ += 2U;
   } else {
     // Unknown opcode treated as NOP for vertical-slice robustness.
     pc_ += 2U;
@@ -229,6 +246,14 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
 
 Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &trace, std::uint32_t runahead_budget) {
   Sh2ProduceResult out;
+
+  if (pending_exception_vector_.has_value()) {
+    const std::uint32_t vector_phys = mem::to_phys(static_cast<std::uint32_t>(*pending_exception_vector_) * 4U);
+    pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ExceptionVectorRead, vector_phys, 4U, 0U, 0U};
+    pending_exception_vector_.reset();
+    out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(vector_phys, false), vector_phys, 4U, 0U};
+    return out;
+  }
 
   if (pending_mem_op_.has_value()) {
     const auto &pending = *pending_mem_op_;
@@ -411,7 +436,11 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
   if (pending_mem_op_.has_value()) {
     const auto pending = *pending_mem_op_;
     pending_mem_op_.reset();
-    if (pending.kind == PendingMemOp::Kind::ReadLong) {
+    if (pending.kind == PendingMemOp::Kind::ExceptionVectorRead) {
+      exception_return_pc_ = pc_;
+      exception_return_sr_ = sr_;
+      pc_ = response.value;
+    } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
@@ -420,15 +449,17 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       const std::uint8_t byte = static_cast<std::uint8_t>(response.value & 0xFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
     }
-    if (pending.post_inc_reg.has_value()) {
-      r_[*pending.post_inc_reg] += pending.post_inc_size;
-    }
+    if (pending.kind != PendingMemOp::Kind::ExceptionVectorRead) {
+      if (pending.post_inc_reg.has_value()) {
+        r_[*pending.post_inc_reg] += pending.post_inc_size;
+      }
 
-    if (pending_branch_target_.has_value()) {
-      pc_ = *pending_branch_target_;
-      pending_branch_target_.reset();
-    } else {
-      pc_ += 2U;
+      if (pending_branch_target_.has_value()) {
+        pc_ = *pending_branch_target_;
+        pending_branch_target_.reset();
+      } else {
+        pc_ += 2U;
+      }
     }
 
     t_ += 1;

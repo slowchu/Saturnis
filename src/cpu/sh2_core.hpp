@@ -38,7 +38,7 @@ private:
   void set_t_flag(bool value);
 
   struct PendingMemOp {
-    enum class Kind { ReadByte, WriteByte, ReadWord, WriteWord, ReadLong, WriteLong };
+    enum class Kind { ReadByte, WriteByte, ReadWord, WriteWord, ReadLong, WriteLong, ExceptionVectorRead };
     Kind kind = Kind::ReadLong;
     std::uint32_t phys_addr = 0;
     std::uint8_t size = 4;
@@ -58,6 +58,9 @@ private:
   std::uint64_t executed_ = 0;
   std::optional<PendingMemOp> pending_mem_op_;
   std::optional<std::uint32_t> pending_branch_target_;
+  std::optional<std::uint8_t> pending_exception_vector_;
+  std::optional<std::uint32_t> exception_return_pc_;
+  std::optional<std::uint32_t> exception_return_sr_;
   mem::TinyCache icache_{16, 64};
 };
 

@@ -2806,6 +2806,29 @@ void test_sh2_bsr_jsr_jmp_and_rts_use_pr_with_delay_slots_deterministically() {
         "trace should include BSR target checkpoint with delay-slot semantics");
 }
 
+void test_sh2_trapa_vector_fetch_and_rte_scaffold_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U,2U,0xC301U); // TRAPA #1
+  mem.write(0x0002U,2U,0x7001U); // ADD #1,R0 (return path)
+  mem.write(0x0004U,4U,0x00000010U); // vector 1 -> 0x0010
+  mem.write(0x0010U,2U,0x7001U); // ADD #1,R0 (handler)
+  mem.write(0x0012U,2U,0x002BU); // RTE
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U,0x0001FFF0U);
+  for (int i=0;i<7;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(0)>=1U, "TRAPA vector plus RTE scaffold should deterministically execute at least one post-vector instruction");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"kind\":\"READ\",\"phys\":4") != std::string::npos,
+        "TRAPA scaffold should perform deterministic vector-table READ commit");
+}
+
 void test_sh2_expanded_mov_addressing_modes_are_deterministic_and_bus_blocking() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3115,6 +3138,7 @@ int main() {
   test_sh2_rts_both_negative_overwrite_with_target_register_copy_before_store_is_deterministic();
   test_sh2_same_addr_overwrite_with_four_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_tbit_sett_clrt_movt_and_sr_trace_are_deterministic();
+  test_sh2_trapa_vector_fetch_and_rte_scaffold_are_deterministic();
   test_sh2_expanded_mov_addressing_modes_are_deterministic_and_bus_blocking();
   test_sh2_shift_rotate_subset_updates_t_flag_and_values_deterministically();
   test_sh2_cmp_eq_and_tst_update_tbit_deterministically();
