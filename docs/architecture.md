@@ -72,7 +72,7 @@ This makes bus occupancy and WAIT behavior directly inspectable in regression tr
 
 - SH-2 interpreter is intentionally minimal (bring-up subset).
 - SH-2 data-memory ops are still skeletal; full store-buffer/cached data-path integration for interpreter ops is TODO.
-- Saturn device models are stubs with safe default reads and MMIO logging.
+- Saturn device models now include deterministic MMIO latching and a few explicit register semantics; broad SMPC/SCU/VDP/SCSP coverage remains TODO.
 - VDP rendering is placeholder/debug-oriented.
 - BIOS execution support is partial and not cycle-accurate.
 - `OpBarrier` is implemented as an explicit bus barrier operation (deterministic stall, no memory read/write side effect).
