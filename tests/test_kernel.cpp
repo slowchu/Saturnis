@@ -882,7 +882,7 @@ void test_sh2_rts_uses_delay_slot_deterministically() {
   saturnis::dev::DeviceHub dev;
   saturnis::bus::BusArbiter arbiter(mem, dev, trace);
 
-  mem.write(0x0000U, 2U, 0xEF0AU); // MOV #10,R15
+  mem.write(0x0000U, 2U, 0xEF20U); // MOV #0x20,R15 (SP intentionally different from PR)
   mem.write(0x0002U, 2U, 0xE001U); // MOV #1,R0
   mem.write(0x0004U, 2U, 0x000BU); // RTS
   mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (delay slot)
@@ -891,6 +891,7 @@ void test_sh2_rts_uses_delay_slot_deterministically() {
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -902,6 +903,26 @@ void test_sh2_rts_uses_delay_slot_deterministically() {
   check(core.pc() == 0x000CU, "RTS delay-slot flow should land on branch target then advance");
 }
 
+
+
+void test_sh2_rts_branches_to_pr_not_sp() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x000BU); // RTS
+  mem.write(0x0002U, 2U, 0x0009U); // NOP (delay slot)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x00000030U);
+  core.set_pr(0x00000010U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+
+  check(core.pc() == 0x00000010U, "RTS must branch to PR even when SP holds a different address");
+}
 
 void test_sh2_branch_in_delay_slot_uses_first_branch_target_policy() {
   saturnis::core::TraceLog trace;
@@ -973,6 +994,7 @@ void test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot() {
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -1030,6 +1052,7 @@ void test_sh2_rts_with_movl_delay_slot_applies_branch_after_memory_slot() {
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -1089,6 +1112,7 @@ void test_sh2_rts_with_movw_store_delay_slot_applies_branch_after_memory_slot() 
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -1150,6 +1174,7 @@ void test_sh2_rts_with_movl_store_delay_slot_applies_branch_after_memory_slot() 
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000CU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -3439,6 +3464,7 @@ int main() {
   test_sh2_movl_memory_write_executes_via_bus();
   test_sh2_bra_uses_delay_slot_deterministically();
   test_sh2_rts_uses_delay_slot_deterministically();
+  test_sh2_rts_branches_to_pr_not_sp();
   test_sh2_branch_in_delay_slot_uses_first_branch_target_policy();
   test_sh2_bra_with_movw_delay_slot_applies_branch_after_memory_slot();
   test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot();
