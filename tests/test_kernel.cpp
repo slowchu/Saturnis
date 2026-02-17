@@ -994,6 +994,7 @@ void test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot() {
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -1051,6 +1052,7 @@ void test_sh2_rts_with_movl_delay_slot_applies_branch_after_memory_slot() {
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -1110,6 +1112,7 @@ void test_sh2_rts_with_movw_store_delay_slot_applies_branch_after_memory_slot() 
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000AU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
@@ -1171,6 +1174,7 @@ void test_sh2_rts_with_movl_store_delay_slot_applies_branch_after_memory_slot() 
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000CU);
 
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);

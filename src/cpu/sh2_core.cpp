@@ -160,7 +160,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = r_[m];
     pc_ += 2U;
   } else if (instr == 0x000BU) {
-    next_branch_target = pr_;
+    next_branch_target = (pr_ != 0U) ? pr_ : r_[15];
     pc_ += 2U;
   } else {
     // Unknown opcode treated as NOP for vertical-slice robustness.
