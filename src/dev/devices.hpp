@@ -23,6 +23,7 @@ private:
   std::vector<MmioWriteLog> writes_;
   std::unordered_map<std::uint32_t, std::uint32_t> mmio_regs_;
   std::uint32_t scu_interrupt_pending_ = 0U;
+  std::uint32_t scu_interrupt_source_pending_ = 0U;
 };
 
 } // namespace saturnis::dev

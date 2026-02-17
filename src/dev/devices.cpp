@@ -9,6 +9,8 @@ constexpr std::uint32_t kDisplayStatusAddr = 0x05F00010U;
 constexpr std::uint32_t kScuImsAddr = 0x05FE00A0U;
 constexpr std::uint32_t kScuIstAddr = 0x05FE00A4U;
 constexpr std::uint32_t kScuIstClearAddr = 0x05FE00A8U;
+constexpr std::uint32_t kScuIstSourceSetAddr = 0x05FE00ACU;
+constexpr std::uint32_t kScuIstSourceClearAddr = 0x05FE00B0U;
 constexpr std::uint32_t kSmpcStatusAddr = 0x05D00080U;
 constexpr std::uint32_t kVdp2TvmdAddr = 0x05F80000U;
 constexpr std::uint32_t kVdp2TvstatAddr = 0x05F80004U;
@@ -26,11 +28,16 @@ struct MmioRegisterSpec {
   if (word_addr == kScuImsAddr) {
     return MmioRegisterSpec{0x0U, 0x0000FFFFU};
   }
-  // TODO: model hardware-driven SCU pending-bit sources from other subsystems (DMA/VDP/SCSP).
   if (word_addr == kScuIstAddr) {
     return MmioRegisterSpec{0x0U, 0x00000000U};
   }
   if (word_addr == kScuIstClearAddr) {
+    return MmioRegisterSpec{0x0U, 0x0000FFFFU};
+  }
+  if (word_addr == kScuIstSourceSetAddr) {
+    return MmioRegisterSpec{0x0U, 0x0000FFFFU};
+  }
+  if (word_addr == kScuIstSourceClearAddr) {
     return MmioRegisterSpec{0x0U, 0x0000FFFFU};
   }
   if (word_addr == kSmpcStatusAddr) {
@@ -90,11 +97,12 @@ std::uint32_t DeviceHub::read(std::uint64_t, int, std::uint32_t addr, std::uint8
   const std::uint32_t word_addr = addr & ~0x3U;
 
   std::uint32_t value = 0U;
-  // TODO: model hardware-driven SCU pending-bit sources from other subsystems (DMA/VDP/SCSP).
   if (word_addr == kScuIstAddr) {
     const auto ims_spec = register_spec(kScuImsAddr);
     const std::uint32_t ims = materialize_register_value(ims_spec, read_persisted_or_zero(mmio_regs_, kScuImsAddr));
-    value = scu_interrupt_pending_ & ~ims;
+    value = (scu_interrupt_pending_ | scu_interrupt_source_pending_) & ~ims;
+  } else if (word_addr == kScuIstSourceSetAddr) {
+    value = scu_interrupt_source_pending_ & 0x0000FFFFU;
   } else {
     const auto spec = register_spec(word_addr);
     const std::uint32_t persisted_value = read_persisted_or_zero(mmio_regs_, word_addr);
@@ -115,7 +123,6 @@ void DeviceHub::write(std::uint64_t t, int cpu, std::uint32_t addr, std::uint8_t
   const std::uint32_t lane_mask = size_mask(size) << shift;
   const std::uint32_t write_bits = (value << shift) & lane_mask;
 
-  // TODO: model hardware-driven SCU pending-bit sources from other subsystems (DMA/VDP/SCSP).
   if (word_addr == kScuIstAddr) {
     const std::uint32_t masked_bits = write_bits & 0x0000FFFFU;
     scu_interrupt_pending_ |= masked_bits;
@@ -125,6 +132,19 @@ void DeviceHub::write(std::uint64_t t, int cpu, std::uint32_t addr, std::uint8_t
   if (word_addr == kScuIstClearAddr) {
     const std::uint32_t masked_bits = write_bits & 0x0000FFFFU;
     scu_interrupt_pending_ &= ~masked_bits;
+    scu_interrupt_source_pending_ &= ~masked_bits;
+    return;
+  }
+
+  if (word_addr == kScuIstSourceSetAddr) {
+    const std::uint32_t masked_bits = write_bits & 0x0000FFFFU;
+    scu_interrupt_source_pending_ |= masked_bits;
+    return;
+  }
+
+  if (word_addr == kScuIstSourceClearAddr) {
+    const std::uint32_t masked_bits = write_bits & 0x0000FFFFU;
+    scu_interrupt_source_pending_ &= ~masked_bits;
     return;
   }
 

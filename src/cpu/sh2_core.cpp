@@ -57,10 +57,15 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   t_ = 0;
   executed_ = 0;
   pending_mem_op_.reset();
+  pending_branch_target_.reset();
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
   // Minimal subset: NOP (0009), BRA disp12 (Axxx), MOV #imm,Rn (Ennn), ADD #imm,Rn (7nnn), ADD Rm,Rn (3nmC), MOV Rm,Rn (6nm3), RTS (000B)
+  const auto delay_slot_target = pending_branch_target_;
+  pending_branch_target_.reset();
+
+  std::optional<std::uint32_t> next_branch_target;
   if (instr == 0x0009U) {
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
@@ -84,19 +89,28 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     r_[n] = r_[m];
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
-
+    const std::uint32_t branch_pc = pc_;
     std::int32_t disp = static_cast<std::int32_t>(instr & 0x0FFFU);
     if ((disp & 0x800) != 0) {
       disp |= ~0xFFF;
     }
-    pc_ = static_cast<std::uint32_t>(static_cast<std::int32_t>(pc_) + 4 + (disp << 1));
+    next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    pc_ += 2U;
   } else if (instr == 0x000BU) {
-    pc_ = r_[15];
+    next_branch_target = r_[15];
+    pc_ += 2U;
   } else {
     // Unknown opcode treated as NOP for vertical-slice robustness.
     pc_ += 2U;
   }
 
+  if (delay_slot_target.has_value()) {
+    pc_ = *delay_slot_target;
+  } else if (next_branch_target.has_value()) {
+    pending_branch_target_ = *next_branch_target;
+  }
+
+  // TODO: define deterministic behavior for branch opcodes appearing in delay slots.
   (void)from_bus_commit;
   t_ += 1; // intrinsic execute cost for each retired instruction.
   ++executed_;

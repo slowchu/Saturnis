@@ -392,6 +392,33 @@ void test_scu_interrupt_pending_respects_mask_and_clear() {
   check(final_status.value == 0U, "SCU IST should be empty after clearing remaining pending bits");
 }
 
+
+void test_scu_interrupt_source_pending_wires_into_ist() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000012U});
+  const auto source_latched = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_latched.value == 0x12U, "SCU synthetic source register should latch pending bits");
+
+  const auto ist_unmasked = arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(ist_unmasked.value == 0x12U, "SCU IST should include synthetic source pending bits");
+
+  (void)arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000010U});
+  const auto ist_masked = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(ist_masked.value == 0x02U, "SCU IMS should mask synthetic source bits in IST view");
+
+  (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000002U});
+  const auto source_after_source_clear = arbiter.commit({1, 6U, 6, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_after_source_clear.value == 0x10U, "SCU synthetic source clear should drop selected bits");
+
+  (void)arbiter.commit({1, 7U, 7, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4, 0x00000010U});
+  const auto ist_after_ack = arbiter.commit({0, 8U, 8, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(ist_after_ack.value == 0U, "SCU IST clear should acknowledge remaining synthetic source bits");
+}
+
 void test_smpc_status_register_is_read_only_and_ready() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -535,6 +562,57 @@ void test_sh2_movl_memory_write_executes_via_bus() {
 }
 
 
+
+void test_sh2_bra_uses_delay_slot_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE001U); // MOV #1,R0
+  mem.write(0x0002U, 2U, 0xA001U); // BRA +1 (target 0x0008)
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (delay slot)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (branch target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.reg(0) == 3U, "BRA should execute exactly one delay-slot instruction before branching");
+  check(core.pc() == 0x000AU, "BRA delay-slot flow should land on branch target then advance");
+}
+
+void test_sh2_rts_uses_delay_slot_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0AU); // MOV #10,R15
+  mem.write(0x0002U, 2U, 0xE001U); // MOV #1,R0
+  mem.write(0x0004U, 2U, 0x000BU); // RTS
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (delay slot)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (RTS target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+  core.step(arbiter, trace, 4);
+
+  check(core.reg(0) == 3U, "RTS should execute exactly one delay-slot instruction before jumping to PR source");
+  check(core.pc() == 0x000CU, "RTS delay-slot flow should land on branch target then advance");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -642,6 +720,7 @@ int main() {
   test_display_status_register_is_read_only_and_ready();
   test_scu_ims_register_masks_to_low_16_bits();
   test_scu_interrupt_pending_respects_mask_and_clear();
+  test_scu_interrupt_source_pending_wires_into_ist();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
@@ -650,6 +729,8 @@ int main() {
   test_sh2_movw_memory_read_executes_via_bus_with_sign_extend();
   test_sh2_movw_memory_write_executes_via_bus_low_halfword_only();
   test_sh2_movl_memory_write_executes_via_bus();
+  test_sh2_bra_uses_delay_slot_deterministically();
+  test_sh2_rts_uses_delay_slot_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();

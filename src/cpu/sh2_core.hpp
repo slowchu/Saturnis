@@ -49,6 +49,7 @@ private:
   core::Tick t_ = 0;
   std::uint64_t executed_ = 0;
   std::optional<PendingMemOp> pending_mem_op_;
+  std::optional<std::uint32_t> pending_branch_target_;
   mem::TinyCache icache_{16, 64};
 };
 

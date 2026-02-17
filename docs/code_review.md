@@ -6,17 +6,18 @@ Date: 2026-02-17
 
 1. **Deterministic bus arbitration and commit safety remain stable.**
    - Existing commit-horizon/progress-watermark and deterministic ordering tests continue to pass.
-2. **Device/MMIO deterministic model has improved incrementally.**
-   - SCU IMS/IST pending-mask behavior is present and test-covered.
-   - Representative SMPC/VDP/SCSP register semantics remain deterministic.
-3. **SH-2 execution slice now includes more data-memory paths and BIOS trace regression checks.**
-   - MOV.L/MOV.W data-memory operations are covered.
-   - BIOS bring-up trace regression now asserts deterministic repeatability and expected IFETCH/READ/WRITE commit presence for a fixed mini BIOS image.
+2. **Device/MMIO deterministic model now includes synthetic SCU interrupt-source wiring.**
+   - SCU IMS/IST masking remains deterministic.
+   - A focused synthetic-source path now feeds IST pending visibility with deterministic set/clear behavior.
+3. **SH-2 execution slice adds deterministic delay-slot coverage for branch flow.**
+   - BRA/RTS delay-slot behavior is now explicitly regression-tested.
+4. **BIOS bring-up trace regression coverage remains stable.**
+   - Fixed mini BIOS image traces are deterministic across repeated runs.
 
 ## Risks and follow-ups
 
 - BIOS bring-up assertions are currently structural (trace stability + event presence), not yet full state-checkpoint validation.
-- SCU pending bits are still software-driven in this slice; real interrupt-source wiring is still TODO.
+- SCU source wiring is synthetic in this slice; full hardware source modeling remains TODO.
 - SH-2 remains a vertical-slice subset (no full timing/ISA/exception model).
 
 ## TODO tracking
