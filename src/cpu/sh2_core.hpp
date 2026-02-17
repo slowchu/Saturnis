@@ -34,7 +34,7 @@ private:
   void execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit);
 
   struct PendingMemOp {
-    enum class Kind { ReadLong, WriteLong };
+    enum class Kind { ReadLong, WriteLong, ReadWord, WriteWord };
     Kind kind = Kind::ReadLong;
     std::uint32_t phys_addr = 0;
     std::uint8_t size = 4;
@@ -49,6 +49,7 @@ private:
   core::Tick t_ = 0;
   std::uint64_t executed_ = 0;
   std::optional<PendingMemOp> pending_mem_op_;
+  std::optional<std::uint32_t> pending_branch_target_;
   mem::TinyCache icache_{16, 64};
 };
 
