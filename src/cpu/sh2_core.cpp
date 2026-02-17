@@ -21,6 +21,24 @@ namespace {
   return true;
 }
 
+[[nodiscard]] bool is_movw_mem_to_reg(std::uint16_t instr, std::uint32_t &n, std::uint32_t &m) {
+  if ((instr & 0xF00FU) != 0x6001U) {
+    return false;
+  }
+  n = (instr >> 8U) & 0x0FU;
+  m = (instr >> 4U) & 0x0FU;
+  return true;
+}
+
+[[nodiscard]] bool is_movw_reg_to_mem(std::uint16_t instr, std::uint32_t &n, std::uint32_t &m) {
+  if ((instr & 0xF00FU) != 0x2001U) {
+    return false;
+  }
+  n = (instr >> 8U) & 0x0FU;
+  m = (instr >> 4U) & 0x0FU;
+  return true;
+}
+
 [[nodiscard]] bus::BusKind data_access_kind(std::uint32_t phys_addr, bool is_write) {
   if (mem::is_mmio(phys_addr)) {
     return is_write ? bus::BusKind::MmioWrite : bus::BusKind::MmioRead;
@@ -39,10 +57,15 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   t_ = 0;
   executed_ = 0;
   pending_mem_op_.reset();
+  pending_branch_target_.reset();
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
   // Minimal subset: NOP (0009), BRA disp12 (Axxx), MOV #imm,Rn (Ennn), ADD #imm,Rn (7nnn), ADD Rm,Rn (3nmC), MOV Rm,Rn (6nm3), RTS (000B)
+  const auto delay_slot_target = pending_branch_target_;
+  pending_branch_target_.reset();
+
+  std::optional<std::uint32_t> next_branch_target;
   if (instr == 0x0009U) {
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
@@ -66,19 +89,29 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     r_[n] = r_[m];
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
-
+    const std::uint32_t branch_pc = pc_;
     std::int32_t disp = static_cast<std::int32_t>(instr & 0x0FFFU);
     if ((disp & 0x800) != 0) {
       disp |= ~0xFFF;
     }
-    pc_ = static_cast<std::uint32_t>(static_cast<std::int32_t>(pc_) + 4 + (disp << 1));
+    next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    pc_ += 2U;
   } else if (instr == 0x000BU) {
-    pc_ = r_[15];
+    next_branch_target = r_[15];
+    pc_ += 2U;
   } else {
     // Unknown opcode treated as NOP for vertical-slice robustness.
     pc_ += 2U;
   }
 
+  if (delay_slot_target.has_value()) {
+    pc_ = *delay_slot_target;
+  } else if (next_branch_target.has_value()) {
+    pending_branch_target_ = *next_branch_target;
+  }
+
+  // Deterministic policy: when executing a delay slot, any branch target decoded in that slot is ignored;
+  // the already-pending branch target wins (first-branch-wins semantics for this vertical slice).
   (void)from_bus_commit;
   t_ += 1; // intrinsic execute cost for each retired instruction.
   ++executed_;
@@ -119,6 +152,19 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 4U, r_[m]};
         return out;
       }
+      if (is_movw_mem_to_reg(instr, n, m)) {
+        const std::uint32_t data_phys = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadWord, data_phys, 2U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 2U, 0U};
+        return out;
+      }
+      if (is_movw_reg_to_mem(instr, n, m)) {
+        const std::uint32_t data_phys = mem::to_phys(r_[n]);
+        const std::uint32_t write_value = r_[m] & 0xFFFFU;
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteWord, data_phys, 2U, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 2U, write_value};
+        return out;
+      }
 
       execute_instruction(instr, trace, false);
       ++out.executed;
@@ -147,6 +193,9 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     pending_mem_op_.reset();
     if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
+    } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
+      const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
+      r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
     }
     pc_ += 2U;
     t_ += 1;
