@@ -13,7 +13,14 @@
 2. [x] Add focused MMIO interrupt-source wiring into SCU pending bits (deterministic synthetic source model).
 3. [x] Expand BIOS bring-up trace assertions to cover stable state snapshots (PC/register checkpoints).
 4. [x] Add deterministic trace fixture comparison for a fixed BIOS mini-program across single/multirun execution.
-5. [ ] Add deterministic MMIO side-effect tracing assertions for SCU synthetic source register transitions.
+5. [x] Add deterministic MMIO side-effect tracing assertions for SCU synthetic source register transitions.
+
+## Next tasks
+
+1. [ ] Add deterministic BIOS trace assertions for slave CPU checkpoints (PC/register progression).
+2. [ ] Add focused tests for subword writes to SCU synthetic source set/clear registers.
+3. [ ] Add deterministic coverage for branch-in-delay-slot behavior policy (and document expected semantics).
+4. [ ] Add trace-level assertions that SCU synthetic-source MMIO writes appear in deterministic order in emitted JSONL commits.
 
 ## Notes
 

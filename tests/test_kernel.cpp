@@ -419,6 +419,30 @@ void test_scu_interrupt_source_pending_wires_into_ist() {
   check(ist_after_ack.value == 0U, "SCU IST clear should acknowledge remaining synthetic source bits");
 }
 
+
+void test_scu_interrupt_source_write_log_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 5U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000012U});
+  (void)arbiter.commit({1, 6U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000002U});
+  (void)arbiter.commit({0, 7U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4, 0x00000010U});
+
+  const auto &writes = dev.writes();
+  check(writes.size() == 3U, "SCU synthetic-source transitions should produce deterministic write-log cardinality");
+
+  check(writes[0].cpu == 0 && writes[0].addr == 0x05FE00ACU && writes[0].value == 0x00000012U,
+        "first SCU synthetic-source transition should be logged with deterministic metadata");
+  check(writes[1].cpu == 1 && writes[1].addr == 0x05FE00B0U && writes[1].value == 0x00000002U,
+        "second SCU synthetic-source transition should be logged with deterministic metadata");
+  check(writes[2].cpu == 0 && writes[2].addr == 0x05FE00A8U && writes[2].value == 0x00000010U,
+        "third SCU synthetic-source transition should be logged with deterministic metadata");
+  check(writes[0].t < writes[1].t && writes[1].t < writes[2].t,
+        "SCU synthetic-source transition timestamps should be strictly monotonic in deterministic commit order");
+}
+
 void test_smpc_status_register_is_read_only_and_ready() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -721,6 +745,7 @@ int main() {
   test_scu_ims_register_masks_to_low_16_bits();
   test_scu_interrupt_pending_respects_mask_and_clear();
   test_scu_interrupt_source_pending_wires_into_ist();
+  test_scu_interrupt_source_write_log_is_deterministic();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
