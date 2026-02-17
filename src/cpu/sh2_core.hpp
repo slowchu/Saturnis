@@ -29,9 +29,13 @@ public:
   [[nodiscard]] core::Tick local_time() const;
   [[nodiscard]] std::uint64_t executed_instructions() const;
   [[nodiscard]] std::uint32_t reg(std::size_t index) const;
+  [[nodiscard]] std::uint32_t sr() const;
+
 
 private:
   void execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit);
+  [[nodiscard]] bool t_flag() const;
+  void set_t_flag(bool value);
 
   struct PendingMemOp {
     enum class Kind { ReadLong, WriteLong, ReadWord, WriteWord };
@@ -45,6 +49,7 @@ private:
   int cpu_id_;
   std::uint32_t pc_ = 0;
   std::uint32_t sr_ = 0;
+  std::uint32_t pr_ = 0;
   std::array<std::uint32_t, 16> r_{};
   core::Tick t_ = 0;
   std::uint64_t executed_ = 0;

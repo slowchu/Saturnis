@@ -130,24 +130,37 @@
 15. [x] Add deterministic trace-prefix assertions for the first 16 commit lines across repeated multithread runs.
 16. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
 
-## Next tasks
+## Next Phase: Emulator-Completeness Roadmap (new backlog)
 
-1. [ ] Add deterministic SCU overlap coverage for mixed byte writes targeting non-adjacent lanes in one batch.
-2. [ ] Add deterministic SCU overlap regression validating repeated source-clear writes remain idempotent across five runs.
-3. [ ] Add deterministic SCU overlap regression checking IST masked retention across alternating halfword IMS writes.
-4. [ ] Add deterministic SCU write-log regression for stable address histograms across repeated overlap bursts.
-5. [ ] Add deterministic dual-demo per-CPU `src:"IFETCH"` parity checks under repeated multithread runs.
-6. [ ] Add deterministic dual-demo selected IFETCH timing tuple parity checks across repeated multithread runs.
-7. [ ] Add deterministic dual-demo MMIO_READ timing tuple parity checks across repeated multithread runs.
-8. [ ] Add deterministic BIOS fixture per-CPU BARRIER count parity checks across repeated runs.
-9. [ ] Expand SH-2 delay-slot matrix with BRA both-negative overwrite plus target-side register copy before store.
-10. [ ] Expand SH-2 delay-slot matrix with RTS both-negative overwrite plus target-side register copy before store.
-11. [ ] Add deterministic SH-2 same-address overwrite regression with four intermediate non-memory instructions.
-12. [ ] Add deterministic commit-horizon regression for nine-cycle mixed RAM/MMIO drains.
-13. [ ] Add deterministic commit-horizon regression pinning values for six queued MMIO reads in one sequence.
-14. [ ] Add deterministic commit-horizon regression with alternating progress reversals on both CPUs before convergence.
-15. [ ] Add deterministic trace-prefix assertions for the first 20 commit lines across repeated multithread runs.
-16. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+> Goal: move from "deterministic vertical slice" toward a functional Saturn emulator scaffold,
+> while preserving the core invariants (arbiter-owned committed memory + deterministic traces).
+> Every item below must add (1) focused kernel/unit coverage, and (2) at least one trace/fixture assertion.
+
+## Batch A (16 tasks): SH-2 ISA expansion + DMA + first real device event sources
+
+1. [x] SH-2: Implement core condition-code plumbing (T-bit updates, SR flag semantics) + focused tests.
+2. [x] SH-2: Add compare/test ops needed for BIOS-style control flow (e.g., CMP/EQ + minimal set) + regression.
+3. [x] SH-2: Implement conditional branches (BT/BF + /S forms if you choose) with delay-slot semantics + matrix tests.
+4. [x] SH-2: Implement BSR/JSR/JMP (and any needed PR behavior) + delay-slot regression coverage.
+5. [ ] SH-2: Expand load/store addressing modes for MOV.{B/W/L}:
+   - @Rm, @Rm+, @-Rn
+   - @(disp,Rm), @(disp,GBR), @(disp,PC) where applicable
+   Ensure all cache-miss/uncached/MMIO cases remain blocking BusOps + tests.
+6. [ ] SH-2: Add shifts/rotates/bit ops subset required for common bring-up code paths + flag-edge tests.
+7. [ ] SH-2: Add exception/interrupt entry + return scaffolding (vector fetch + RTE) in a deterministic form.
+8. [ ] SCU DMA: Add deterministic register file for DMA channels (reset defaults + R/W masks + lane semantics) + tests.
+9. [ ] SCU DMA: Implement DMA engine as a BusOp producer emitting DMA-tagged ops (non-zero),
+   respecting arbiter priority class (DMA > CPU-MMIO > CPU-RAM) + trace assertions.
+10. [ ] SCU DMA: Add DMA completion interrupt delivery into SCU pending/IST path + IMS masking regressions.
+11. [ ] SMPC: Implement minimal command/response state machine sufficient for BIOS handshake paths (deterministic).
+12. [ ] SMPC: Wire SMPC IRQ generation into SCU pending bits (non-synthetic where possible) + trace ordering tests.
+13. [ ] VDP2: Implement deterministic scan timing scaffold (HBlank/VBlank toggles) and TVSTAT bit evolution + tests.
+14. [ ] VDP2: Wire VBlank/HBlank interrupt sources into SCU pending/IST with IMS interactions + trace fixture checks.
+15. [ ] VDP1: Implement minimal command list stepping (fetch/parse basic control commands) + status/IRQ semantics.
+16. [ ] CD Block + SCSP: Implement deterministic “bring-up grade” MMIO front-ends:
+   - CD block: command/status + minimal FIFO semantics (PIO stub OK) + deterministic latencies
+   - SCSP: register file + RAM window access semantics (timer/IRQ stub OK but deterministic)
+   Add one fixture that exercises both without rendering/audio correctness requirements.
 
 ## Notes
 
