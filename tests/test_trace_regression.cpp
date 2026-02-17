@@ -89,7 +89,15 @@ int main() {
       !trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":4,\"sr\":240,\"r\":[0,64,4294967168") ||
       !trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":6,\"sr\":240,\"r\":[0,64,4294967169") ||
       !trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":8,\"sr\":240,\"r\":[0,64,4294967169")) {
-    std::cerr << "bios bring-up trace missing expected deterministic state checkpoints\n";
+    std::cerr << "bios bring-up trace missing expected deterministic master-CPU state checkpoints\n";
+    return 1;
+  }
+
+  if (!trace_contains_checkpoint(bios_fixture, "\"cpu\":1,\"pc\":2,\"sr\":240,\"r\":[0,64") ||
+      !trace_contains_checkpoint(bios_fixture, "\"cpu\":1,\"pc\":4,\"sr\":240,\"r\":[0,64,4294967168") ||
+      !trace_contains_checkpoint(bios_fixture, "\"cpu\":1,\"pc\":6,\"sr\":240,\"r\":[0,64,4294967169") ||
+      !trace_contains_checkpoint(bios_fixture, "\"cpu\":1,\"pc\":8,\"sr\":240,\"r\":[0,64,4294967169")) {
+    std::cerr << "bios bring-up trace missing expected deterministic slave-CPU state checkpoints\n";
     return 1;
   }
 

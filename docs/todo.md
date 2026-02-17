@@ -7,7 +7,7 @@
 3. [x] Continue SH-2 data-memory path expansion (additional memory op forms + focused tests).
 4. [x] Grow BIOS bring-up coverage with deterministic trace assertions.
 
-## Next implementation queue
+## Completed next implementation queue
 
 1. [x] Add deterministic SH-2 delayed-branch behavior coverage (BRA/RTS delay-slot semantics + regression tests).
 2. [x] Add focused MMIO interrupt-source wiring into SCU pending bits (deterministic synthetic source model).
@@ -15,12 +15,19 @@
 4. [x] Add deterministic trace fixture comparison for a fixed BIOS mini-program across single/multirun execution.
 5. [x] Add deterministic MMIO side-effect tracing assertions for SCU synthetic source register transitions.
 
+## Completed in this extended session
+
+1. [x] Add deterministic BIOS trace assertions for slave CPU checkpoints (PC/register progression).
+2. [x] Add focused tests for subword writes to SCU synthetic source set/clear registers.
+3. [x] Add deterministic coverage for branch-in-delay-slot behavior policy (and document expected semantics).
+4. [x] Add trace-level assertions that SCU synthetic-source MMIO writes appear in deterministic order in emitted JSONL commits.
+
 ## Next tasks
 
-1. [ ] Add deterministic BIOS trace assertions for slave CPU checkpoints (PC/register progression).
-2. [ ] Add focused tests for subword writes to SCU synthetic source set/clear registers.
-3. [ ] Add deterministic coverage for branch-in-delay-slot behavior policy (and document expected semantics).
-4. [ ] Add trace-level assertions that SCU synthetic-source MMIO writes appear in deterministic order in emitted JSONL commits.
+1. [ ] Add deterministic tests for mixed CPU contention when both CPUs perform SCU synthetic-source MMIO writes in the same arbitration window.
+2. [ ] Add explicit regression checks that MMIO commit `stall` fields for SCU synthetic-source writes remain stable under repeated runs.
+3. [ ] Expand BIOS checkpoint assertions to verify selected commit-event fields (`t_start`, `t_end`, `stall`) for a fixed instruction slice.
+4. [ ] Add deterministic coverage for RTS/BRA interactions with memory-op delay-slot instructions (e.g., MOV.W in delay slot).
 
 ## Notes
 

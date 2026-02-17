@@ -70,9 +70,9 @@ This makes bus occupancy and WAIT behavior directly inspectable in regression tr
 
 ## Current limitations
 
-- SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn, BRA/RTS (with deterministic delay-slot flow), and MOV.L/MOV.W data-memory forms).
+- SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn, BRA/RTS with deterministic delay-slot flow including first-branch-wins branch-in-delay-slot policy (documented and regression-tested), and MOV.L/MOV.W data-memory forms).
 - SH-2 interpreter now supports blocking MOV.L/MOV.W data-memory read/write execution via deterministic bus/MMIO commits.
-- Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers, including SCU IMS/IST mask-pending interactions with synthetic interrupt-source wiring, deterministic MMIO transition logging, and VDP2 TVMD/TVSTAT behavior.
+- Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers, including SCU IMS/IST mask-pending interactions with synthetic interrupt-source wiring, deterministic MMIO transition logging, trace-ordered MMIO commit assertions, and VDP2 TVMD/TVSTAT behavior.
 - VDP rendering is placeholder/debug-oriented.
-- BIOS execution support is partial and not cycle-accurate, but fixed mini-image bring-up traces are regression-checked for deterministic fixture stability across repeated runs and state-checkpoint consistency.
+- BIOS execution support is partial and not cycle-accurate, but fixed mini-image bring-up traces are regression-checked for deterministic fixture stability across repeated runs and dual-CPU state-checkpoint consistency.
 - `OpBarrier` is implemented as an explicit bus barrier operation (deterministic stall, no memory read/write side effect).

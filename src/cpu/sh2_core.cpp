@@ -110,7 +110,8 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pending_branch_target_ = *next_branch_target;
   }
 
-  // TODO: define deterministic behavior for branch opcodes appearing in delay slots.
+  // Deterministic policy: when executing a delay slot, any branch target decoded in that slot is ignored;
+  // the already-pending branch target wins (first-branch-wins semantics for this vertical slice).
   (void)from_bus_commit;
   t_ += 1; // intrinsic execute cost for each retired instruction.
   ++executed_;

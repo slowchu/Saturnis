@@ -420,6 +420,39 @@ void test_scu_interrupt_source_pending_wires_into_ist() {
 }
 
 
+
+void test_scu_interrupt_source_subword_writes_apply_lane_masks() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ADU, 1, 0x12U});
+  const auto after_high_byte_set = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_high_byte_set.value == 0x00001200U,
+        "SCU source set byte-lane writes should land in the addressed low-16 byte lane");
+
+  (void)arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00AEU, 2, 0xFFFFU});
+  const auto after_high_half_set = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_high_half_set.value == 0x00001200U,
+        "SCU source set high-halfword writes should be masked out of the low-16 source state");
+
+  (void)arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 1, 0x34U});
+  const auto after_low_byte_set = arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_low_byte_set.value == 0x00001234U,
+        "SCU source set low-byte writes should combine deterministically with existing source bits");
+
+  (void)arbiter.commit({1, 6U, 6, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x10U});
+  const auto after_high_byte_clear = arbiter.commit({1, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_high_byte_clear.value == 0x00000234U,
+        "SCU source clear byte-lane writes should clear only selected bits in addressed lane");
+
+  (void)arbiter.commit({0, 8U, 8, saturnis::bus::BusKind::MmioWrite, 0x05FE00B2U, 2, 0xFFFFU});
+  const auto after_high_half_clear = arbiter.commit({0, 9U, 9, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_high_half_clear.value == 0x00000234U,
+        "SCU source clear high-halfword writes should be masked out of the low-16 source state");
+}
+
 void test_scu_interrupt_source_write_log_is_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -441,6 +474,28 @@ void test_scu_interrupt_source_write_log_is_deterministic() {
         "third SCU synthetic-source transition should be logged with deterministic metadata");
   check(writes[0].t < writes[1].t && writes[1].t < writes[2].t,
         "SCU synthetic-source transition timestamps should be strictly monotonic in deterministic commit order");
+}
+
+
+void test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000012U});
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000002U});
+  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4, 0x00000010U});
+
+  const auto jsonl = trace.to_jsonl();
+  const auto pos_set = jsonl.find("\"kind\":\"MMIO_WRITE\",\"phys\":100532396");
+  const auto pos_source_clear = jsonl.find("\"kind\":\"MMIO_WRITE\",\"phys\":100532400");
+  const auto pos_ist_clear = jsonl.find("\"kind\":\"MMIO_WRITE\",\"phys\":100532392");
+
+  check(pos_set != std::string::npos && pos_source_clear != std::string::npos && pos_ist_clear != std::string::npos,
+        "SCU synthetic-source MMIO writes should appear in trace JSONL commits");
+  check(pos_set < pos_source_clear && pos_source_clear < pos_ist_clear,
+        "SCU synthetic-source MMIO writes should appear in deterministic commit order in trace JSONL");
 }
 
 void test_smpc_status_register_is_read_only_and_ready() {
@@ -637,6 +692,33 @@ void test_sh2_rts_uses_delay_slot_deterministically() {
   check(core.pc() == 0x000CU, "RTS delay-slot flow should land on branch target then advance");
 }
 
+
+void test_sh2_branch_in_delay_slot_uses_first_branch_target_policy() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE001U); // MOV #1,R0
+  mem.write(0x0002U, 2U, 0xA002U); // BRA +2 (target 0x000A)
+  mem.write(0x0004U, 2U, 0xA003U); // BRA +3 (delay-slot branch, ignored by first-branch-wins policy)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (first-branch target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.reg(0) == 2U,
+        "branch in delay slot should not override first pending branch target in deterministic policy");
+  check(core.pc() == 0x000CU,
+        "first-branch-wins delay-slot policy should continue from the first branch target path");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -745,7 +827,9 @@ int main() {
   test_scu_ims_register_masks_to_low_16_bits();
   test_scu_interrupt_pending_respects_mask_and_clear();
   test_scu_interrupt_source_pending_wires_into_ist();
+  test_scu_interrupt_source_subword_writes_apply_lane_masks();
   test_scu_interrupt_source_write_log_is_deterministic();
+  test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
@@ -756,6 +840,7 @@ int main() {
   test_sh2_movl_memory_write_executes_via_bus();
   test_sh2_bra_uses_delay_slot_deterministically();
   test_sh2_rts_uses_delay_slot_deterministically();
+  test_sh2_branch_in_delay_slot_uses_first_branch_target_policy();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
