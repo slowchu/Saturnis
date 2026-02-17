@@ -422,6 +422,38 @@ void test_scu_interrupt_source_pending_wires_into_ist() {
 
 
 
+
+void test_scu_synthetic_source_mixed_size_contention_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp cpu0_byte_set{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ADU, 1, 0x12U};
+  const saturnis::bus::BusOp cpu1_half_set{1, 0U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 2, 0x0034U};
+  const auto first = arbiter.commit_batch({cpu0_byte_set, cpu1_half_set});
+
+  check(first.size() == 2U, "mixed-size contention batch should commit both SCU source writes");
+  check(first[0].op.cpu_id == 0 && first[1].op.cpu_id == 1,
+        "mixed-size contention should use deterministic CPU arbitration ordering");
+
+  const auto after_first = arbiter.commit({0, 1U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_first.value == 0x00001234U,
+        "mixed-size source writes should deterministically merge byte/halfword lane contributions");
+
+  const saturnis::bus::BusOp cpu0_word_clear{0, 2U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00001000U};
+  const saturnis::bus::BusOp cpu1_byte_clear{1, 2U, 4, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 1, 0x00000004U};
+  const auto second = arbiter.commit_batch({cpu0_word_clear, cpu1_byte_clear});
+
+  check(second.size() == 2U, "mixed-size clear batch should commit both SCU source clear writes");
+  check(second[0].op.cpu_id == 1 && second[1].op.cpu_id == 0,
+        "mixed-size follow-up contention should rotate deterministic round-robin winner");
+
+  const auto after_second = arbiter.commit({1, 3U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(after_second.value == 0x00000230U,
+        "mixed-size source clear writes should deterministically clear targeted bits across lanes");
+}
+
 void test_scu_synthetic_source_mixed_cpu_contention_is_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -931,6 +963,7 @@ int main() {
   test_scu_ims_register_masks_to_low_16_bits();
   test_scu_interrupt_pending_respects_mask_and_clear();
   test_scu_interrupt_source_pending_wires_into_ist();
+  test_scu_synthetic_source_mixed_size_contention_is_deterministic();
   test_scu_synthetic_source_mixed_cpu_contention_is_deterministic();
   test_scu_synthetic_source_mmio_stall_is_stable_across_runs();
   test_scu_interrupt_source_subword_writes_apply_lane_masks();

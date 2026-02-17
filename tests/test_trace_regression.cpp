@@ -35,6 +35,16 @@ bool trace_contains_checkpoint(const std::string &trace, const std::string &need
   return trace.find(needle) != std::string::npos;
 }
 
+std::size_t count_occurrences(const std::string &haystack, const std::string &needle) {
+  std::size_t count = 0;
+  std::size_t pos = 0;
+  while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+    ++count;
+    pos += needle.size();
+  }
+  return count;
+}
+
 } // namespace
 
 int main() {
@@ -83,6 +93,21 @@ int main() {
       bios_fixture.find("\"kind\":\"WRITE\"") == std::string::npos) {
     std::cerr << "bios bring-up trace missing expected data read/write commits\n";
     return 1;
+  }
+
+
+  const std::size_t fixture_mmio_reads = count_occurrences(bios_fixture, R"("kind":"MMIO_READ")");
+  const std::size_t fixture_mmio_writes = count_occurrences(bios_fixture, R"("kind":"MMIO_WRITE")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (count_occurrences(bios_trace, R"("kind":"MMIO_READ")") != fixture_mmio_reads) {
+      std::cerr << "bios fixture MMIO_READ commit counts changed on run " << run << '\n';
+      return 1;
+    }
+    if (count_occurrences(bios_trace, R"("kind":"MMIO_WRITE")") != fixture_mmio_writes) {
+      std::cerr << "bios fixture MMIO_WRITE commit counts changed on run " << run << '\n';
+      return 1;
+    }
   }
 
   if (!trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||

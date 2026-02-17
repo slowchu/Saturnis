@@ -15,26 +15,27 @@
 4. [x] Add deterministic trace fixture comparison for a fixed BIOS mini-program across single/multirun execution.
 5. [x] Add deterministic MMIO side-effect tracing assertions for SCU synthetic source register transitions.
 
-## Completed in this extended session
+## Completed in recent extended sessions
 
 1. [x] Add deterministic BIOS trace assertions for slave CPU checkpoints (PC/register progression).
 2. [x] Add focused tests for subword writes to SCU synthetic source set/clear registers.
 3. [x] Add deterministic coverage for branch-in-delay-slot behavior policy (and document expected semantics).
 4. [x] Add trace-level assertions that SCU synthetic-source MMIO writes appear in deterministic order in emitted JSONL commits.
-
-## Completed in this follow-up session
-
-1. [x] Add deterministic tests for mixed CPU contention when both CPUs perform SCU synthetic-source MMIO writes in the same arbitration window.
-2. [x] Add explicit regression checks that MMIO commit `stall` fields for SCU synthetic-source writes remain stable under repeated runs.
-3. [x] Expand BIOS checkpoint assertions to verify selected commit-event fields (`t_start`, `t_end`, `stall`) for a fixed instruction slice.
-4. [x] Add deterministic coverage for RTS/BRA interactions with memory-op delay-slot instructions (e.g., MOV.W in delay slot).
+5. [x] Add deterministic tests for mixed CPU contention when both CPUs perform SCU synthetic-source MMIO writes in the same arbitration window.
+6. [x] Add explicit regression checks that MMIO commit `stall` fields for SCU synthetic-source writes remain stable under repeated runs.
+7. [x] Expand BIOS checkpoint assertions to verify selected commit-event fields (`t_start`, `t_end`, `stall`) for a fixed instruction slice.
+8. [x] Add deterministic coverage for RTS/BRA interactions with memory-op delay-slot instructions (e.g., MOV.W in delay slot).
+9. [x] Add deterministic coverage for mixed-size SCU synthetic-source contention (byte/halfword/word interleavings across CPUs).
+10. [x] Add regression checks that `MMIO_READ`/`MMIO_WRITE` trace commit counts remain stable for the BIOS fixture under repeated runs.
+11. [x] Add focused branch-flow tests for combined branch-in-delay-slot plus memory-op delay-slot interactions.
+12. [x] Add deterministic trace assertions for commit ordering under commit-horizon gating when only one CPU has pending MMIO.
 
 ## Next tasks
 
-1. [ ] Add deterministic coverage for mixed-size SCU synthetic-source contention (byte/halfword/word interleavings across CPUs).
-2. [ ] Add regression checks that `MMIO_READ`/`MMIO_WRITE` trace commit counts remain stable for the BIOS fixture under repeated runs.
-3. [ ] Add focused branch-flow tests for combined branch-in-delay-slot plus memory-op delay-slot interactions.
-4. [ ] Add deterministic trace assertions for commit ordering under commit-horizon gating when only one CPU has pending MMIO.
+1. [ ] Add deterministic tests for mixed-size SCU contention that also includes concurrent source-clear operations from both CPUs.
+2. [ ] Add BIOS trace assertions for stable counts of `IFETCH`/`READ`/`WRITE` commits (in addition to MMIO counts).
+3. [ ] Expand SH-2 delay-slot matrix tests to cover MOV.L memory-op slots with BRA/RTS.
+4. [ ] Add deterministic commit-horizon regression tests that interleave pending MMIO and RAM ops across both CPUs.
 
 ## Notes
 
