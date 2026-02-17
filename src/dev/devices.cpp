@@ -11,10 +11,6 @@ constexpr std::uint32_t kScuIstAddr = 0x05FE00A4U;
 constexpr std::uint32_t kScuIstClearAddr = 0x05FE00A8U;
 constexpr std::uint32_t kScuIstSourceSetAddr = 0x05FE00ACU;
 constexpr std::uint32_t kScuIstSourceClearAddr = 0x05FE00B0U;
-constexpr std::uint32_t kScuDma0SrcAddr = 0x05FE0020U;
-constexpr std::uint32_t kScuDma0DstAddr = 0x05FE0024U;
-constexpr std::uint32_t kScuDma0SizeAddr = 0x05FE0028U;
-constexpr std::uint32_t kScuDma0CtrlAddr = 0x05FE002CU;
 constexpr std::uint32_t kSmpcStatusAddr = 0x05D00080U;
 constexpr std::uint32_t kVdp2TvmdAddr = 0x05F80000U;
 constexpr std::uint32_t kVdp2TvstatAddr = 0x05F80004U;
@@ -43,18 +39,6 @@ struct MmioRegisterSpec {
   }
   if (word_addr == kScuIstSourceClearAddr) {
     return MmioRegisterSpec{0x0U, 0x0000FFFFU};
-  }
-  if (word_addr == kScuDma0SrcAddr) {
-    return MmioRegisterSpec{0x00000000U, 0xFFFFFFFFU};
-  }
-  if (word_addr == kScuDma0DstAddr) {
-    return MmioRegisterSpec{0x00000000U, 0xFFFFFFFFU};
-  }
-  if (word_addr == kScuDma0SizeAddr) {
-    return MmioRegisterSpec{0x00000000U, 0x000FFFFFU};
-  }
-  if (word_addr == kScuDma0CtrlAddr) {
-    return MmioRegisterSpec{0x00000000U, 0x00000017U};
   }
   if (word_addr == kSmpcStatusAddr) {
     return MmioRegisterSpec{0x1U, 0x00000000U};
