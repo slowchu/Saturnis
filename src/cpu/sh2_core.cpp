@@ -42,7 +42,7 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
-  // Minimal subset: NOP (0009), BRA disp12 (Axxx), MOV #imm,Rn (Ennn), ADD #imm,Rn (7nnn), RTS (000B)
+  // Minimal subset: NOP (0009), BRA disp12 (Axxx), MOV #imm,Rn (Ennn), ADD #imm,Rn (7nnn), ADD Rm,Rn (3nmC), RTS (000B)
   if (instr == 0x0009U) {
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
@@ -55,7 +55,13 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
     r_[n] = static_cast<std::uint32_t>(static_cast<std::int32_t>(r_[n]) + imm);
     pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x300CU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    r_[n] += r_[m];
+    pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
+
     std::int32_t disp = static_cast<std::int32_t>(instr & 0x0FFFU);
     if ((disp & 0x800) != 0) {
       disp |= ~0xFFF;
