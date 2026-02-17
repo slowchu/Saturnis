@@ -168,43 +168,35 @@
 15. [x] Add deterministic trace-prefix assertions for the first 24 commit lines across repeated multithread runs.
 16. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
 
-## Current 16-task batch (in progress)
+## Current 16-task batch (completed)
 
 1. [x] Add deterministic SCU overlap scenario with three-lane mixed-size writes plus alternating clear masks in same sequence.
 2. [x] Add deterministic SCU overlap scenario interleaving byte IMS masks with staggered source set/clear req_time values.
 3. [x] Add deterministic SCU write-log regression for stable per-CPU lane-specific address histograms under mixed-size bursts.
 4. [x] Expand SH-2 delay-slot matrix with BRA/RTS target-side MOV+ADD sequence plus additional target arithmetic.
-5. [ ] Add deterministic SH-2 same-address overwrite regression with six intermediate non-memory instructions.
-6. [ ] Add deterministic commit-horizon regression for eleven-cycle mixed RAM/MMIO drains.
-7. [ ] Add deterministic commit-horizon regression pinning values for eight queued MMIO reads in one sequence.
-8. [ ] Add deterministic commit-horizon regression with four alternating progress reversals on both CPUs before convergence.
-9. [ ] Add deterministic trace-order assertions for selected MMIO_READ/MMIO_WRITE/BARRIER line triplets in multithread runs.
-10. [ ] Add deterministic BIOS fixture parity checks for selected per-CPU MMIO timing tuples.
-11. [ ] Add deterministic BIOS fixture parity checks for selected per-CPU BARRIER timing tuples.
-12. [ ] Add focused TODO note + test scaffold for first DMA-produced bus op path (currently unmodeled).
-13. [ ] Add deterministic dual-demo per-CPU IFETCH timing tuple parity checks for selected IFETCH lines.
-14. [ ] Add deterministic dual-demo per-CPU READ/MMIO timing tuple parity checks for second-occurrence lines.
-15. [ ] Add deterministic trace-prefix assertions for the first 28 commit lines across repeated multithread runs.
-16. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+5. [x] Add deterministic SH-2 same-address overwrite regression with six intermediate non-memory instructions.
+6. [x] Add deterministic commit-horizon regression for eleven-cycle mixed RAM/MMIO drains.
+7. [x] Add deterministic commit-horizon regression pinning values for eight queued MMIO reads in one sequence.
+8. [x] Add deterministic commit-horizon regression with four alternating progress reversals on both CPUs before convergence.
+9. [x] Add deterministic trace-order assertions for selected MMIO_READ/MMIO_WRITE/BARRIER line triplets in multithread runs.
+10. [x] Add deterministic BIOS fixture parity checks for selected per-CPU MMIO timing tuples.
+11. [x] Add deterministic BIOS fixture parity checks for selected per-CPU BARRIER timing tuples.
+12. [x] Add focused TODO note + test scaffold for first DMA-produced bus op path (currently unmodeled).
+13. [x] Add deterministic dual-demo per-CPU IFETCH timing tuple parity checks for selected IFETCH lines.
+14. [x] Add deterministic dual-demo per-CPU READ/MMIO timing tuple parity checks for second-occurrence lines.
+15. [x] Add deterministic trace-prefix assertions for the first 28 commit lines across repeated multithread runs.
+16. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
 
 ## Next tasks
 
-1. [ ] Add deterministic SH-2 same-address overwrite regression with six intermediate non-memory instructions.
-2. [ ] Add deterministic commit-horizon regression for eleven-cycle mixed RAM/MMIO drains.
-3. [ ] Add deterministic commit-horizon regression pinning values for eight queued MMIO reads in one sequence.
-4. [ ] Add deterministic commit-horizon regression with four alternating progress reversals on both CPUs before convergence.
-5. [ ] Add deterministic trace-order assertions for selected MMIO_READ/MMIO_WRITE/BARRIER line triplets in multithread runs.
-6. [ ] Add deterministic BIOS fixture parity checks for selected per-CPU MMIO timing tuples.
-7. [ ] Add deterministic BIOS fixture parity checks for selected per-CPU BARRIER timing tuples.
-8. [ ] Add focused TODO note + test scaffold for first DMA-produced bus op path (currently unmodeled).
-9. [ ] Add deterministic dual-demo per-CPU IFETCH timing tuple parity checks for selected IFETCH lines.
-10. [ ] Add deterministic dual-demo per-CPU READ/MMIO timing tuple parity checks for second-occurrence lines.
-11. [ ] Add deterministic trace-prefix assertions for the first 28 commit lines across repeated multithread runs.
-12. [ ] Add deterministic SCU overlap mixed-size + alternating clear-mask contention with commit-horizon gating.
-13. [ ] Add deterministic SCU write-log regression for stable lane-specific value histograms under mixed-size bursts.
-14. [ ] Expand SH-2 delay-slot matrix with BRA/RTS target-side MOV+ADD+ADD plus register-copy variation.
-15. [ ] Add deterministic commit-horizon regression for twelve-cycle mixed RAM/MMIO drains.
-16. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+1. [ ] Convert DMA TODO scaffold into first executable DMA-produced bus-op path test once minimal DMA submit API exists.
+2. [ ] Add deterministic trace assertions for first DMA-produced `src:"DMA"` MMIO commit timing/value tuple.
+3. [ ] Introduce a minimal bus-level owner/tag field for future DMA/SCU arbitration provenance in traces.
+4. [ ] Expand BIOS fixture to include one deterministic MMIO write/read pair routed through the future DMA path.
+5. [ ] Add focused regression for commit-horizon fairness when CPU and DMA producers contend on same MMIO address.
+6. [ ] Add first SMPC command write/read vertical-slice behavior beyond status-ready defaults.
+7. [ ] Add VDP1/SCU interrupt handoff scaffold with deterministic pending-bit assertions.
+8. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
 
 ## Notes
 

@@ -8,7 +8,7 @@ Date: 2026-02-17 (challenge session update)
 - Began the new TODO batch with deterministic SCU overlap coverage for three-lane mixed-size writes plus alternating clear masks and staggered-req-time IMS/set/clear interleaving.
 - Added deterministic SCU write-log lane-specific per-CPU address histogram stability checks under mixed-size bursts.
 - Expanded SH-2 delay-slot overwrite matrix with BRA/RTS target-side MOV+ADD+ADD-before-store variants.
-- Remaining tasks in this batch now focus on deeper commit-horizon, trace-order, BIOS timing parity, and DMA-scaffold follow-ups.
+- Completed the remaining in-progress batch items: six-intermediate SH-2 overwrite flow, eleven-cycle commit-horizon drain, eight queued MMIO-read pinning, four progress reversals, multithread MMIO_READ/MMIO_WRITE/BARRIER triplet order checks, BIOS per-CPU MMIO/BARRIER timing parity, dual-demo per-CPU IFETCH + second-occurrence READ/MMIO parity, first-28 commit-prefix parity, and a DMA-path TODO scaffold guard.
 
 - Added SCU overlap regressions for mixed-size three-lane writes, interleaved IST/source clear idempotence, alternating IMS byte-mask bursts with concurrent set/clear, and per-CPU address+value write-log histogram stability.
 - Expanded commit-horizon regressions to cover ten-cycle mixed RAM/MMIO drains, seven queued MMIO-read deterministic pinning across runs, and three alternating progress reversals before convergence.

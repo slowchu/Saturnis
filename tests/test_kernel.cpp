@@ -2968,6 +2968,137 @@ void test_sh2_same_addr_overwrite_with_five_intermediate_non_memory_instructions
   check(mem.read(0x0030U,2U)==0x0055U, "same-address overwrite with five intermediate instructions should be deterministic");
 }
 
+void test_sh2_same_addr_overwrite_with_six_intermediate_non_memory_instructions_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+  mem.write(0x0000U,2U,0xE130U);
+  mem.write(0x0002U,2U,0xE201U);
+  mem.write(0x0004U,2U,0xA008U);
+  mem.write(0x0006U,2U,0x2121U);
+  mem.write(0x0018U,2U,0x7001U);
+  mem.write(0x001AU,2U,0x7001U);
+  mem.write(0x001CU,2U,0x7001U);
+  mem.write(0x001EU,2U,0x7001U);
+  mem.write(0x0020U,2U,0x7001U);
+  mem.write(0x0022U,2U,0x7001U);
+  mem.write(0x0024U,2U,0xE355U);
+  mem.write(0x0026U,2U,0x2131U);
+  saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  for (int i=0;i<20;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  check(core.reg(0)==6U, "six intermediate non-memory instructions should deterministically execute before target store");
+  check(mem.read(0x0030U,2U)==0x0055U, "same-address overwrite with six intermediate instructions should be deterministic");
+}
+
+void test_commit_horizon_eleven_cycle_mixed_ram_mmio_drain_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0,1U,0,saturnis::bus::BusKind::Write,0x8200U,4,0x11U},
+                                            {1,3U,1,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x1U},
+                                            {0,5U,2,saturnis::bus::BusKind::Write,0x8204U,4,0x22U},
+                                            {1,7U,3,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                            {0,9U,4,saturnis::bus::BusKind::Write,0x8208U,4,0x33U},
+                                            {1,11U,5,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x1U},
+                                            {0,13U,6,saturnis::bus::BusKind::Write,0x820CU,4,0x44U},
+                                            {1,15U,7,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                            {0,17U,8,saturnis::bus::BusKind::Write,0x8210U,4,0x55U},
+                                            {1,19U,9,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                            {0,21U,10,saturnis::bus::BusKind::Write,0x8214U,4,0x66U},
+                                            {1,23U,11,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U}};
+
+  for (std::uint32_t t=2U;t<=22U;t+=2U) {
+    arbiter.update_progress(0,t); arbiter.update_progress(1,t);
+    check(arbiter.commit_pending(pending).size()==1U, "eleven-cycle drain should release one op per cycle");
+  }
+  arbiter.update_progress(0,64U); arbiter.update_progress(1,64U);
+  check(arbiter.commit_pending(pending).size()==1U, "eleven-cycle drain final op should release at convergence");
+  check(pending.empty(), "eleven-cycle mixed RAM/MMIO queue should deterministically drain");
+}
+
+void test_commit_horizon_eight_queued_mmio_reads_have_pinned_values() {
+  std::vector<std::uint32_t> baseline;
+  for (int run=0; run<5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    std::vector<saturnis::bus::BusOp> pending{{0,1U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x1U},
+                                              {1,2U,1,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,4U,2,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x2U},
+                                              {1,5U,3,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,7U,4,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x1U},
+                                              {1,8U,5,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,10U,6,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x8U},
+                                              {1,11U,7,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,13U,8,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x8U},
+                                              {1,14U,9,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,16U,10,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x4U},
+                                              {1,17U,11,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,19U,12,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x4U},
+                                              {1,20U,13,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U},
+                                              {0,22U,14,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x10U},
+                                              {1,23U,15,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U}};
+
+    auto rv = [](const std::vector<saturnis::bus::CommitResult>& commits){
+      for (const auto &c : commits) if (c.op.kind==saturnis::bus::BusKind::MmioRead) return c.response.value;
+      return 0xFFFFFFFFU;
+    };
+
+    std::vector<std::uint32_t> obs;
+    arbiter.update_progress(0,3U); arbiter.update_progress(1,3U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,6U); arbiter.update_progress(1,6U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,9U); arbiter.update_progress(1,9U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,12U); arbiter.update_progress(1,12U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,15U); arbiter.update_progress(1,15U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,18U); arbiter.update_progress(1,18U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,21U); arbiter.update_progress(1,21U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    arbiter.update_progress(0,40U); arbiter.update_progress(1,40U); obs.push_back(rv(arbiter.commit_pending(pending)));
+    check(pending.empty(), "eight queued MMIO reads sequence should fully drain");
+
+    if (run==0) baseline = obs;
+    else check(obs==baseline, "eight queued MMIO reads should have pinned deterministic values across runs");
+  }
+}
+
+void test_commit_horizon_four_alternating_reversals_on_both_cpus_before_convergence() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0,2U,0,saturnis::bus::BusKind::Write,0x8300U,4,0x1U},
+                                            {1,4U,1,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x2U},
+                                            {0,6U,2,saturnis::bus::BusKind::Write,0x8304U,4,0x3U},
+                                            {1,8U,3,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x1U}};
+
+  arbiter.update_progress(0,7U);
+  check(arbiter.commit_pending(pending).empty(), "quad-reversal phase1 should block before both watermarks");
+  arbiter.update_progress(1,5U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase2 releases early ops");
+  arbiter.update_progress(0,6U); arbiter.update_progress(1,4U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase3 no regression");
+  arbiter.update_progress(0,5U); arbiter.update_progress(1,5U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase4 no regression");
+  arbiter.update_progress(0,4U); arbiter.update_progress(1,4U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase5 no regression");
+  arbiter.update_progress(0,3U); arbiter.update_progress(1,3U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase6 no regression");
+  arbiter.update_progress(0,60U); arbiter.update_progress(1,60U); (void)arbiter.commit_pending(pending);
+  check(pending.empty(), "quad-reversal phase7 should converge deterministically");
+}
+
+void test_dma_produced_bus_op_path_is_unmodeled_scaffold_stays_deterministically_zero() {
+  // TODO: replace this deterministic zero-guard with first DMA bus-op execution assertions once DMA is modeled.
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+  (void)arbiter.commit({0,0U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x1U});
+  const auto json = trace.to_jsonl();
+  check(json.find(R"("src":"DMA")") == std::string::npos,
+        "DMA-tagged commits should remain deterministically absent until DMA path is implemented");
+}
+
 
 void test_scu_overlap_three_lane_mixed_size_with_alternating_clear_masks_is_deterministic() {
   std::uint32_t baseline = 0U;
@@ -3241,8 +3372,11 @@ int main() {
   test_scu_overlap_alternating_ims_byte_masks_with_concurrent_set_clear_is_deterministic();
   test_scu_overlap_write_log_per_cpu_address_value_pair_histograms_are_stable();
   test_commit_horizon_ten_cycle_mixed_ram_mmio_drain_is_deterministic();
+  test_commit_horizon_eleven_cycle_mixed_ram_mmio_drain_is_deterministic();
   test_commit_horizon_seven_queued_mmio_reads_have_pinned_values();
+  test_commit_horizon_eight_queued_mmio_reads_have_pinned_values();
   test_commit_horizon_three_alternating_reversals_on_both_cpus_before_convergence();
+  test_commit_horizon_four_alternating_reversals_on_both_cpus_before_convergence();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
@@ -3320,8 +3454,10 @@ int main() {
   test_sh2_bra_both_negative_overwrite_with_target_mov_and_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_and_add_before_store_is_deterministic();
   test_sh2_same_addr_overwrite_with_five_intermediate_non_memory_instructions_is_deterministic();
+  test_sh2_same_addr_overwrite_with_six_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
+  test_dma_produced_bus_op_path_is_unmodeled_scaffold_stays_deterministically_zero();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
