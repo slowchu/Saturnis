@@ -395,6 +395,34 @@ void test_display_status_register_is_read_only_and_ready() {
         "write log should keep display-status register address");
 }
 
+void test_scu_dma_register_file_masks_and_lane_semantics_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto dma_src_reset = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 4, 0U});
+  const auto dma_size_reset = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE0028U, 4, 0U});
+  const auto dma_ctrl_reset = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE002CU, 4, 0U});
+  check(dma_src_reset.value == 0U, "SCU DMA0 source register should reset deterministically");
+  check(dma_size_reset.value == 0U, "SCU DMA0 size register should reset deterministically");
+  check(dma_ctrl_reset.value == 0U, "SCU DMA0 control register should reset deterministically");
+
+  (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE0028U, 4, 0xFFF12345U});
+  const auto dma_size_masked = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE0028U, 4, 0U});
+  check(dma_size_masked.value == 0x00012345U, "SCU DMA0 size register should mask to low 20 bits");
+
+  (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE002DU, 1, 0xFFU});
+  const auto dma_ctrl_lane = arbiter.commit({0, 6U, 6, saturnis::bus::BusKind::MmioRead, 0x05FE002CU, 4, 0U});
+  check((dma_ctrl_lane.value & ~0x17U) == 0U, "SCU DMA0 control register should keep only writable low control bits");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"kind\":\"MMIO_WRITE\"") != std::string::npos,
+        "SCU DMA register interactions should produce deterministic MMIO_WRITE commits in trace");
+  check(json.find("\"phys\":100532264") != std::string::npos,
+        "SCU DMA size-register trace should include deterministic MMIO phys address checkpoint");
+}
+
 void test_scu_ims_register_masks_to_low_16_bits() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3220,6 +3248,7 @@ int main() {
   test_mmio_write_is_visible_to_subsequent_reads();
   test_mmio_subword_write_updates_correct_lane();
   test_display_status_register_is_read_only_and_ready();
+  test_scu_dma_register_file_masks_and_lane_semantics_are_deterministic();
   test_scu_ims_register_masks_to_low_16_bits();
   test_scu_interrupt_pending_respects_mask_and_clear();
   test_scu_interrupt_source_pending_wires_into_ist();
