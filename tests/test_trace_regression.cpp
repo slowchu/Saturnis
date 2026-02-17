@@ -75,6 +75,27 @@ int main() {
     return 1;
   }
 
+
+  const std::size_t single_ifetch = count_occurrences(single_a, R"("kind":"IFETCH")");
+  const std::size_t single_read = count_occurrences(single_a, R"("kind":"READ")");
+  const std::size_t single_write = count_occurrences(single_a, R"("kind":"WRITE")");
+  const std::size_t single_mmio_read = count_occurrences(single_a, R"("kind":"MMIO_READ")");
+  const std::size_t single_mmio_write = count_occurrences(single_a, R"("kind":"MMIO_WRITE")");
+  const std::size_t single_barrier = count_occurrences(single_a, R"("kind":"BARRIER")");
+
+  const std::size_t mt_ifetch = count_occurrences(baseline_mt, R"("kind":"IFETCH")");
+  const std::size_t mt_read = count_occurrences(baseline_mt, R"("kind":"READ")");
+  const std::size_t mt_write = count_occurrences(baseline_mt, R"("kind":"WRITE")");
+  const std::size_t mt_mmio_read = count_occurrences(baseline_mt, R"("kind":"MMIO_READ")");
+  const std::size_t mt_mmio_write = count_occurrences(baseline_mt, R"("kind":"MMIO_WRITE")");
+  const std::size_t mt_barrier = count_occurrences(baseline_mt, R"("kind":"BARRIER")");
+
+  if (single_ifetch != mt_ifetch || single_read != mt_read || single_write != mt_write ||
+      single_mmio_read != mt_mmio_read || single_mmio_write != mt_mmio_write || single_barrier != mt_barrier) {
+    std::cerr << "single-thread and multithread dual-demo per-kind commit counts diverged\n";
+    return 1;
+  }
+
   const std::size_t demo_barrier = count_occurrences(single_a, R"("kind":"BARRIER")");
   for (int run = 0; run < 5; ++run) {
     const auto mt_trace = emu.run_dual_demo_trace_multithread();

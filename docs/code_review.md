@@ -4,6 +4,12 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### Expanded 16-task batch coverage
+- Added deterministic overlap set/clear two-batch SCU assertions with round-robin rotation checks.
+- Added four-cycle mixed RAM/MMIO commit-horizon drain and queue-order preservation checks.
+- Added mixed-width same-address SH-2 delay-slot overwrite tests for BRA/RTS paths.
+- Added single-thread vs multithread dual-demo per-kind count parity checks across all current commit kinds.
+
 1. **Deterministic bus arbitration and commit safety remain stable.**
    - Existing commit-horizon/progress-watermark and deterministic ordering tests continue to pass, now including long mixed RAM/MMIO queue drains across three horizon-advance cycles with order-preservation checks.
 2. **SCU synthetic-source MMIO coverage now spans mixed-size contention, lanes, overlapping clear masks, overlapping set/clear batches, trace order, and stall stability.**

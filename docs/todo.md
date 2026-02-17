@@ -54,12 +54,43 @@
 15. [x] Refresh architecture notes to describe the expanded overlap, count-stability, and delay-slot coverage.
 16. [x] Refresh code-review snapshot to document the completed 16-item challenge and residual risks.
 
+## Expanded next-task batch (16/16 completed)
+
+1. [x] Add deterministic SCU overlap set/clear regression covering two same-batch operations.
+2. [x] Add deterministic SCU overlap regression validating round-robin winner rotation across two consecutive batches.
+3. [x] Add deterministic repeated-run SCU overlap regression for mixed-size set/clear sequences.
+4. [x] Add deterministic commit-horizon regression for mixed RAM/MMIO queues draining across four progress cycles.
+5. [x] Add deterministic commit-horizon regression validating queue-order preservation at each intermediate drain cycle.
+6. [x] Add deterministic SH-2 BRA path regression for delay-slot MOV.W store followed by target MOV.L overwrite to same address.
+7. [x] Add deterministic SH-2 BRA path regression for delay-slot MOV.L store followed by target MOV.W overwrite to same address.
+8. [x] Add deterministic SH-2 RTS path regression for delay-slot MOV.W store followed by target MOV.L overwrite to same address.
+9. [x] Add deterministic SH-2 RTS path regression for delay-slot MOV.L store followed by target MOV.W overwrite to same address.
+10. [x] Add deterministic dual-demo trace assertion for `IFETCH` count parity between single-thread and multithread runs.
+11. [x] Add deterministic dual-demo trace assertion for `READ` count parity between single-thread and multithread runs.
+12. [x] Add deterministic dual-demo trace assertion for `WRITE` count parity between single-thread and multithread runs.
+13. [x] Add deterministic dual-demo trace assertion for `MMIO_READ` count parity between single-thread and multithread runs.
+14. [x] Add deterministic dual-demo trace assertion for `MMIO_WRITE` count parity between single-thread and multithread runs.
+15. [x] Add deterministic dual-demo trace assertion for `BARRIER` count parity between single-thread and multithread runs.
+16. [x] Refresh docs (`todo`/`code_review`/`architecture`) to record completed coverage and updated follow-ups.
+
 ## Next tasks
 
-1. [ ] Add deterministic SCU source-mask contention tests that interleave overlapping source-set and source-clear writes across two consecutive batches with round-robin winner rotation checks.
-2. [ ] Add deterministic BIOS trace assertions comparing per-kind commit counts between single-thread and multithread dual-demo runs (`IFETCH/READ/WRITE/MMIO/BARRIER`).
-3. [ ] Expand SH-2 delay-slot matrix with mixed-width target-side overwrite checks (delay-slot MOV.W store then target MOV.L store to same address, and inverse).
-4. [ ] Add deterministic commit-horizon regression coverage for queues requiring four or more horizon-advance cycles with interleaved MMIO reads/writes and RAM writes.
+1. [ ] Add deterministic SCU overlap contention tests where both CPUs issue source-set and source-clear writes on different byte lanes within the same two-batch window.
+2. [ ] Add deterministic SCU overlap contention tests with staggered `req_time` values that still resolve identically under commit-horizon gating.
+3. [ ] Add deterministic SCU overlap tests that assert IST clear (`0x05FE00A8`) behavior when overlap bits are masked and then unmasked.
+4. [ ] Add deterministic SCU write-log assertions for overlap set/clear scenarios to validate address/value/size ordering metadata.
+5. [ ] Add deterministic dual-demo per-kind count assertions for `src` field parity (`READ`/`MMIO`/`BARRIER`) between single-thread and multithread traces.
+6. [ ] Add deterministic dual-demo repeated-run assertions for `cache_hit:true` and `cache_hit:false` counts.
+7. [ ] Add deterministic BIOS fixture assertions for per-CPU commit-kind distributions (cpu0 vs cpu1) remaining stable across runs.
+8. [ ] Add deterministic BIOS fixture assertions for `t_start/t_end/stall` tuples of selected MMIO commits across repeated runs.
+9. [ ] Expand SH-2 delay-slot matrix with BRA path mixed-width overwrite tests where target writes happen via MOV.W after MOV.L and include negative immediates.
+10. [ ] Expand SH-2 delay-slot matrix with RTS path mixed-width overwrite tests where target writes happen via MOV.L after MOV.W and include negative immediates.
+11. [ ] Add deterministic SH-2 same-address overwrite tests where delay-slot writes MMIO and target writes RAM (and inverse where supported).
+12. [ ] Add deterministic commit-horizon tests for five-cycle drains with interleaved MMIO reads, MMIO writes, and RAM writes.
+13. [ ] Add deterministic commit-horizon tests that verify response values from queued MMIO reads when preceding queued writes are horizon-blocked.
+14. [ ] Add deterministic commit-horizon tests that alternate CPU progress updates asymmetrically before final convergence.
+15. [ ] Add deterministic trace-order assertions that mixed commit kinds (`READ/WRITE/MMIO/BARRIER`) remain in stable serialized order under repeated runs.
+16. [ ] Run code-review pass and document newly discovered risks/TODOs after implementing the above batch.
 
 ## Notes
 
