@@ -9,6 +9,7 @@ constexpr std::uint32_t kDisplayStatusAddr = 0x05F00010U;
 constexpr std::uint32_t kScuImsAddr = 0x05FE00A0U;
 constexpr std::uint32_t kSmpcStatusAddr = 0x05D00080U;
 constexpr std::uint32_t kVdp2TvmdAddr = 0x05F80000U;
+constexpr std::uint32_t kVdp2TvstatAddr = 0x05F80004U;
 constexpr std::uint32_t kScspMcierAddr = 0x05C00000U;
 
 struct MmioRegisterSpec {
@@ -28,6 +29,9 @@ struct MmioRegisterSpec {
   }
   if (word_addr == kVdp2TvmdAddr) {
     return MmioRegisterSpec{0x00000000U, 0x0000FFFFU};
+  }
+  if (word_addr == kVdp2TvstatAddr) {
+    return MmioRegisterSpec{0x00000008U, 0x00000000U};
   }
   if (word_addr == kScspMcierAddr) {
     return MmioRegisterSpec{0x00000000U, 0x000007FFU};
