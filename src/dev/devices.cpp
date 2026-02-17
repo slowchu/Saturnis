@@ -13,7 +13,6 @@ struct MmioRegisterSpec {
 };
 
 [[nodiscard]] std::optional<MmioRegisterSpec> register_spec(std::uint32_t word_addr) {
-  // TODO: Extend this table with explicit SMPC/SCU/VDP1/VDP2/SCSP register semantics.
   if (word_addr == kDisplayStatusAddr) {
     return MmioRegisterSpec{0x1U, 0x00000000U};
   }
