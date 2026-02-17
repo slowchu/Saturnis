@@ -72,7 +72,7 @@ This makes bus occupancy and WAIT behavior directly inspectable in regression tr
 
 - SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn, BRA, RTS, and MOV.L data-memory forms).
 - SH-2 interpreter now supports blocking MOV.L data-memory read/write execution via deterministic bus/MMIO commits.
-- Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers via reset-value and writable-mask behavior.
+- Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers, including SCU IMS/IST mask-pending interactions and VDP2 TVMD/TVSTAT behavior.
 - VDP rendering is placeholder/debug-oriented.
 - BIOS execution support is partial and not cycle-accurate.
 - `OpBarrier` is implemented as an explicit bus barrier operation (deterministic stall, no memory read/write side effect).
