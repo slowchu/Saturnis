@@ -68,11 +68,11 @@ Commit trace lines record timing explicitly:
 
 This makes bus occupancy and WAIT behavior directly inspectable in regression traces.
 
-## Current limitations / TODO
+## Current limitations
 
 - SH-2 interpreter is intentionally minimal (bring-up subset).
-- SH-2 data-memory ops are still skeletal; full store-buffer/cached data-path integration for interpreter ops is TODO.
-- Saturn device models now include deterministic MMIO latching and a few explicit register semantics; broad SMPC/SCU/VDP/SCSP coverage remains TODO.
+- SH-2 interpreter now supports blocking MOV.L data-memory read/write execution via deterministic bus/MMIO commits.
+- Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers via reset-value and writable-mask behavior.
 - VDP rendering is placeholder/debug-oriented.
 - BIOS execution support is partial and not cycle-accurate.
 - `OpBarrier` is implemented as an explicit bus barrier operation (deterministic stall, no memory read/write side effect).

@@ -5,6 +5,7 @@
 #include "mem/memory.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -27,9 +28,19 @@ public:
   [[nodiscard]] std::uint32_t pc() const;
   [[nodiscard]] core::Tick local_time() const;
   [[nodiscard]] std::uint64_t executed_instructions() const;
+  [[nodiscard]] std::uint32_t reg(std::size_t index) const;
 
 private:
   void execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit);
+
+  struct PendingMemOp {
+    enum class Kind { ReadLong, WriteLong };
+    Kind kind = Kind::ReadLong;
+    std::uint32_t phys_addr = 0;
+    std::uint8_t size = 4;
+    std::uint32_t value = 0;
+    std::uint32_t dst_reg = 0;
+  };
 
   int cpu_id_;
   std::uint32_t pc_ = 0;
@@ -37,6 +48,7 @@ private:
   std::array<std::uint32_t, 16> r_{};
   core::Tick t_ = 0;
   std::uint64_t executed_ = 0;
+  std::optional<PendingMemOp> pending_mem_op_;
   mem::TinyCache icache_{16, 64};
 };
 
