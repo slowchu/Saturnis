@@ -40,7 +40,7 @@ private:
   void set_t_flag(bool value);
 
   struct PendingMemOp {
-    enum class Kind { ReadByte, WriteByte, ReadWord, WriteWord, ReadLong, WriteLong, ExceptionVectorRead };
+    enum class Kind { ReadLong, WriteLong, ReadWord, WriteWord, ReadByte, WriteByte, ExceptionVectorRead };
     Kind kind = Kind::ReadLong;
     std::uint32_t phys_addr = 0;
     std::uint8_t size = 4;

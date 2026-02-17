@@ -1,5 +1,6 @@
 #include "core/trace.hpp"
 
+#include <locale>
 #include <sstream>
 
 namespace saturnis::core {
@@ -34,6 +35,7 @@ void TraceLog::add_state(const CpuSnapshot &state) {
 
 std::string TraceLog::to_jsonl() const {
   std::ostringstream ss;
+  ss.imbue(std::locale::classic());
   write_jsonl(ss);
   return ss.str();
 }

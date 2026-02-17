@@ -69,6 +69,13 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   pending_branch_target_.reset();
 
   std::optional<std::uint32_t> next_branch_target;
+  auto write_reg = [this](std::uint32_t n, std::uint32_t value) {
+    r_[n] = value;
+    if (n == 15U) {
+      // TODO: Remove PR mirroring once LDS/STS and real call/return paths are implemented.
+      pr_ = value;
+    }
+  };
   if (instr == 0x0009U) {
     pc_ += 2U;
   } else if (instr == 0x0018U) {
@@ -79,7 +86,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x0029U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    r_[n] = t_flag() ? 1U : 0U;
+    write_reg(n, t_flag() ? 1U : 0U);
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x3000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
@@ -98,44 +105,44 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   } else if ((instr & 0xF000U) == 0xE000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
-    r_[n] = static_cast<std::uint32_t>(imm);
+    write_reg(n, static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0x7000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
-    r_[n] = static_cast<std::uint32_t>(static_cast<std::int32_t>(r_[n]) + imm);
+    write_reg(n, r_[n] + static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x300CU) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
-    r_[n] += r_[m];
+    write_reg(n, r_[n] + r_[m]);
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x6003U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
-    r_[n] = r_[m];
+    write_reg(n, r_[m]);
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x4000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     set_t_flag((r_[n] & 0x80000000U) != 0U);
-    r_[n] <<= 1U;
+    write_reg(n, r_[n] << 1U);
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x4001U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     set_t_flag((r_[n] & 0x1U) != 0U);
-    r_[n] >>= 1U;
+    write_reg(n, r_[n] >> 1U);
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x4004U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const bool msb = (r_[n] & 0x80000000U) != 0U;
     set_t_flag(msb);
-    r_[n] = (r_[n] << 1U) | (msb ? 1U : 0U);
+    write_reg(n, (r_[n] << 1U) | (msb ? 1U : 0U));
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x4005U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const bool lsb = (r_[n] & 0x1U) != 0U;
     set_t_flag(lsb);
-    r_[n] = (r_[n] >> 1U) | (lsb ? 0x80000000U : 0U);
+    write_reg(n, (r_[n] >> 1U) | (lsb ? 0x80000000U : 0U));
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
     const std::uint32_t branch_pc = pc_;
@@ -143,7 +150,9 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     if ((disp & 0x800) != 0) {
       disp |= ~0xFFF;
     }
-    next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    const std::int32_t byte_offset = disp * 2;
+    const std::int64_t target = static_cast<std::int64_t>(branch_pc) + 4 + static_cast<std::int64_t>(byte_offset);
+    next_branch_target = static_cast<std::uint32_t>(target);
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xB000U) {
     const std::uint32_t branch_pc = pc_;
@@ -160,7 +169,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = r_[m];
     pc_ += 2U;
   } else if (instr == 0x000BU) {
-    next_branch_target = (pr_ != 0U) ? pr_ : r_[15];
+    next_branch_target = pr_;
     pc_ += 2U;
   } else {
     // Unknown opcode treated as NOP for vertical-slice robustness.
@@ -309,9 +318,21 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       pc_ = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
+      if (pending.dst_reg == 15U) {
+        pr_ = r_[pending.dst_reg];
+      }
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
+      if (pending.dst_reg == 15U) {
+        pr_ = r_[pending.dst_reg];
+      }
+    } else if (pending.kind == PendingMemOp::Kind::ReadByte) {
+      const std::uint8_t byte = static_cast<std::uint8_t>(response.value & 0xFFU);
+      r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
+      if (pending.dst_reg == 15U) {
+        pr_ = r_[pending.dst_reg];
+      }
     }
 
     if (pending_branch_target_.has_value()) {
@@ -332,6 +353,17 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
   }
   const std::uint16_t instr = static_cast<std::uint16_t>(response.value & 0xFFFFU);
   execute_instruction(instr, trace, true);
+}
+
+
+bool SH2Core::t_flag() const { return (sr_ & kSrTBit) != 0U; }
+
+void SH2Core::set_t_flag(bool value) {
+  if (value) {
+    sr_ |= kSrTBit;
+  } else {
+    sr_ &= ~kSrTBit;
+  }
 }
 
 void SH2Core::step(bus::BusArbiter &arbiter, core::TraceLog &trace, std::uint64_t seq) {
