@@ -197,7 +197,14 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
     }
-    pc_ += 2U;
+
+    if (pending_branch_target_.has_value()) {
+      pc_ = *pending_branch_target_;
+      pending_branch_target_.reset();
+    } else {
+      pc_ += 2U;
+    }
+
     t_ += 1;
     ++executed_;
     trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});

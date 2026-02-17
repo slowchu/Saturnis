@@ -101,6 +101,15 @@ int main() {
     return 1;
   }
 
+
+  if (!trace_contains_checkpoint(bios_fixture,
+                                 "\"t_start\":0,\"t_end\":6,\"stall\":6,\"cpu\":0,\"kind\":\"IFETCH\",\"phys\":0") ||
+      !trace_contains_checkpoint(bios_fixture,
+                                 "\"t_start\":6,\"t_end\":13,\"stall\":13,\"cpu\":1,\"kind\":\"IFETCH\",\"phys\":0")) {
+    std::cerr << "bios bring-up trace missing expected deterministic commit timing checkpoints\n";
+    return 1;
+  }
+
   std::cout << "trace regression stable\n";
   return 0;
 }

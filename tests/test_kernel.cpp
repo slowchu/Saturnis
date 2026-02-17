@@ -421,6 +421,53 @@ void test_scu_interrupt_source_pending_wires_into_ist() {
 
 
 
+
+void test_scu_synthetic_source_mixed_cpu_contention_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp cpu0_set{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000001U};
+  const saturnis::bus::BusOp cpu1_set{1, 0U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000002U};
+  const auto committed = arbiter.commit_batch({cpu0_set, cpu1_set});
+
+  check(committed.size() == 2U, "both contending SCU source writes should commit deterministically");
+  check(committed[0].op.cpu_id == 0 && committed[1].op.cpu_id == 1,
+        "mixed-CPU SCU source contention should resolve in deterministic round-robin order");
+
+  const auto source_state = arbiter.commit({0, 1U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_state.value == 0x00000003U,
+        "mixed-CPU SCU source writes should deterministically accumulate pending bits");
+}
+
+void test_scu_synthetic_source_mmio_stall_is_stable_across_runs() {
+  std::vector<saturnis::core::Tick> baseline_stalls;
+
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    const saturnis::bus::BusOp cpu0_set{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000001U};
+    const saturnis::bus::BusOp cpu1_clear{1, 0U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000001U};
+    const auto committed = arbiter.commit_batch({cpu0_set, cpu1_clear});
+
+    check(committed.size() == 2U, "stall stability scenario should commit both MMIO writes");
+    check(committed[0].response.stall > 0U && committed[1].response.stall > committed[0].response.stall,
+          "stall profile should reflect deterministic tie/serialization behavior");
+
+    std::vector<saturnis::core::Tick> stalls{committed[0].response.stall, committed[1].response.stall};
+    if (run == 0) {
+      baseline_stalls = stalls;
+    } else {
+      check(stalls == baseline_stalls,
+            "SCU synthetic-source MMIO commit stall fields should remain stable under repeated runs");
+    }
+  }
+}
+
 void test_scu_interrupt_source_subword_writes_apply_lane_masks() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -719,6 +766,63 @@ void test_sh2_branch_in_delay_slot_uses_first_branch_target_policy() {
         "first-branch-wins delay-slot policy should continue from the first branch target path");
 }
 
+
+void test_sh2_bra_with_movw_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0xA002U); // BRA +2 (target 0x000A)
+  mem.write(0x0004U, 2U, 0x6211U); // MOV.W @R1,R2 (delay-slot memory op)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (branch target)
+  mem.write(0x0040U, 2U, 0xFF80U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x000AU, "BRA with MOV.W delay-slot memory op should branch immediately after delay-slot commit");
+  check(core.reg(2) == 0xFFFFFF80U, "MOV.W delay-slot read should still commit deterministic sign-extended value");
+
+  core.step(arbiter, trace, 3);
+  check(core.reg(0) == 1U, "BRA target instruction should execute after delay-slot memory commit");
+}
+
+void test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0AU); // MOV #10,R15
+  mem.write(0x0002U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0004U, 2U, 0x000BU); // RTS
+  mem.write(0x0006U, 2U, 0x6211U); // MOV.W @R1,R2 (delay-slot memory op)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (RTS target)
+  mem.write(0x0040U, 2U, 0x0001U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.pc() == 0x000AU, "RTS with MOV.W delay-slot memory op should branch immediately after delay-slot commit");
+  check(core.reg(2) == 1U, "RTS delay-slot MOV.W read should deterministically update destination register");
+
+  core.step(arbiter, trace, 4);
+  check(core.reg(0) == 1U, "RTS target instruction should execute after delay-slot memory commit");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -827,6 +931,8 @@ int main() {
   test_scu_ims_register_masks_to_low_16_bits();
   test_scu_interrupt_pending_respects_mask_and_clear();
   test_scu_interrupt_source_pending_wires_into_ist();
+  test_scu_synthetic_source_mixed_cpu_contention_is_deterministic();
+  test_scu_synthetic_source_mmio_stall_is_stable_across_runs();
   test_scu_interrupt_source_subword_writes_apply_lane_masks();
   test_scu_interrupt_source_write_log_is_deterministic();
   test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic();
@@ -841,6 +947,8 @@ int main() {
   test_sh2_bra_uses_delay_slot_deterministically();
   test_sh2_rts_uses_delay_slot_deterministically();
   test_sh2_branch_in_delay_slot_uses_first_branch_target_policy();
+  test_sh2_bra_with_movw_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
