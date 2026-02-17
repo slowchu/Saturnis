@@ -101,6 +101,9 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
 }
 
 void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
+  arbiter.update_progress(0, 1U);
+  arbiter.update_progress(1, 1U);
+
   Mailbox<cpu::PendingBusOp> req0;
   Mailbox<cpu::PendingBusOp> req1;
   Mailbox<ScriptResponse> resp0;
