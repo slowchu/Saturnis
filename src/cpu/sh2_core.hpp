@@ -30,6 +30,8 @@ public:
   [[nodiscard]] std::uint64_t executed_instructions() const;
   [[nodiscard]] std::uint32_t reg(std::size_t index) const;
   [[nodiscard]] std::uint32_t sr() const;
+  [[nodiscard]] std::uint32_t pr() const;
+  void set_pr(std::uint32_t value);
 
 
 private:

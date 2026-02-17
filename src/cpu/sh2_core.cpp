@@ -56,6 +56,7 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   pc_ = pc;
   r_[15] = sp;
   sr_ = 0xF0U;
+  pr_ = 0U;
   t_ = 0;
   executed_ = 0;
   pending_mem_op_.reset();
@@ -155,6 +156,11 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::int32_t byte_offset = disp * 2;
     const std::int64_t target = static_cast<std::int64_t>(branch_pc) + 4 + static_cast<std::int64_t>(byte_offset);
     next_branch_target = static_cast<std::uint32_t>(target);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x400BU) {
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    pr_ = pc_ + 4U;
+    next_branch_target = r_[m];
     pc_ += 2U;
   } else if (instr == 0x000BU) {
     next_branch_target = pr_;
@@ -349,6 +355,17 @@ void SH2Core::step(bus::BusArbiter &arbiter, core::TraceLog &trace, std::uint64_
   apply_ifetch_and_step(resp, trace);
 }
 
+
+bool SH2Core::t_flag() const { return (sr_ & kSrTBit) != 0U; }
+
+void SH2Core::set_t_flag(bool value) {
+  if (value) {
+    sr_ |= kSrTBit;
+  } else {
+    sr_ &= ~kSrTBit;
+  }
+}
+
 std::uint32_t SH2Core::pc() const { return pc_; }
 
 core::Tick SH2Core::local_time() const { return t_; }
@@ -358,5 +375,9 @@ std::uint64_t SH2Core::executed_instructions() const { return executed_; }
 std::uint32_t SH2Core::reg(std::size_t index) const { return r_[index & 0xFU]; }
 
 std::uint32_t SH2Core::sr() const { return sr_; }
+
+std::uint32_t SH2Core::pr() const { return pr_; }
+
+void SH2Core::set_pr(std::uint32_t value) { pr_ = value; }
 
 } // namespace saturnis::cpu
