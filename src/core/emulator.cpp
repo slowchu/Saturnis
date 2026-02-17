@@ -257,36 +257,14 @@ std::string Emulator::run_dual_demo_trace_multithread() {
   return trace.to_jsonl();
 }
 
-void Emulator::maybe_write_trace(const RunConfig &config, const TraceLog &trace) const {
-  if (config.trace_path.empty()) {
-    return;
-  }
-  std::ofstream ofs(config.trace_path);
-  trace.write_jsonl(ofs);
-}
-
-int Emulator::run(const RunConfig &config) {
+std::string Emulator::run_bios_trace(const std::vector<std::uint8_t> &bios_image, std::uint64_t max_steps) {
   TraceLog trace;
   mem::CommittedMemory mem;
   dev::DeviceHub dev;
   bus::BusArbiter arbiter(mem, dev, trace);
 
-  if (!config.bios_path.empty()) {
-    const auto bios = platform::read_binary_file(config.bios_path);
-    for (std::size_t i = 0; i < bios.size(); ++i) {
-      mem.write(static_cast<std::uint32_t>(i), 1U, bios[i]);
-    }
-  }
-
-  if (config.dual_demo || config.bios_path.empty()) {
-    std::cout << "Running deterministic dual-CPU demo\n";
-    const auto demo_trace = run_dual_demo_trace();
-    std::cout << demo_trace;
-    if (!config.trace_path.empty()) {
-      std::ofstream ofs(config.trace_path);
-      ofs << demo_trace;
-    }
-    return 0;
+  for (std::size_t i = 0; i < bios_image.size(); ++i) {
+    mem.write(static_cast<std::uint32_t>(i), 1U, bios_image[i]);
   }
 
   cpu::SH2Core master(0);
@@ -298,7 +276,7 @@ int Emulator::run(const RunConfig &config) {
   std::optional<bus::BusOp> p0;
   std::optional<bus::BusOp> p1;
 
-  while ((master.executed_instructions() + slave.executed_instructions()) < config.max_steps) {
+  while ((master.executed_instructions() + slave.executed_instructions()) < max_steps) {
     arbiter.update_progress(0, master.local_time() + 1);
     arbiter.update_progress(1, slave.local_time() + 1);
 
@@ -327,7 +305,7 @@ int Emulator::run(const RunConfig &config) {
     }
 
     if (fetches.empty()) {
-      if ((master.executed_instructions() + slave.executed_instructions()) >= config.max_steps) {
+      if ((master.executed_instructions() + slave.executed_instructions()) >= max_steps) {
         break;
       }
       continue;
@@ -348,14 +326,39 @@ int Emulator::run(const RunConfig &config) {
     }
   }
 
-  std::vector<std::uint32_t> framebuffer(320U * 240U, 0xFF101020U);
-  for (const auto &w : dev.writes()) {
-    const std::size_t pos = static_cast<std::size_t>((w.addr ^ static_cast<std::uint32_t>(w.t)) % framebuffer.size());
-    framebuffer[pos] = 0xFF00FF00U;
+  return trace.to_jsonl();
+}
+
+void Emulator::maybe_write_trace(const RunConfig &config, const TraceLog &trace) const {
+  if (config.trace_path.empty()) {
+    return;
+  }
+  std::ofstream ofs(config.trace_path);
+  trace.write_jsonl(ofs);
+}
+
+int Emulator::run(const RunConfig &config) {
+  if (config.dual_demo || config.bios_path.empty()) {
+    std::cout << "Running deterministic dual-CPU demo\n";
+    const auto demo_trace = run_dual_demo_trace();
+    std::cout << demo_trace;
+    if (!config.trace_path.empty()) {
+      std::ofstream ofs(config.trace_path);
+      ofs << demo_trace;
+    }
+    return 0;
   }
 
+  const auto bios = platform::read_binary_file(config.bios_path);
+  const auto bios_trace = run_bios_trace(bios, config.max_steps);
+
+  if (!config.trace_path.empty()) {
+    std::ofstream ofs(config.trace_path);
+    ofs << bios_trace;
+  }
+
+  std::vector<std::uint32_t> framebuffer(320U * 240U, 0xFF101020U);
   platform::present_framebuffer_if_available(320, 240, framebuffer, config.headless);
-  maybe_write_trace(config, trace);
   return 0;
 }
 

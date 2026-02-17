@@ -4,21 +4,21 @@ Date: 2026-02-17
 
 ## Review summary
 
-1. **Deterministic arbitration and commit-horizon behavior remain sound.**
-   - `BusArbiter` ordering and progress-watermark gating paths are covered by focused kernel tests.
-2. **MMIO model now includes basic SCU interrupt status/mask interactions.**
-   - SCU IMS masking remains deterministic.
-   - SCU IST pending-bit visibility now interacts with IMS mask bits.
-   - Added deterministic clear semantics through an explicit SCU interrupt-clear register path.
-3. **SH-2 execution slice expanded with additional deterministic data-memory forms.**
-   - Added MOV.W data-memory read/write bus paths with focused regression coverage (including sign-extension behavior).
+1. **Deterministic bus arbitration and commit safety remain stable.**
+   - Existing commit-horizon/progress-watermark and deterministic ordering tests continue to pass.
+2. **Device/MMIO deterministic model has improved incrementally.**
+   - SCU IMS/IST pending-mask behavior is present and test-covered.
+   - Representative SMPC/VDP/SCSP register semantics remain deterministic.
+3. **SH-2 execution slice now includes more data-memory paths and BIOS trace regression checks.**
+   - MOV.L/MOV.W data-memory operations are covered.
+   - BIOS bring-up trace regression now asserts deterministic repeatability and expected IFETCH/READ/WRITE commit presence for a fixed mini BIOS image.
 
 ## Risks and follow-ups
 
-- SCU interrupt model is still intentionally reduced (software-driven pending bits only; no device-side event generation yet).
-- Device behavior is still register-fragment based; subsystem-level interactions are mostly unmodeled.
-- SH-2 coverage is still vertical-slice scope, not full ISA behavior (many addressing/transfer forms remain).
+- BIOS bring-up assertions are currently structural (trace stability + event presence), not yet full state-checkpoint validation.
+- SCU pending bits are still software-driven in this slice; real interrupt-source wiring is still TODO.
+- SH-2 remains a vertical-slice subset (no full timing/ISA/exception model).
 
 ## TODO tracking
 
-Backlog and execution order are maintained in `docs/todo.md`.
+Backlog and next tasks are maintained in `docs/todo.md`.
