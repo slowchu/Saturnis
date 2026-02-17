@@ -5,6 +5,13 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+### New 16-task batch completion updates
+- Added SCU overlap regressions for non-adjacent byte-lane overlap resolution, repeated source-clear idempotence, alternating halfword IMS retention checks, and write-log address histogram stability across overlap bursts.
+- Expanded dual-demo trace regression checks with per-CPU `src:"IFETCH"` parity, selected `IFETCH`/`MMIO_READ` timing-tuple parity, and first-20 commit-prefix stability across repeated multithread runs.
+- Expanded SH-2 delay-slot overwrite matrix with BRA/RTS both-negative overwrite paths that perform a target-side register copy before final store, plus a four-intermediate non-memory overwrite path.
+- Expanded commit-horizon regressions with nine-cycle mixed RAM/MMIO drains, six queued MMIO-read pinned-value determinism across repeated runs, and simultaneous two-CPU progress-reversal convergence checks.
+- Expanded BIOS fixture determinism checks to include per-CPU `BARRIER` kind-count parity across repeated runs.
+
 - Added SCU overlap regressions for opposite-lane halfword/byte interactions, three-batch alternating contention, replayed IST-clear agreement, and per-CPU write-log value histogram stability.
 - Expanded commit-horizon regressions to cover eight-cycle drains, five queued MMIO-read pinned values, and double-reversal progress convergence.
 - Expanded SH-2 mixed-width delay-slot overwrite matrix with dual target arithmetic variants and a three-intermediate non-memory overwrite path.
