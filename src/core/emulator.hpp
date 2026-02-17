@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace saturnis::core {
 
@@ -20,6 +21,7 @@ public:
   int run(const RunConfig &config);
   [[nodiscard]] std::string run_dual_demo_trace();
   [[nodiscard]] std::string run_dual_demo_trace_multithread();
+  [[nodiscard]] std::string run_bios_trace(const std::vector<std::uint8_t> &bios_image, std::uint64_t max_steps = 20000);
 
 private:
   void maybe_write_trace(const RunConfig &config, const TraceLog &trace) const;
