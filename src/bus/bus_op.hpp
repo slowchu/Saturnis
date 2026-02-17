@@ -9,6 +9,8 @@ namespace saturnis::bus {
 
 enum class BusKind { IFetch, Read, Write, MmioRead, MmioWrite, Barrier };
 
+enum class BusProducer { Auto, Cpu, Dma };
+
 struct BusOp {
   int cpu_id = 0;
   core::Tick req_time = 0;
@@ -19,6 +21,7 @@ struct BusOp {
   std::uint32_t data = 0;
   bool fill_cache_line = false;
   std::uint8_t cache_line_size = 0;
+  BusProducer producer = BusProducer::Auto;
 };
 
 inline std::string_view kind_name(BusKind kind) {
@@ -39,8 +42,11 @@ inline std::string_view kind_name(BusKind kind) {
   return "UNKNOWN";
 }
 
-inline std::string_view source_name(BusKind kind) {
-  switch (kind) {
+inline std::string_view source_name(const BusOp &op) {
+  if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
+    return "DMA";
+  }
+  switch (op.kind) {
   case BusKind::IFetch:
     return "IFETCH";
   case BusKind::Read:

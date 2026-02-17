@@ -3087,16 +3087,34 @@ void test_commit_horizon_four_alternating_reversals_on_both_cpus_before_converge
   check(pending.empty(), "quad-reversal phase7 should converge deterministically");
 }
 
-void test_dma_produced_bus_op_path_is_unmodeled_scaffold_stays_deterministically_zero() {
-  // TODO: replace this deterministic zero-guard with first DMA bus-op execution assertions once DMA is modeled.
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-  (void)arbiter.commit({0,0U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x1U});
-  const auto json = trace.to_jsonl();
-  check(json.find(R"("src":"DMA")") == std::string::npos,
-        "DMA-tagged commits should remain deterministically absent until DMA path is implemented");
+void test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically() {
+  std::uint32_t baseline = 0U;
+  std::string baseline_trace;
+
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit_dma({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000019U});
+    const auto read_back =
+        arbiter.commit_dma({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+
+    const auto json = trace.to_jsonl();
+    check(json.find(R"("src":"DMA")") != std::string::npos,
+          "DMA commit path should emit DMA-tagged trace entries");
+
+    if (run == 0) {
+      baseline = read_back.value;
+      baseline_trace = json;
+    } else {
+      check(read_back.value == baseline,
+            "DMA-produced MMIO readback value should stay deterministic across runs");
+      check(json == baseline_trace,
+            "DMA-produced trace output should stay deterministic across runs");
+    }
+  }
 }
 
 
@@ -3457,7 +3475,7 @@ int main() {
   test_sh2_same_addr_overwrite_with_six_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
-  test_dma_produced_bus_op_path_is_unmodeled_scaffold_stays_deterministically_zero();
+  test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
