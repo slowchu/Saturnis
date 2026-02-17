@@ -6,6 +6,7 @@ namespace saturnis::dev {
 namespace {
 
 constexpr std::uint32_t kDisplayStatusAddr = 0x05F00010U;
+constexpr std::uint32_t kScuImsAddr = 0x05FE00A0U;
 
 struct MmioRegisterSpec {
   std::uint32_t reset_value = 0U;
@@ -15,6 +16,9 @@ struct MmioRegisterSpec {
 [[nodiscard]] std::optional<MmioRegisterSpec> register_spec(std::uint32_t word_addr) {
   if (word_addr == kDisplayStatusAddr) {
     return MmioRegisterSpec{0x1U, 0x00000000U};
+  }
+  if (word_addr == kScuImsAddr) {
+    return MmioRegisterSpec{0x0U, 0x0000FFFFU};
   }
   return std::nullopt;
 }
