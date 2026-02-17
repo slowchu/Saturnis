@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace saturnis::dev {
@@ -20,6 +21,7 @@ public:
 
 private:
   std::vector<MmioWriteLog> writes_;
+  std::unordered_map<std::uint32_t, std::uint32_t> mmio_regs_;
 };
 
 } // namespace saturnis::dev

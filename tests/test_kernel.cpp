@@ -168,7 +168,7 @@ void test_commit_horizon_correctness() {
 }
 
 
-void test_commit_horizon_requires_both_watermarks() {
+void test_commit_horizon_requires_both_progress_watermarks() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -178,11 +178,11 @@ void test_commit_horizon_requires_both_watermarks() {
 
   const saturnis::bus::BusOp cpu0_op{0, 5U, 0, saturnis::bus::BusKind::Write, 0x7010U, 4, 0xAAU};
   const auto blocked = arbiter.commit_batch({cpu0_op});
-  check(blocked.empty(), "horizon gating must block commits until both CPU watermarks are initialized");
+  check(blocked.empty(), "horizon gating must block commits until both CPU progress watermarks are initialized");
 
   arbiter.update_progress(1, 200U);
   const auto committed = arbiter.commit_batch({cpu0_op});
-  check(committed.size() == 1U, "op should commit once both CPU watermarks are available");
+  check(committed.size() == 1U, "op should commit once both CPU progress watermarks are available");
 }
 
 
@@ -211,6 +211,45 @@ void test_commit_pending_retains_uncommitted_ops() {
   check(pending.empty(), "pending queue should be empty after all ops commit");
 }
 
+void test_commit_pending_waits_for_both_progress_watermarks() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 100U);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 5U, 0, saturnis::bus::BusKind::Write, 0x7030U, 4, 0xA0U}};
+  const auto blocked = arbiter.commit_pending(pending);
+  check(blocked.empty(), "commit_pending should defer work until both CPU progress watermarks exist");
+  check(pending.size() == 1U, "pending queue should be unchanged while horizon is unsafe");
+
+  arbiter.update_progress(1, 200U);
+  const auto committed = arbiter.commit_pending(pending);
+  check(committed.size() == 1U, "pending op should commit once both CPU progress watermarks are available");
+  check(pending.empty(), "pending queue should drain after commit succeeds");
+}
+
+void test_commit_pending_preserves_order_of_remaining_ops() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 6U);
+  arbiter.update_progress(1, 100U);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 1U, 0, saturnis::bus::BusKind::Write, 0x7040U, 4, 0x10U},
+                                            {1, 20U, 1, saturnis::bus::BusKind::Write, 0x7044U, 4, 0x20U},
+                                            {0, 30U, 2, saturnis::bus::BusKind::Write, 0x7048U, 4, 0x30U}};
+
+  const auto first = arbiter.commit_pending(pending);
+  check(first.size() == 1U, "only safe-horizon op should commit from mixed pending queue");
+  check(pending.size() == 2U, "two horizon-blocked ops should stay pending");
+  check(pending[0].phys_addr == 0x7044U, "first blocked op should keep original relative order");
+  check(pending[1].phys_addr == 0x7048U, "second blocked op should keep original relative order");
+}
+
 void test_store_to_load_forwarding() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -237,6 +276,67 @@ void test_barrier_does_not_change_contention_address_history() {
   (void)arbiter.commit(barrier);
   const auto r = arbiter.commit(read_same);
   check(r.stall > 4U, "barrier must not alter last-address contention history");
+}
+
+
+void test_mmio_write_is_visible_to_subsequent_reads() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp write_mmio{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 4, 0x12345678U};
+  const saturnis::bus::BusOp read_mmio{1, 1U, 0, saturnis::bus::BusKind::MmioRead, 0x05F00020U, 4, 0U};
+
+  (void)arbiter.commit(write_mmio);
+  const auto r = arbiter.commit(read_mmio);
+  check(r.value == 0x12345678U, "MMIO read should return last written 32-bit register value");
+}
+
+void test_mmio_subword_write_updates_correct_lane() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05F00024U, 4, 0x11223344U});
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00025U, 1, 0xAAU});
+
+  const auto byte_read = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05F00025U, 1, 0U});
+  check(byte_read.value == 0xAAU, "byte MMIO read should observe byte-lane write");
+
+  const auto word_read = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00024U, 4, 0U});
+  check(word_read.value == 0x1122AA44U, "subword MMIO write should patch only targeted byte lane");
+}
+
+
+void test_mmio_display_status_is_read_only_default_ready() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto before = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
+  check(before.value == 0x1U, "display status should default to deterministic ready bit");
+
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00010U, 4, 0x0U});
+  const auto after = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
+  check(after.value == 0x1U, "display status writes should be ignored in read-only model");
+}
+
+void test_scu_ims_masks_to_writable_bits() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0xFFFFFFFFU});
+  const auto full = arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
+  check(full.value == 0x0000FFFFU, "SCU IMS should retain only modeled writable low 16 bits");
+
+  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00A2U, 2, 0x1234U});
+  const auto word = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
+  check(word.value == 0x0000FFFFU, "SCU IMS upper halfword write should be masked out");
 }
 
 void test_sh2_ifetch_cache_runahead() {
@@ -270,10 +370,16 @@ int main() {
   test_stall_applies_to_current_op();
   test_no_host_order_dependence();
   test_commit_horizon_correctness();
-  test_commit_horizon_requires_both_watermarks();
+  test_commit_horizon_requires_both_progress_watermarks();
   test_commit_pending_retains_uncommitted_ops();
+  test_commit_pending_waits_for_both_progress_watermarks();
+  test_commit_pending_preserves_order_of_remaining_ops();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
+  test_mmio_write_is_visible_to_subsequent_reads();
+  test_mmio_subword_write_updates_correct_lane();
+  test_mmio_display_status_is_read_only_default_ready();
+  test_scu_ims_masks_to_writable_bits();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;

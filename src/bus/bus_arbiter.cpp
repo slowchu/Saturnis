@@ -99,6 +99,8 @@ bool BusArbiter::has_safe_horizon() const {
   if (!progress_tracking_enabled_) {
     return true;
   }
+  // Once progress tracking is enabled, horizon gating stays closed until both
+  // CPUs have published at least one executed_up_to progress watermark.
   return progress_up_to_[0] != std::numeric_limits<core::Tick>::max() &&
          progress_up_to_[1] != std::numeric_limits<core::Tick>::max();
 }
