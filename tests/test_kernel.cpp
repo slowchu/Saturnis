@@ -448,6 +448,48 @@ void test_scsp_mcier_register_masks_to_low_11_bits() {
   check(after.value == 0x000007FFU, "SCSP MCIER should apply deterministic writable-bit mask");
 }
 
+
+void test_sh2_movw_memory_read_executes_via_bus_with_sign_extend() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6211U); // MOV.W @R1,R2
+  mem.write(0x0040U, 2U, 0xFF80U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+
+  check(core.pc() == 0x0004U, "MOV.W @Rm,Rn should retire and advance PC");
+  check(core.reg(2) == 0xFFFFFF80U, "MOV.W @Rm,Rn should sign-extend 16-bit data into destination register");
+}
+
+void test_sh2_movw_memory_write_executes_via_bus_low_halfword_only() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE144U); // MOV #0x44,R1
+  mem.write(0x0002U, 2U, 0xE2FFU); // MOV #-1,R2
+  mem.write(0x0004U, 2U, 0x2121U); // MOV.W R2,@R1
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x0006U, "MOV.W Rm,@Rn should retire and advance PC");
+  check(mem.read(0x0044U, 2U) == 0xFFFFU, "MOV.W Rm,@Rn should store the low 16 bits to memory");
+}
+
 void test_sh2_movl_memory_read_executes_via_bus() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -605,6 +647,8 @@ int main() {
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
   test_sh2_movl_memory_read_executes_via_bus();
+  test_sh2_movw_memory_read_executes_via_bus_with_sign_extend();
+  test_sh2_movw_memory_write_executes_via_bus_low_halfword_only();
   test_sh2_movl_memory_write_executes_via_bus();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
