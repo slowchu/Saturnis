@@ -31,8 +31,6 @@ std::vector<std::uint8_t> make_deterministic_bios_image() {
   return bios;
 }
 
-
-
 bool trace_contains_checkpoint(const std::string &trace, const std::string &needle) {
   return trace.find(needle) != std::string::npos;
 }
@@ -68,27 +66,29 @@ int main() {
   }
 
   const auto bios_image = make_deterministic_bios_image();
-  const auto bios_trace_a = emu.run_bios_trace(bios_image, 32U);
-  const auto bios_trace_b = emu.run_bios_trace(bios_image, 32U);
-  if (bios_trace_a != bios_trace_b) {
-    std::cerr << "bios bring-up trace regression mismatch\n";
-    return 1;
+  const auto bios_fixture = emu.run_bios_trace(bios_image, 32U);
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (bios_trace != bios_fixture) {
+      std::cerr << "bios bring-up trace fixture mismatch on run " << run << '\n';
+      return 1;
+    }
   }
 
-  if (bios_trace_a.find("\"kind\":\"IFETCH\"") == std::string::npos) {
+  if (bios_fixture.find("\"kind\":\"IFETCH\"") == std::string::npos) {
     std::cerr << "bios bring-up trace missing IFETCH commit events\n";
     return 1;
   }
-  if (bios_trace_a.find("\"kind\":\"READ\"") == std::string::npos ||
-      bios_trace_a.find("\"kind\":\"WRITE\"") == std::string::npos) {
+  if (bios_fixture.find("\"kind\":\"READ\"") == std::string::npos ||
+      bios_fixture.find("\"kind\":\"WRITE\"") == std::string::npos) {
     std::cerr << "bios bring-up trace missing expected data read/write commits\n";
     return 1;
   }
 
-  if (!trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||
-      !trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":4,\"sr\":240,\"r\":[0,64,4294967168") ||
-      !trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":6,\"sr\":240,\"r\":[0,64,4294967169") ||
-      !trace_contains_checkpoint(bios_trace_a, "\"cpu\":0,\"pc\":8,\"sr\":240,\"r\":[0,64,4294967169")) {
+  if (!trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||
+      !trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":4,\"sr\":240,\"r\":[0,64,4294967168") ||
+      !trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":6,\"sr\":240,\"r\":[0,64,4294967169") ||
+      !trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":8,\"sr\":240,\"r\":[0,64,4294967169")) {
     std::cerr << "bios bring-up trace missing expected deterministic state checkpoints\n";
     return 1;
   }

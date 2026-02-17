@@ -11,9 +11,9 @@ Date: 2026-02-17
    - A focused synthetic-source path now feeds IST pending visibility with deterministic set/clear behavior.
 3. **SH-2 execution slice adds deterministic delay-slot coverage for branch flow.**
    - BRA/RTS delay-slot behavior is now explicitly regression-tested.
-4. **BIOS bring-up trace regression coverage now includes state checkpoints.**
-   - Fixed mini BIOS image traces are deterministic across repeated runs.
-   - Deterministic CPU state checkpoints (PC/register progression) are now asserted in regression tests.
+4. **BIOS bring-up trace regression coverage now includes fixture comparison + state checkpoints.**
+   - Fixed mini BIOS image traces are compared against a deterministic fixture across repeated runs.
+   - Deterministic CPU state checkpoints (PC/register progression) are asserted in regression tests.
 
 ## Risks and follow-ups
 
