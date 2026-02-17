@@ -385,6 +385,26 @@ void test_vdp2_tvmd_register_masks_to_low_16_bits() {
   check(after.value == 0x00001234U, "VDP2 TVMD should only latch low 16 bits");
 }
 
+void test_vdp2_tvstat_register_is_read_only_with_deterministic_status() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 4, 0U});
+  check(initial.value == 0x00000008U, "VDP2 TVSTAT should expose deterministic default status bits");
+
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F80004U, 4, 0xFFFFFFFFU});
+  const auto after = arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 4, 0U});
+  check(after.value == 0x00000008U, "VDP2 TVSTAT should remain read-only after writes");
+
+  const auto low_half = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 2, 0U});
+  check(low_half.value == 0x0008U, "VDP2 TVSTAT low halfword should keep deterministic status bits");
+
+  const auto high_half = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F80006U, 2, 0U});
+  check(high_half.value == 0U, "VDP2 TVSTAT high halfword should stay clear");
+}
+
 void test_scsp_mcier_register_masks_to_low_11_bits() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -549,6 +569,7 @@ int main() {
   test_scu_ims_register_masks_to_low_16_bits();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
+  test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
   test_sh2_movl_memory_read_executes_via_bus();
   test_sh2_movl_memory_write_executes_via_bus();
