@@ -484,6 +484,28 @@ void test_sh2_add_register_updates_destination() {
   check(core.reg(3) == 2U, "ADD Rm,Rn should add source register into destination register");
 }
 
+
+void test_sh2_mov_register_copies_source_to_destination() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE17BU); // MOV #0x7B,R1
+  mem.write(0x0002U, 2U, 0xE200U); // MOV #0,R2
+  mem.write(0x0004U, 2U, 0x6213U); // MOV R1,R2
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x0006U, "MOV Rm,Rn should retire and advance PC");
+  check(core.reg(2) == 0x7BU, "MOV Rm,Rn should copy source register value into destination register");
+}
+
 void test_sh2_ifetch_cache_runahead() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -532,6 +554,7 @@ int main() {
   test_sh2_movl_memory_write_executes_via_bus();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
+  test_sh2_mov_register_copies_source_to_destination();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;

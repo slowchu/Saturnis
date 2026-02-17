@@ -70,7 +70,7 @@ This makes bus occupancy and WAIT behavior directly inspectable in regression tr
 
 ## Current limitations
 
-- SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, BRA, RTS, and MOV.L data-memory forms).
+- SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn, BRA, RTS, and MOV.L data-memory forms).
 - SH-2 interpreter now supports blocking MOV.L data-memory read/write execution via deterministic bus/MMIO commits.
 - Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers via reset-value and writable-mask behavior.
 - VDP rendering is placeholder/debug-oriented.
