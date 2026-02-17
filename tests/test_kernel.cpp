@@ -2257,6 +2257,7 @@ void test_sh2_rts_both_negative_mixed_width_with_followup_target_arithmetic_is_d
   mem.write(0x0012U,2U,0xE3FFU); // MOV #-1,R3
   mem.write(0x0014U,2U,0x2131U); // MOV.W R3,@R1
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<13;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==1U, "RTS follow-up arithmetic should execute deterministically at target path");
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite with follow-up arithmetic should be deterministic");
@@ -2486,6 +2487,7 @@ void test_sh2_rts_both_negative_mixed_width_with_dual_target_arithmetic_is_deter
   mem.write(0x0014U,2U,0xE3FFU);
   mem.write(0x0016U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<14;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==2U, "RTS dual target arithmetic should execute deterministically");
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite with dual arithmetic should be deterministic");
@@ -2727,6 +2729,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_register_copy_before_store
   mem.write(0x0012U,2U,0xE355U);
   mem.write(0x0014U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<14;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(mem.read(0x0022U,2U)==0x0055U, "RTS target-side register copy before store should be deterministic");
 }
@@ -2966,6 +2969,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_mov_and_add_before_store_i
   mem.write(0x0014U,2U,0xE355U);
   mem.write(0x0016U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<15;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==1U, "RTS target-side MOV+ADD should execute deterministically");
   check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD before store should be deterministic");
@@ -3273,6 +3277,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_i
   mem.write(0x0016U,2U,0xE355U);
   mem.write(0x0018U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<17;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==2U, "RTS target-side MOV+ADD+ADD should execute deterministically");
   check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD+ADD before store should be deterministic");

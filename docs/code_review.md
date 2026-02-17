@@ -5,6 +5,8 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+- Converted the DMA trace-regression TODO scaffold into an executable deterministic DMA bus-op path test using `BusArbiter::commit_dma` write+readback runs.
+- Aligned SH-2 semantics and RTS regressions to stop mirroring PR from SP writes; RTS target tests now set PR explicitly where needed.
 - Began the new TODO batch with deterministic SCU overlap coverage for three-lane mixed-size writes plus alternating clear masks and staggered-req-time IMS/set/clear interleaving.
 - Added deterministic SCU write-log lane-specific per-CPU address histogram stability checks under mixed-size bursts.
 - Expanded SH-2 delay-slot overwrite matrix with BRA/RTS target-side MOV+ADD+ADD-before-store variants.
@@ -67,7 +69,7 @@ Date: 2026-02-17 (challenge session update)
 ## Risks and follow-ups
 
 - SCU source wiring is still synthetic in this slice; full hardware source modeling remains TODO.
-- DMA-tagged commit paths are not modeled yet; count assertions currently enforce zero tagged events for stability.
+- DMA-tagged bus-op commits are now covered by a focused deterministic write/read trace regression; BIOS fixture DMA flow remains TODO.
 - SH-2 remains a vertical-slice subset (no full timing/ISA/exception model).
 
 ## TODO tracking

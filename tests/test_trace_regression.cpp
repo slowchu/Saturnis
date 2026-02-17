@@ -1,4 +1,8 @@
 #include "core/emulator.hpp"
+#include "bus/bus_arbiter.hpp"
+#include "core/trace.hpp"
+#include "dev/devices.hpp"
+#include "mem/memory.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -395,10 +399,31 @@ int main() {
     }
   }
 
-  // TODO: replace this zero-count guard with first DMA-produced bus-op timing/value tuple assertions once DMA path is modeled.
-  if (fixture_dma_tagged != 0U) {
-    std::cerr << "bios fixture unexpectedly contains DMA-tagged commits before DMA path modeling exists\n";
-    return 1;
+  std::uint32_t dma_baseline_value = 0U;
+  std::string dma_baseline_trace;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog dma_trace;
+    saturnis::mem::CommittedMemory dma_mem;
+    saturnis::dev::DeviceHub dma_dev;
+    saturnis::bus::BusArbiter dma_arbiter(dma_mem, dma_dev, dma_trace);
+
+    (void)dma_arbiter.commit_dma({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000031U});
+    const auto dma_read_back =
+        dma_arbiter.commit_dma({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+    const auto dma_json = dma_trace.to_jsonl();
+
+    if (dma_json.find(R"("src":"DMA")") == std::string::npos) {
+      std::cerr << "DMA bus-op path failed to emit DMA-tagged commits on run " << run << '\n';
+      return 1;
+    }
+
+    if (run == 0) {
+      dma_baseline_value = dma_read_back.value;
+      dma_baseline_trace = dma_json;
+    } else if (dma_read_back.value != dma_baseline_value || dma_json != dma_baseline_trace) {
+      std::cerr << "DMA bus-op path changed deterministic readback/trace baseline on run " << run << '\n';
+      return 1;
+    }
   }
 
   const std::size_t fixture_cache_hit_true = count_occurrences(bios_fixture, R"("cache_hit":true)");
