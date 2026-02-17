@@ -4,6 +4,11 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### Latest review updates
+- Tightened one previously permissive commit-horizon assertion to bind expected MMIO-read value to the MMIO-read op itself (by address), reducing false-pass risk.
+- Documented that some RTS mixed-width overwrite checks currently encode modeled behavior; MMIO-vs-RAM same-address overwrite remains TODO in the current SH-2 subset and now has a focused determinism guard test.
+- Added deterministic SCU overlap, commit-horizon, and trace-order checks aligned with the current TODO batch.
+
 ### Expanded 16-task batch coverage
 - Added deterministic overlap set/clear two-batch SCU assertions with round-robin rotation checks.
 - Added four-cycle mixed RAM/MMIO commit-horizon drain and queue-order preservation checks.

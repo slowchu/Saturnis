@@ -45,6 +45,39 @@ std::size_t count_occurrences(const std::string &haystack, const std::string &ne
   return count;
 }
 
+std::string first_line_containing(const std::string &haystack, const std::string &needle) {
+  std::size_t line_start = 0;
+  while (line_start < haystack.size()) {
+    const std::size_t line_end = haystack.find('\n', line_start);
+    const std::size_t end = (line_end == std::string::npos) ? haystack.size() : line_end;
+    const auto line = haystack.substr(line_start, end - line_start);
+    if (line.find(needle) != std::string::npos) {
+      return line;
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    line_start = line_end + 1;
+  }
+  return {};
+}
+
+std::string commit_kind_sequence(const std::string &trace) {
+  std::string out;
+  std::size_t pos = 0;
+  while ((pos = trace.find(R"("kind":")", pos)) != std::string::npos) {
+    pos += 8;
+    const std::size_t end = trace.find('"', pos);
+    if (end == std::string::npos) {
+      break;
+    }
+    out += trace.substr(pos, end - pos);
+    out.push_back('|');
+    pos = end + 1;
+  }
+  return out;
+}
+
 } // namespace
 
 int main() {
@@ -75,7 +108,6 @@ int main() {
     return 1;
   }
 
-
   const std::size_t single_ifetch = count_occurrences(single_a, R"("kind":"IFETCH")");
   const std::size_t single_read = count_occurrences(single_a, R"("kind":"READ")");
   const std::size_t single_write = count_occurrences(single_a, R"("kind":"WRITE")");
@@ -94,6 +126,37 @@ int main() {
       single_mmio_read != mt_mmio_read || single_mmio_write != mt_mmio_write || single_barrier != mt_barrier) {
     std::cerr << "single-thread and multithread dual-demo per-kind commit counts diverged\n";
     return 1;
+  }
+
+  const std::size_t single_src_read = count_occurrences(single_a, R"("src":"READ")");
+  const std::size_t single_src_mmio = count_occurrences(single_a, R"("src":"MMIO")");
+  const std::size_t single_src_barrier = count_occurrences(single_a, R"("src":"BARRIER")");
+  const std::size_t mt_src_read = count_occurrences(baseline_mt, R"("src":"READ")");
+  const std::size_t mt_src_mmio = count_occurrences(baseline_mt, R"("src":"MMIO")");
+  const std::size_t mt_src_barrier = count_occurrences(baseline_mt, R"("src":"BARRIER")");
+  if (single_src_read != mt_src_read || single_src_mmio != mt_src_mmio || single_src_barrier != mt_src_barrier) {
+    std::cerr << "single-thread and multithread dual-demo src-field counts diverged\n";
+    return 1;
+  }
+
+  const std::size_t single_cache_hit_true = count_occurrences(single_a, R"("cache_hit":true)");
+  const std::size_t single_cache_hit_false = count_occurrences(single_a, R"("cache_hit":false)");
+  for (int run = 0; run < 5; ++run) {
+    const auto single_trace = emu.run_dual_demo_trace();
+    if (count_occurrences(single_trace, R"("cache_hit":true)") != single_cache_hit_true ||
+        count_occurrences(single_trace, R"("cache_hit":false)") != single_cache_hit_false) {
+      std::cerr << "dual-demo cache-hit counts changed on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const auto baseline_kind_order = commit_kind_sequence(single_a);
+  for (int run = 0; run < 5; ++run) {
+    const auto mt_trace = emu.run_dual_demo_trace_multithread();
+    if (commit_kind_sequence(mt_trace) != baseline_kind_order) {
+      std::cerr << "dual-demo mixed-kind commit sequence changed on multithread run " << run << '\n';
+      return 1;
+    }
   }
 
   const std::size_t demo_barrier = count_occurrences(single_a, R"("kind":"BARRIER")");
@@ -183,6 +246,39 @@ int main() {
     }
     if (count_occurrences(bios_trace, R"("cache_hit":false)") != fixture_cache_hit_false) {
       std::cerr << "bios fixture cache-hit=false commit counts changed on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const std::size_t fixture_cpu0_ifetch = count_occurrences(bios_fixture, R"("cpu":0,"kind":"IFETCH")");
+  const std::size_t fixture_cpu1_ifetch = count_occurrences(bios_fixture, R"("cpu":1,"kind":"IFETCH")");
+  const std::size_t fixture_cpu0_read = count_occurrences(bios_fixture, R"("cpu":0,"kind":"READ")");
+  const std::size_t fixture_cpu1_read = count_occurrences(bios_fixture, R"("cpu":1,"kind":"READ")");
+  const std::size_t fixture_cpu0_write = count_occurrences(bios_fixture, R"("cpu":0,"kind":"WRITE")");
+  const std::size_t fixture_cpu1_write = count_occurrences(bios_fixture, R"("cpu":1,"kind":"WRITE")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (count_occurrences(bios_trace, R"("cpu":0,"kind":"IFETCH")") != fixture_cpu0_ifetch ||
+        count_occurrences(bios_trace, R"("cpu":1,"kind":"IFETCH")") != fixture_cpu1_ifetch ||
+        count_occurrences(bios_trace, R"("cpu":0,"kind":"READ")") != fixture_cpu0_read ||
+        count_occurrences(bios_trace, R"("cpu":1,"kind":"READ")") != fixture_cpu1_read ||
+        count_occurrences(bios_trace, R"("cpu":0,"kind":"WRITE")") != fixture_cpu0_write ||
+        count_occurrences(bios_trace, R"("cpu":1,"kind":"WRITE")") != fixture_cpu1_write) {
+      std::cerr << "bios per-cpu commit-kind distribution changed on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const auto fixture_mmio_write_line = first_line_containing(bios_fixture, R"("kind":"MMIO_WRITE")");
+  const auto fixture_mmio_read_line = first_line_containing(bios_fixture, R"("kind":"MMIO_READ")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (!fixture_mmio_write_line.empty() && bios_trace.find(fixture_mmio_write_line) == std::string::npos) {
+      std::cerr << "bios MMIO_WRITE timing tuple line changed on run " << run << '\n';
+      return 1;
+    }
+    if (!fixture_mmio_read_line.empty() && bios_trace.find(fixture_mmio_read_line) == std::string::npos) {
+      std::cerr << "bios MMIO_READ timing tuple line changed on run " << run << '\n';
       return 1;
     }
   }
