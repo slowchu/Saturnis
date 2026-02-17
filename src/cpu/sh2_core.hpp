@@ -30,6 +30,8 @@ public:
   [[nodiscard]] std::uint64_t executed_instructions() const;
   [[nodiscard]] std::uint32_t reg(std::size_t index) const;
   [[nodiscard]] std::uint32_t sr() const;
+  [[nodiscard]] std::uint32_t pr() const;
+  void set_pr(std::uint32_t value);
 
 
 private:
@@ -38,7 +40,7 @@ private:
   void set_t_flag(bool value);
 
   struct PendingMemOp {
-    enum class Kind { ReadLong, WriteLong, ReadWord, WriteWord };
+    enum class Kind { ReadByte, WriteByte, ReadWord, WriteWord, ReadLong, WriteLong, ExceptionVectorRead };
     Kind kind = Kind::ReadLong;
     std::uint32_t phys_addr = 0;
     std::uint8_t size = 4;
@@ -58,6 +60,9 @@ private:
   std::uint64_t executed_ = 0;
   std::optional<PendingMemOp> pending_mem_op_;
   std::optional<std::uint32_t> pending_branch_target_;
+  std::optional<std::uint32_t> pending_exception_vector_;
+  std::uint32_t exception_return_pc_ = 0;
+  std::uint32_t exception_return_sr_ = 0;
   mem::TinyCache icache_{16, 64};
 };
 
