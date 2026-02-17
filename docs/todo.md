@@ -138,10 +138,10 @@
 
 ## Batch A (16 tasks): SH-2 ISA expansion + DMA + first real device event sources
 
-1. [ ] SH-2: Implement core condition-code plumbing (T-bit updates, SR flag semantics) + focused tests.
-2. [ ] SH-2: Add compare/test ops needed for BIOS-style control flow (e.g., CMP/EQ + minimal set) + regression.
-3. [ ] SH-2: Implement conditional branches (BT/BF + /S forms if you choose) with delay-slot semantics + matrix tests.
-4. [ ] SH-2: Implement BSR/JSR/JMP (and any needed PR behavior) + delay-slot regression coverage.
+1. [x] SH-2: Implement core condition-code plumbing (T-bit updates, SR flag semantics) + focused tests.
+2. [x] SH-2: Add compare/test ops needed for BIOS-style control flow (e.g., CMP/EQ + minimal set) + regression.
+3. [x] SH-2: Implement conditional branches (BT/BF + /S forms if you choose) with delay-slot semantics + matrix tests.
+4. [x] SH-2: Implement BSR/JSR/JMP (and any needed PR behavior) + delay-slot regression coverage.
 5. [ ] SH-2: Expand load/store addressing modes for MOV.{B/W/L}:
    - @Rm, @Rm+, @-Rn
    - @(disp,Rm), @(disp,GBR), @(disp,PC) where applicable

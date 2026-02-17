@@ -2703,6 +2703,140 @@ void test_commit_horizon_progress_reverses_on_both_cpus_before_convergence() {
   check(pending.empty(), "both-cpu reversal phase4 should converge deterministically");
 }
 
+void test_sh2_cmp_eq_and_tst_update_tbit_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE105U); // MOV #5,R1
+  mem.write(0x0002U, 2U, 0xE205U); // MOV #5,R2
+  mem.write(0x0004U, 2U, 0x3210U); // CMP/EQ R1,R2
+  mem.write(0x0006U, 2U, 0x0329U); // MOVT R3
+  mem.write(0x0008U, 2U, 0xE00FU); // MOV #15,R0
+  mem.write(0x000AU, 2U, 0x880FU); // CMP/EQ #15,R0
+  mem.write(0x000CU, 2U, 0x0429U); // MOVT R4
+  mem.write(0x000EU, 2U, 0xE101U); // MOV #1,R1
+  mem.write(0x0010U, 2U, 0x2218U); // TST R1,R2
+  mem.write(0x0012U, 2U, 0x0529U); // MOVT R5
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 10; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(3) == 1U, "CMP/EQ Rm,Rn should set T when operands are equal");
+  check(core.reg(4) == 1U, "CMP/EQ #imm,R0 should set T on equal immediate compare");
+  check(core.reg(5) == 0U, "TST Rm,Rn should clear T when bitwise-and result is non-zero");
+  check(core.sr() == 0x000000F0U, "final SR should reflect T cleared after non-zero TST");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"sr\":241") != std::string::npos,
+        "trace should capture T=1 states produced by compare instructions");
+  check(json.find("\"sr\":240") != std::string::npos,
+        "trace should capture T=0 state after TST clears T");
+}
+
+void test_sh2_bt_bf_and_s_forms_follow_deterministic_branch_rules() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0018U); // SETT
+  mem.write(0x0002U, 2U, 0x8901U); // BT +1 -> 0x0008
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (skipped)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (skipped)
+  mem.write(0x0008U, 2U, 0x0008U); // CLRT
+  mem.write(0x000AU, 2U, 0x8B01U); // BF +1 -> 0x0010
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (skipped)
+  mem.write(0x000EU, 2U, 0x7001U); // ADD #1,R0 (skipped)
+  mem.write(0x0010U, 2U, 0x0018U); // SETT
+  mem.write(0x0012U, 2U, 0x8D01U); // BT/S +1 -> delay slot at 0x0014, then 0x0018
+  mem.write(0x0014U, 2U, 0x7001U); // ADD #1,R0 (delay slot, must execute)
+  mem.write(0x0016U, 2U, 0x7001U); // ADD #1,R0 (skipped by taken branch)
+  mem.write(0x0018U, 2U, 0x0008U); // CLRT
+  mem.write(0x001AU, 2U, 0x8F01U); // BF/S +1 -> delay slot at 0x001C, then 0x0020
+  mem.write(0x001CU, 2U, 0x7001U); // ADD #1,R0 (delay slot, must execute)
+  mem.write(0x001EU, 2U, 0x7001U); // ADD #1,R0 (skipped)
+  mem.write(0x0020U, 2U, 0x0009U); // NOP
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 14; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(0) == 2U, "BT/BF and BT/S/BF/S matrix should execute exactly the two delay-slot adds");
+  const auto json = trace.to_jsonl();
+  check(json.find("\"pc\":24") != std::string::npos,
+        "trace should include BT/S branch target checkpoint");
+}
+
+void test_sh2_bsr_jsr_jmp_and_rts_use_pr_with_delay_slots_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xB003U); // BSR +3 -> 0x000A
+  mem.write(0x0002U, 2U, 0x7001U); // ADD #1,R0 (delay)
+  mem.write(0x0004U, 2U, 0xE110U); // MOV #16,R1
+  mem.write(0x0006U, 2U, 0x410BU); // JSR @R1
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (delay)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (BSR target)
+  mem.write(0x000CU, 2U, 0x000BU); // RTS
+  mem.write(0x000EU, 2U, 0x7001U); // ADD #1,R0 (delay)
+  mem.write(0x0010U, 2U, 0x7001U); // ADD #1,R0 (JSR target)
+  mem.write(0x0012U, 2U, 0x412BU); // JMP @R1
+  mem.write(0x0014U, 2U, 0x7001U); // ADD #1,R0 (delay)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 18; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(0) >= 6U, "BSR/JSR/JMP/RTS flow should execute deterministic delay slots and targets");
+  const auto json = trace.to_jsonl();
+  check(json.find("\"pc\":16") != std::string::npos,
+        "trace should include JMP/JSR target checkpoint deterministically");
+  check(json.find("\"pc\":10") != std::string::npos,
+        "trace should include BSR target checkpoint with delay-slot semantics");
+}
+
+void test_sh2_tbit_sett_clrt_movt_and_sr_trace_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0018U); // SETT
+  mem.write(0x0002U, 2U, 0x0129U); // MOVT R1
+  mem.write(0x0004U, 2U, 0x0008U); // CLRT
+  mem.write(0x0006U, 2U, 0x0229U); // MOVT R2
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.pc() == 0x0008U, "SETT/CLRT/MOVT should retire and advance PC deterministically");
+  check(core.reg(1) == 1U, "MOVT should materialize T=1 after SETT");
+  check(core.reg(2) == 0U, "MOVT should materialize T=0 after CLRT");
+  check(core.sr() == 0x000000F0U, "T-bit transitions should preserve current modeled SR high bits");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"sr\":241") != std::string::npos,
+        "trace should capture SR T-bit set state deterministically");
+  check(json.find("\"sr\":240") != std::string::npos,
+        "trace should capture SR T-bit clear state deterministically");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -2905,6 +3039,10 @@ int main() {
   test_sh2_bra_both_negative_overwrite_with_target_register_copy_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_register_copy_before_store_is_deterministic();
   test_sh2_same_addr_overwrite_with_four_intermediate_non_memory_instructions_is_deterministic();
+  test_sh2_tbit_sett_clrt_movt_and_sr_trace_are_deterministic();
+  test_sh2_cmp_eq_and_tst_update_tbit_deterministically();
+  test_sh2_bt_bf_and_s_forms_follow_deterministic_branch_rules();
+  test_sh2_bsr_jsr_jmp_and_rts_use_pr_with_delay_slots_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();

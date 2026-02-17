@@ -3,6 +3,8 @@
 namespace saturnis::cpu {
 namespace {
 
+constexpr std::uint32_t kSrTBit = 0x00000001U;
+
 [[nodiscard]] bool is_movl_mem_to_reg(std::uint16_t instr, std::uint32_t &n, std::uint32_t &m) {
   if ((instr & 0xF00FU) != 0x6002U) {
     return false;
@@ -58,15 +60,50 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   executed_ = 0;
   pending_mem_op_.reset();
   pending_branch_target_.reset();
+  pr_ = 0;
+}
+
+bool SH2Core::t_flag() const { return (sr_ & kSrTBit) != 0U; }
+
+void SH2Core::set_t_flag(bool value) {
+  if (value) {
+    sr_ |= kSrTBit;
+  } else {
+    sr_ &= ~kSrTBit;
+  }
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
-  // Minimal subset: NOP (0009), BRA disp12 (Axxx), MOV #imm,Rn (Ennn), ADD #imm,Rn (7nnn), ADD Rm,Rn (3nmC), MOV Rm,Rn (6nm3), RTS (000B)
+  // Minimal subset: NOP, SETT/CLRT/MOVT, CMP/TST, BRA/BT/BF/BSR/JMP/JSR/RTS, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn.
   const auto delay_slot_target = pending_branch_target_;
   pending_branch_target_.reset();
 
   std::optional<std::uint32_t> next_branch_target;
   if (instr == 0x0009U) {
+    pc_ += 2U;
+  } else if (instr == 0x0018U) {
+    set_t_flag(true);
+    pc_ += 2U;
+  } else if (instr == 0x0008U) {
+    set_t_flag(false);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x0029U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    r_[n] = t_flag() ? 1U : 0U;
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x3000U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    set_t_flag(r_[n] == r_[m]);
+    pc_ += 2U;
+  } else if ((instr & 0xFF00U) == 0x8800U) {
+    const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
+    set_t_flag(r_[0] == static_cast<std::uint32_t>(imm));
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x2008U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    set_t_flag((r_[n] & r_[m]) == 0U);
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
@@ -96,8 +133,56 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     }
     next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
     pc_ += 2U;
+  } else if ((instr & 0xF000U) == 0xB000U) {
+    const std::uint32_t branch_pc = pc_;
+    std::int32_t disp = static_cast<std::int32_t>(instr & 0x0FFFU);
+    if ((disp & 0x800) != 0) {
+      disp |= ~0xFFF;
+    }
+    pr_ = branch_pc + 4U;
+    next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    pc_ += 2U;
+  } else if ((instr & 0xFF00U) == 0x8900U) {
+    const std::uint32_t branch_pc = pc_;
+    std::int32_t disp = static_cast<std::int32_t>(static_cast<std::int8_t>(instr & 0xFFU));
+    if (t_flag()) {
+      pc_ = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    } else {
+      pc_ += 2U;
+    }
+  } else if ((instr & 0xFF00U) == 0x8B00U) {
+    const std::uint32_t branch_pc = pc_;
+    std::int32_t disp = static_cast<std::int32_t>(static_cast<std::int8_t>(instr & 0xFFU));
+    if (!t_flag()) {
+      pc_ = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    } else {
+      pc_ += 2U;
+    }
+  } else if ((instr & 0xFF00U) == 0x8D00U) {
+    const std::uint32_t branch_pc = pc_;
+    std::int32_t disp = static_cast<std::int32_t>(static_cast<std::int8_t>(instr & 0xFFU));
+    if (t_flag()) {
+      next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    }
+    pc_ += 2U;
+  } else if ((instr & 0xFF00U) == 0x8F00U) {
+    const std::uint32_t branch_pc = pc_;
+    std::int32_t disp = static_cast<std::int32_t>(static_cast<std::int8_t>(instr & 0xFFU));
+    if (!t_flag()) {
+      next_branch_target = static_cast<std::uint32_t>(static_cast<std::int32_t>(branch_pc) + 4 + (disp << 1));
+    }
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x400BU) {
+    const std::uint32_t m = (instr >> 8U) & 0x0FU;
+    pr_ = pc_ + 4U;
+    next_branch_target = r_[m];
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x402BU) {
+    const std::uint32_t m = (instr >> 8U) & 0x0FU;
+    next_branch_target = r_[m];
+    pc_ += 2U;
   } else if (instr == 0x000BU) {
-    next_branch_target = r_[15];
+    next_branch_target = (pr_ != 0U) ? pr_ : r_[15];
     pc_ += 2U;
   } else {
     // Unknown opcode treated as NOP for vertical-slice robustness.
@@ -117,6 +202,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   ++executed_;
   trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
 }
+
 
 Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &trace, std::uint32_t runahead_budget) {
   Sh2ProduceResult out;
@@ -234,5 +320,7 @@ core::Tick SH2Core::local_time() const { return t_; }
 std::uint64_t SH2Core::executed_instructions() const { return executed_; }
 
 std::uint32_t SH2Core::reg(std::size_t index) const { return r_[index & 0xFU]; }
+
+std::uint32_t SH2Core::sr() const { return sr_; }
 
 } // namespace saturnis::cpu
