@@ -6,14 +6,16 @@ Date: 2026-02-17
 
 1. **Deterministic arbitration and commit-horizon behavior remain sound.**
    - `BusArbiter` ordering and progress-watermark gating paths are covered by focused kernel tests.
-2. **MMIO model is incrementally improving with deterministic register semantics.**
-   - Existing representative SMPC/SCU/VDP2/SCSP masking behavior is intact.
-   - Added deterministic VDP2 TVSTAT read-only status semantics (`0x05F80004`).
+2. **MMIO model now includes basic SCU interrupt status/mask interactions.**
+   - SCU IMS masking remains deterministic.
+   - SCU IST pending-bit visibility now interacts with IMS mask bits.
+   - Added deterministic clear semantics through an explicit SCU interrupt-clear register path.
 3. **SH-2 execution slice remains intentionally partial but stable.**
    - Current data-memory and arithmetic instruction subset tests continue to pass.
 
 ## Risks and follow-ups
 
+- SCU interrupt model is still intentionally reduced (software-driven pending bits only; no device-side event generation yet).
 - Device behavior is still register-fragment based; subsystem-level interactions are mostly unmodeled.
 - SH-2 coverage is still vertical-slice scope, not full ISA behavior.
 

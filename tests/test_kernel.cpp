@@ -360,6 +360,38 @@ void test_scu_ims_register_masks_to_low_16_bits() {
 
 
 
+
+void test_scu_interrupt_pending_respects_mask_and_clear() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial_status = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(initial_status.value == 0U, "SCU IST should start with no pending interrupts");
+
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00A4U, 4, 0x00000005U});
+  const auto pending_visible = arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(pending_visible.value == 0x00000005U, "SCU IST should expose pending bits when IMS mask is clear");
+
+  (void)arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000001U});
+  const auto masked_status = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(masked_status.value == 0x00000004U, "SCU IST should suppress masked pending interrupt bits");
+
+  (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4, 0x00000004U});
+  const auto after_clear = arbiter.commit({1, 6U, 6, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(after_clear.value == 0U, "SCU IST clear register should drop matching pending bits");
+
+  (void)arbiter.commit({1, 7U, 7, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000000U});
+  const auto unmasked_after_clear = arbiter.commit({0, 8U, 8, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(unmasked_after_clear.value == 0x00000001U,
+        "SCU IST should retain masked pending bits until explicitly cleared");
+
+  (void)arbiter.commit({0, 9U, 9, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4, 0x00000001U});
+  const auto final_status = arbiter.commit({1, 10U, 10, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(final_status.value == 0U, "SCU IST should be empty after clearing remaining pending bits");
+}
+
 void test_smpc_status_register_is_read_only_and_ready() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -567,6 +599,7 @@ int main() {
   test_mmio_subword_write_updates_correct_lane();
   test_display_status_register_is_read_only_and_ready();
   test_scu_ims_register_masks_to_low_16_bits();
+  test_scu_interrupt_pending_respects_mask_and_clear();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
