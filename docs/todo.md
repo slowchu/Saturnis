@@ -189,7 +189,7 @@
 
 ## Next tasks
 
-1. [ ] Convert DMA TODO scaffold into first executable DMA-produced bus-op path test once minimal DMA submit API exists.
+1. [x] Convert DMA TODO scaffold into first executable DMA-produced bus-op path test once minimal DMA submit API exists.
 2. [ ] Add deterministic trace assertions for first DMA-produced `src:"DMA"` MMIO commit timing/value tuple.
 3. [ ] Introduce a minimal bus-level owner/tag field for future DMA/SCU arbitration provenance in traces.
 4. [ ] Expand BIOS fixture to include one deterministic MMIO write/read pair routed through the future DMA path.
