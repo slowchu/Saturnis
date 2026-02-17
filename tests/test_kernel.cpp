@@ -358,6 +358,154 @@ void test_scu_ims_register_masks_to_low_16_bits() {
   check(low_byte.value == 0x11U, "SCU IMS byte-lane writes in writable region should be visible");
 }
 
+
+
+void test_smpc_status_register_is_read_only_and_ready() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05D00080U, 4, 0U});
+  check(initial.value == 0x1U, "SMPC status should expose deterministic ready bit");
+
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D00080U, 4, 0xFFFFFFFFU});
+  const auto after = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05D00080U, 4, 0U});
+  check(after.value == 0x1U, "SMPC status should remain read-only");
+}
+
+void test_vdp2_tvmd_register_masks_to_low_16_bits() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05F80000U, 4, 0xABCD1234U});
+  const auto after = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05F80000U, 4, 0U});
+  check(after.value == 0x00001234U, "VDP2 TVMD should only latch low 16 bits");
+}
+
+void test_scsp_mcier_register_masks_to_low_11_bits() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05C00000U, 4, 0xFFFFFFFFU});
+  const auto after = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05C00000U, 4, 0U});
+  check(after.value == 0x000007FFU, "SCSP MCIER should apply deterministic writable-bit mask");
+}
+
+void test_sh2_movl_memory_read_executes_via_bus() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6212U); // MOV.L @R1,R2
+  mem.write(0x0004U, 2U, 0x0009U); // NOP
+  mem.write(0x0040U, 4U, 0xCAFEBABEU);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  check(core.pc() == 0x0002U, "MOV #imm should retire and advance PC");
+
+  core.step(arbiter, trace, 1);
+  check(core.pc() == 0x0004U, "MOV.L @Rm,Rn should retire as a blocking bus data read");
+  check(core.reg(2) == 0xCAFEBABEU, "MOV.L @Rm,Rn should load register from committed memory");
+}
+
+void test_sh2_movl_memory_write_executes_via_bus() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE144U); // MOV #0x44,R1
+  mem.write(0x0002U, 2U, 0xE27FU); // MOV #0x7F,R2
+  mem.write(0x0004U, 2U, 0x2122U); // MOV.L R2,@R1
+  mem.write(0x0006U, 2U, 0x0009U); // NOP
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x0006U, "MOV.L Rm,@Rn should retire and advance PC");
+  check(mem.read(0x0044U, 4U) == 0x0000007FU, "MOV.L Rm,@Rn should store to committed memory");
+}
+
+
+void test_sh2_add_immediate_updates_register_with_signed_imm() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE305U); // MOV #5,R3
+  mem.write(0x0002U, 2U, 0x73FFU); // ADD #-1,R3
+  mem.write(0x0004U, 2U, 0x7302U); // ADD #2,R3
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x0006U, "ADD #imm should retire and advance PC");
+  check(core.reg(3) == 6U, "ADD #imm should use signed 8-bit immediate arithmetic");
+}
+
+
+void test_sh2_add_register_updates_destination() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE105U); // MOV #5,R1
+  mem.write(0x0002U, 2U, 0xE3FDU); // MOV #-3,R3
+  mem.write(0x0004U, 2U, 0x331CU); // ADD R1,R3
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x0006U, "ADD Rm,Rn should retire and advance PC");
+  check(core.reg(3) == 2U, "ADD Rm,Rn should add source register into destination register");
+}
+
+
+void test_sh2_mov_register_copies_source_to_destination() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE17BU); // MOV #0x7B,R1
+  mem.write(0x0002U, 2U, 0xE200U); // MOV #0,R2
+  mem.write(0x0004U, 2U, 0x6213U); // MOV R1,R2
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x0006U, "MOV Rm,Rn should retire and advance PC");
+  check(core.reg(2) == 0x7BU, "MOV Rm,Rn should copy source register value into destination register");
+}
+
 void test_sh2_ifetch_cache_runahead() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -399,6 +547,14 @@ int main() {
   test_mmio_subword_write_updates_correct_lane();
   test_display_status_register_is_read_only_and_ready();
   test_scu_ims_register_masks_to_low_16_bits();
+  test_smpc_status_register_is_read_only_and_ready();
+  test_vdp2_tvmd_register_masks_to_low_16_bits();
+  test_scsp_mcier_register_masks_to_low_11_bits();
+  test_sh2_movl_memory_read_executes_via_bus();
+  test_sh2_movl_memory_write_executes_via_bus();
+  test_sh2_add_immediate_updates_register_with_signed_imm();
+  test_sh2_add_register_updates_destination();
+  test_sh2_mov_register_copies_source_to_destination();
   test_sh2_ifetch_cache_runahead();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
