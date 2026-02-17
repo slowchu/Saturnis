@@ -1,39 +1,30 @@
 # Code Review Snapshot
 
-Date: 2026-02-16
+Date: 2026-02-17
 
-## Full-project review summary
+## Review summary
 
-1. **`BusArbiter` compile regression fixed.**
-   - Removed duplicated `update_progress`/`commit_horizon` declarations.
-   - Restored `commit_batch` function structure so arbitration/commit flow compiles and runs.
-2. **`commit_pending` is now implemented.**
-   - It commits currently committable operations and keeps only uncommitted ops in the caller-provided pending queue.
-3. **Progress-horizon terminology tightened.**
-   - Commit-horizon tests/assert messages now consistently refer to CPU **progress watermarks**.
-   - Added explicit arbiter comment clarifying that horizon gating opens only after both progress watermarks are published.
+1. **Deterministic bus arbitration and commit safety remain stable.**
+   - Existing commit-horizon/progress-watermark and deterministic ordering tests continue to pass.
+2. **SCU synthetic-source MMIO coverage is now contention-aware and timing-aware.**
+   - Mixed-CPU contention on synthetic-source writes is covered and deterministic.
+   - Subword lane-mask behavior is covered.
+   - MMIO commit `stall` fields for synthetic-source writes are now regression-checked across repeated runs.
+   - Trace JSONL commit ordering for synthetic-source MMIO writes remains asserted.
+3. **BIOS deterministic trace coverage now includes commit timing checkpoints.**
+   - Fixed BIOS fixture comparisons remain stable.
+   - Master/slave state checkpoints are covered.
+   - Deterministic commit timing checkpoints (`t_start`, `t_end`, `stall`) for fixed IFETCH slice are covered.
+4. **SH-2 branch/delay-slot coverage expanded for memory-op slots.**
+   - BRA/RTS with MOV.W delay-slot memory operations are now covered with deterministic branch-after-slot behavior.
+   - Branch-in-delay-slot first-branch-wins policy remains documented and tested.
 
-4. **DeviceHub semantics expanded incrementally.**
-   - MMIO writes now latch into deterministic register storage with byte/halfword lane updates.
-   - MMIO reads now return latched values (with deterministic defaults for unwritten status registers) and have focused kernel coverage.
+## Risks and follow-ups
 
-1. **Deterministic bus arbitration and commit safety**
-   - `BusArbiter` ordering is deterministic (start-time/priority/RR/final stable tie-break).
-   - Progress-watermark horizon gating is covered in tests, including pending-queue retention behavior.
-2. **Trace determinism guardrails are active**
-   - Single-thread and multithread dual-demo traces are regression-checked for stability.
-3. **DeviceHub has moved beyond pure stubs**
-   - Generic deterministic MMIO latching/readback exists.
-   - Initial explicit register semantics now exist for display status (`0x05F00010`, read-only ready) and SCU IMS (`0x05FE00A0`, writable-mask behavior).
-4. **Core test loop remains healthy**
-   - Kernel tests and trace-regression tests pass under the required build/test loop.
+- SCU source wiring is still synthetic in this slice; full hardware source modeling remains TODO.
+- SH-2 remains a vertical-slice subset (no full timing/ISA/exception model).
+- More mixed-size and cross-policy branch edge cases remain under-tested.
 
-1. **Expand device model semantics further.**
-   - `DeviceHub` now supports deterministic register latching/readback but still lacks explicit SMPC/SCU/VDP/SCSP behavior.
-2. **Complete SH-2 data-memory execution path.**
-   - Architecture notes still call out partial data-memory integration.
+## TODO tracking
 
-## Recommended next implementation order
-
-1. Continue device-specific semantics (SMPC/SCU/VDP/SCSP) with deterministic tests.
-2. Continue SH-2 data-memory integration behind regression traces.
+Backlog and next tasks are maintained in `docs/todo.md`.
