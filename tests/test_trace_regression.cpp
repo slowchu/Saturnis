@@ -95,9 +95,29 @@ int main() {
     return 1;
   }
 
+  const std::size_t fixture_ifetch = count_occurrences(bios_fixture, R"("kind":"IFETCH")");
+  const std::size_t fixture_read = count_occurrences(bios_fixture, R"("kind":"READ")");
+  const std::size_t fixture_write = count_occurrences(bios_fixture, R"("kind":"WRITE")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (count_occurrences(bios_trace, R"("kind":"IFETCH")") != fixture_ifetch) {
+      std::cerr << "bios fixture IFETCH commit counts changed on run " << run << '\n';
+      return 1;
+    }
+    if (count_occurrences(bios_trace, R"("kind":"READ")") != fixture_read) {
+      std::cerr << "bios fixture READ commit counts changed on run " << run << '\n';
+      return 1;
+    }
+    if (count_occurrences(bios_trace, R"("kind":"WRITE")") != fixture_write) {
+      std::cerr << "bios fixture WRITE commit counts changed on run " << run << '\n';
+      return 1;
+    }
+  }
 
   const std::size_t fixture_mmio_reads = count_occurrences(bios_fixture, R"("kind":"MMIO_READ")");
   const std::size_t fixture_mmio_writes = count_occurrences(bios_fixture, R"("kind":"MMIO_WRITE")");
+  const std::size_t fixture_barrier = count_occurrences(bios_fixture, R"("kind":"BARRIER")");
+  const std::size_t fixture_dma_tagged = count_occurrences(bios_fixture, R"("src":"DMA")");
   for (int run = 0; run < 5; ++run) {
     const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
     if (count_occurrences(bios_trace, R"("kind":"MMIO_READ")") != fixture_mmio_reads) {
@@ -108,6 +128,19 @@ int main() {
       std::cerr << "bios fixture MMIO_WRITE commit counts changed on run " << run << '\n';
       return 1;
     }
+    if (count_occurrences(bios_trace, R"("kind":"BARRIER")") != fixture_barrier) {
+      std::cerr << "bios fixture BARRIER commit counts changed on run " << run << '\n';
+      return 1;
+    }
+    if (count_occurrences(bios_trace, R"("src":"DMA")") != fixture_dma_tagged) {
+      std::cerr << "bios fixture DMA-tagged commit counts changed on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  if (fixture_dma_tagged != 0U) {
+    std::cerr << "bios fixture unexpectedly contains DMA-tagged commits before DMA path modeling exists\n";
+    return 1;
   }
 
   if (!trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||
@@ -125,7 +158,6 @@ int main() {
     std::cerr << "bios bring-up trace missing expected deterministic slave-CPU state checkpoints\n";
     return 1;
   }
-
 
   if (!trace_contains_checkpoint(bios_fixture,
                                  "\"t_start\":0,\"t_end\":6,\"stall\":6,\"cpu\":0,\"kind\":\"IFETCH\",\"phys\":0") ||

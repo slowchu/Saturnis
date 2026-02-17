@@ -30,12 +30,17 @@
 11. [x] Add focused branch-flow tests for combined branch-in-delay-slot plus memory-op delay-slot interactions.
 12. [x] Add deterministic trace assertions for commit ordering under commit-horizon gating when only one CPU has pending MMIO.
 
+13. [x] Add deterministic mixed-size contention tests where both CPUs issue source-clear operations with overlapping masks in the same batch.
+14. [x] Add BIOS trace count assertions for `BARRIER` plus a deterministic zero-count guard for future DMA-tagged commits until DMA paths are modeled.
+15. [x] Expand SH-2 delay-slot matrix to include MOV.W/MOV.L store delay-slot combinations under BRA/RTS.
+16. [x] Add deterministic commit-horizon tests that cycle progress updates between CPUs while pending queues carry mixed RAM/MMIO operations.
+
 ## Next tasks
 
-1. [ ] Add deterministic tests for mixed-size SCU contention that also includes concurrent source-clear operations from both CPUs.
-2. [ ] Add BIOS trace assertions for stable counts of `IFETCH`/`READ`/`WRITE` commits (in addition to MMIO counts).
-3. [ ] Expand SH-2 delay-slot matrix tests to cover MOV.L memory-op slots with BRA/RTS.
-4. [ ] Add deterministic commit-horizon regression tests that interleave pending MMIO and RAM ops across both CPUs.
+1. [ ] Add deterministic SCU source-mask contention tests that interleave overlapping source-set and source-clear writes in the same arbitration batch.
+2. [ ] Add deterministic BIOS trace count assertions for cache-hit (`"cache_hit":true`) versus miss commits across repeated runs.
+3. [ ] Expand SH-2 delay-slot matrix to include branch-target-side memory validation when both delay-slot and target perform writes to the same address.
+4. [ ] Add deterministic commit-horizon regression coverage for longer pending queues that require three or more horizon-advance cycles to drain.
 
 ## Notes
 

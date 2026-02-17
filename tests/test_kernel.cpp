@@ -230,6 +230,29 @@ void test_commit_pending_waits_for_both_progress_watermarks() {
   check(pending.empty(), "pending queue should drain after commit succeeds");
 }
 
+
+void test_commit_horizon_interleaves_mmio_and_ram_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  arbiter.update_progress(0, 6U);
+  arbiter.update_progress(1, 6U);
+  std::vector<saturnis::bus::BusOp> pending{{1, 5U, 0, saturnis::bus::BusKind::Write, 0x1200U, 4, 0xA1U},
+                                            {0, 5U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x2U}};
+
+  const auto committed = arbiter.commit_pending(pending);
+  check(committed.size() == 2U, "interleaved MMIO/RAM pending ops should both commit below horizon");
+  check(committed[0].op.cpu_id == 0 && committed[1].op.cpu_id == 1,
+        "equal-time interleaved MMIO/RAM ops should commit in deterministic policy order");
+  check(pending.empty(), "pending queue should drain once interleaved MMIO/RAM ops commit");
+
+  check(mem.read(0x1200U, 4U) == 0xA1U, "RAM op in interleaved commit test should be applied deterministically");
+  const auto source = arbiter.commit({0, 7U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source.value == 0x2U, "MMIO op in interleaved commit test should be applied deterministically");
+}
+
 void test_commit_pending_preserves_order_of_remaining_ops() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -248,6 +271,42 @@ void test_commit_pending_preserves_order_of_remaining_ops() {
   check(pending.size() == 2U, "two horizon-blocked ops should stay pending");
   check(pending[0].phys_addr == 0x7044U, "first blocked op should keep original relative order");
   check(pending[1].phys_addr == 0x7048U, "second blocked op should keep original relative order");
+}
+
+
+void test_commit_horizon_cycles_progress_with_mixed_pending_ram_and_mmio() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 2U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000003U},
+                                            {1, 3U, 1, saturnis::bus::BusKind::Write, 0x7080U, 4, 0xA5A5A5A5U},
+                                            {0, 8U, 2, saturnis::bus::BusKind::Write, 0x7084U, 4, 0x5A5A5A5AU},
+                                            {1, 9U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000002U}};
+
+  arbiter.update_progress(0, 5U);
+  arbiter.update_progress(1, 4U);
+  const auto first = arbiter.commit_pending(pending);
+  check(first.size() == 2U, "first horizon cycle should commit only early mixed MMIO/RAM ops");
+  check(pending.size() == 2U, "later mixed MMIO/RAM ops should remain pending after first horizon cycle");
+
+  arbiter.update_progress(1, 7U);
+  const auto second = arbiter.commit_pending(pending);
+  check(second.empty(), "advancing one CPU progress alone should keep mixed pending queue horizon-blocked");
+  check(pending.size() == 2U, "pending queue should remain unchanged while horizon still below queued req_time");
+
+  arbiter.update_progress(0, 10U);
+  arbiter.update_progress(1, 10U);
+  const auto third = arbiter.commit_pending(pending);
+  check(third.size() == 2U, "final horizon cycle should commit remaining mixed MMIO/RAM ops");
+  check(pending.empty(), "pending queue should drain after mixed MMIO/RAM horizon becomes committable");
+
+  check(mem.read(0x7080U, 4U) == 0xA5A5A5A5U, "first-cycle RAM write should commit deterministically");
+  check(mem.read(0x7084U, 4U) == 0x5A5A5A5AU, "final-cycle RAM write should commit deterministically");
+  const auto source_after = arbiter.commit({0, 11U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_after.value == 0x00000001U,
+        "mixed pending MMIO set/clear operations should deterministically resolve across horizon cycles");
 }
 
 void test_store_to_load_forwarding() {
@@ -422,6 +481,50 @@ void test_scu_interrupt_source_pending_wires_into_ist() {
 
 
 
+
+
+void test_scu_synthetic_source_mixed_size_concurrent_clears_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x000012FFU});
+
+  const saturnis::bus::BusOp cpu0_half_clear{0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 2, 0x00F0U};
+  const saturnis::bus::BusOp cpu1_byte_clear{1, 1U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x12U};
+  const auto committed = arbiter.commit_batch({cpu0_half_clear, cpu1_byte_clear});
+
+  check(committed.size() == 2U, "mixed-size concurrent clear batch should commit both SCU source clears");
+  check(committed[0].op.cpu_id == 0 && committed[1].op.cpu_id == 1,
+        "mixed-size concurrent clear arbitration should remain deterministic");
+
+  const auto source_after = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_after.value == 0x0000000FU,
+        "mixed-size concurrent source clears should deterministically produce the expected remaining bits");
+}
+
+
+void test_scu_synthetic_source_mixed_size_overlapping_clears_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x0000FFFFU});
+
+  const saturnis::bus::BusOp cpu0_half_clear{0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 2, 0x0FF0U};
+  const saturnis::bus::BusOp cpu1_byte_clear{1, 1U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x0FU};
+  const auto committed = arbiter.commit_batch({cpu0_half_clear, cpu1_byte_clear});
+
+  check(committed.size() == 2U, "overlapping mixed-size clear batch should commit both SCU source clears");
+  check(committed[0].op.cpu_id == 0 && committed[1].op.cpu_id == 1,
+        "overlapping mixed-size clear arbitration should remain deterministic");
+
+  const auto source_after = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(source_after.value == 0x0000F00FU,
+        "overlapping mixed-size source clears should deterministically resolve overlapping clear masks");
+}
 
 void test_scu_synthetic_source_mixed_size_contention_is_deterministic() {
   saturnis::core::TraceLog trace;
@@ -855,6 +958,186 @@ void test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot() {
   check(core.reg(0) == 1U, "RTS target instruction should execute after delay-slot memory commit");
 }
 
+
+void test_sh2_bra_with_movl_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0xA002U); // BRA +2 (target 0x000A)
+  mem.write(0x0004U, 2U, 0x6212U); // MOV.L @R1,R2 (delay-slot memory op)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (branch target)
+  mem.write(0x0040U, 4U, 0x12345678U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+
+  check(core.pc() == 0x000AU, "BRA with MOV.L delay-slot memory op should branch immediately after delay-slot commit");
+  check(core.reg(2) == 0x12345678U, "MOV.L delay-slot read should deterministically update destination register");
+
+  core.step(arbiter, trace, 3);
+  check(core.reg(0) == 1U, "BRA target instruction should execute after MOV.L delay-slot memory commit");
+}
+
+void test_sh2_rts_with_movl_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0AU); // MOV #10,R15
+  mem.write(0x0002U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0004U, 2U, 0x000BU); // RTS
+  mem.write(0x0006U, 2U, 0x6212U); // MOV.L @R1,R2 (delay-slot memory op)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (RTS target)
+  mem.write(0x0040U, 4U, 0xABCDEF01U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.pc() == 0x000AU, "RTS with MOV.L delay-slot memory op should branch immediately after delay-slot commit");
+  check(core.reg(2) == 0xABCDEF01U, "RTS delay-slot MOV.L read should deterministically update destination register");
+
+  core.step(arbiter, trace, 4);
+  check(core.reg(0) == 1U, "RTS target instruction should execute after MOV.L delay-slot memory commit");
+}
+
+
+void test_sh2_bra_with_movw_store_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE2FFU); // MOV #-1,R2
+  mem.write(0x0002U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0004U, 2U, 0xA002U); // BRA +2 (target 0x000C)
+  mem.write(0x0006U, 2U, 0x2121U); // MOV.W R2,@R1 (delay-slot memory op)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (branch target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.pc() == 0x000CU,
+        "BRA with MOV.W store delay-slot memory op should branch immediately after delay-slot commit");
+  check(mem.read(0x0040U, 2U) == 0xFFFFU,
+        "BRA delay-slot MOV.W store should deterministically commit low-halfword write before branch target executes");
+
+  core.step(arbiter, trace, 4);
+  check(core.reg(0) == 1U, "BRA target instruction should execute after MOV.W store delay-slot memory commit");
+}
+
+void test_sh2_rts_with_movw_store_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0AU); // MOV #10,R15
+  mem.write(0x0002U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0004U, 2U, 0xE2AAU); // MOV #0xAA,R2
+  mem.write(0x0006U, 2U, 0x000BU); // RTS
+  mem.write(0x0008U, 2U, 0x2121U); // MOV.W R2,@R1 (delay-slot memory op)
+  mem.write(0x000AU, 2U, 0x7001U); // ADD #1,R0 (RTS target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+  core.step(arbiter, trace, 4);
+
+  check(core.pc() == 0x000AU,
+        "RTS with MOV.W store delay-slot memory op should branch immediately after delay-slot commit");
+  check(mem.read(0x0040U, 2U) == 0xFFAAU,
+        "RTS delay-slot MOV.W store should deterministically commit low-halfword write before branch target executes");
+
+  core.step(arbiter, trace, 5);
+  check(core.reg(0) == 1U, "RTS target instruction should execute after MOV.W store delay-slot memory commit");
+}
+
+void test_sh2_bra_with_movl_store_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0xE27FU); // MOV #0x7F,R2
+  mem.write(0x0004U, 2U, 0xA002U); // BRA +2 (target 0x000C)
+  mem.write(0x0006U, 2U, 0x2122U); // MOV.L R2,@R1 (delay-slot memory op)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (should be skipped)
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (branch target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+
+  check(core.pc() == 0x000CU,
+        "BRA with MOV.L store delay-slot memory op should branch immediately after delay-slot commit");
+  check(mem.read(0x0040U, 4U) == 0x0000007FU,
+        "BRA delay-slot MOV.L store should deterministically commit word write before branch target executes");
+
+  core.step(arbiter, trace, 4);
+  check(core.reg(0) == 1U, "BRA target instruction should execute after MOV.L store delay-slot memory commit");
+}
+
+void test_sh2_rts_with_movl_store_delay_slot_applies_branch_after_memory_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0CU); // MOV #12,R15
+  mem.write(0x0002U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0004U, 2U, 0xE255U); // MOV #0x55,R2
+  mem.write(0x0006U, 2U, 0x000BU); // RTS
+  mem.write(0x0008U, 2U, 0x2122U); // MOV.L R2,@R1 (delay-slot memory op)
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (RTS target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+  core.step(arbiter, trace, 4);
+
+  check(core.pc() == 0x000CU,
+        "RTS with MOV.L store delay-slot memory op should branch immediately after delay-slot commit");
+  check(mem.read(0x0040U, 4U) == 0x00000055U,
+        "RTS delay-slot MOV.L store should deterministically commit word write before branch target executes");
+
+  core.step(arbiter, trace, 5);
+  check(core.reg(0) == 1U, "RTS target instruction should execute after MOV.L store delay-slot memory commit");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -955,6 +1238,8 @@ int main() {
   test_commit_pending_retains_uncommitted_ops();
   test_commit_pending_waits_for_both_progress_watermarks();
   test_commit_pending_preserves_order_of_remaining_ops();
+  test_commit_horizon_interleaves_mmio_and_ram_deterministically();
+  test_commit_horizon_cycles_progress_with_mixed_pending_ram_and_mmio();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
@@ -964,6 +1249,8 @@ int main() {
   test_scu_interrupt_pending_respects_mask_and_clear();
   test_scu_interrupt_source_pending_wires_into_ist();
   test_scu_synthetic_source_mixed_size_contention_is_deterministic();
+  test_scu_synthetic_source_mixed_size_concurrent_clears_are_deterministic();
+  test_scu_synthetic_source_mixed_size_overlapping_clears_are_deterministic();
   test_scu_synthetic_source_mixed_cpu_contention_is_deterministic();
   test_scu_synthetic_source_mmio_stall_is_stable_across_runs();
   test_scu_interrupt_source_subword_writes_apply_lane_masks();
@@ -982,6 +1269,12 @@ int main() {
   test_sh2_branch_in_delay_slot_uses_first_branch_target_policy();
   test_sh2_bra_with_movw_delay_slot_applies_branch_after_memory_slot();
   test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_bra_with_movl_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_rts_with_movl_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_bra_with_movw_store_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_rts_with_movw_store_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_bra_with_movl_store_delay_slot_applies_branch_after_memory_slot();
+  test_sh2_rts_with_movl_store_delay_slot_applies_branch_after_memory_slot();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
