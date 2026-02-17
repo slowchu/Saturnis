@@ -2968,6 +2968,142 @@ void test_sh2_same_addr_overwrite_with_five_intermediate_non_memory_instructions
   check(mem.read(0x0030U,2U)==0x0055U, "same-address overwrite with five intermediate instructions should be deterministic");
 }
 
+
+void test_scu_overlap_three_lane_mixed_size_with_alternating_clear_masks_is_deterministic() {
+  std::uint32_t baseline = 0U;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit_batch({{0,0U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,1,0x3CU},
+                                {1,0U,1,saturnis::bus::BusKind::MmioWrite,0x05FE00ADU,1,0xA5U},
+                                {0,0U,2,saturnis::bus::BusKind::MmioWrite,0x05FE00AEU,1,0x5AU}});
+    (void)arbiter.commit({0,1U,3,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x0000000CU});
+    (void)arbiter.commit({1,2U,4,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x00003C00U});
+    const auto source = arbiter.commit({0,3U,5,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U});
+    if (run == 0) baseline = source.value;
+    else check(source.value == baseline, "three-lane mixed-size writes with alternating clear masks should be deterministic");
+  }
+}
+
+void test_scu_overlap_staggered_reqtime_byte_ims_masks_with_interleaved_set_clear_is_deterministic() {
+  std::uint32_t baseline_ist = 0U;
+  std::uint32_t baseline_source = 0U;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    std::vector<saturnis::bus::BusOp> pending{{0,1U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x000000F3U},
+                                              {1,2U,1,saturnis::bus::BusKind::MmioWrite,0x05FE00A1U,1,0xFFU},
+                                              {0,3U,2,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x00000030U},
+                                              {1,4U,3,saturnis::bus::BusKind::MmioWrite,0x05FE00A2U,1,0xFFU},
+                                              {0,5U,4,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,4,0x00000C00U},
+                                              {1,6U,5,saturnis::bus::BusKind::MmioWrite,0x05FE00B0U,4,0x00000003U}};
+    for (std::uint32_t t=2U; t<=8U; ++t) {
+      arbiter.update_progress(0,t); arbiter.update_progress(1,t);
+      (void)arbiter.commit_pending(pending);
+    }
+    arbiter.update_progress(0,20U); arbiter.update_progress(1,20U);
+    (void)arbiter.commit_pending(pending);
+
+    const auto ist = arbiter.commit({0,21U,6,saturnis::bus::BusKind::MmioRead,0x05FE00A4U,4,0U});
+    const auto source = arbiter.commit({0,22U,7,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U});
+    if (run == 0) {
+      baseline_ist = ist.value;
+      baseline_source = source.value;
+    } else {
+      check(ist.value == baseline_ist, "staggered req_time IMS-mask interleave should keep IST deterministic");
+      check(source.value == baseline_source, "staggered req_time IMS-mask interleave should keep source deterministic");
+    }
+  }
+}
+
+void test_scu_write_log_per_cpu_lane_specific_address_histograms_are_stable_under_mixed_size_bursts() {
+  std::size_t base_cpu0_lane0 = 0U;
+  std::size_t base_cpu0_lane1 = 0U;
+  std::size_t base_cpu1_lane2 = 0U;
+  std::size_t base_cpu1_lane3 = 0U;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit_batch({{0,0U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,1,0x11U},
+                                {0,1U,1,saturnis::bus::BusKind::MmioWrite,0x05FE00ADU,1,0x22U},
+                                {1,2U,2,saturnis::bus::BusKind::MmioWrite,0x05FE00AEU,1,0x33U},
+                                {1,3U,3,saturnis::bus::BusKind::MmioWrite,0x05FE00AFU,1,0x44U},
+                                {0,4U,4,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,2,0x5566U},
+                                {1,5U,5,saturnis::bus::BusKind::MmioWrite,0x05FE00AEU,2,0x7788U}});
+
+    std::size_t cpu0_lane0 = 0U;
+    std::size_t cpu0_lane1 = 0U;
+    std::size_t cpu1_lane2 = 0U;
+    std::size_t cpu1_lane3 = 0U;
+    for (const auto &w : dev.writes()) {
+      if (w.cpu == 0 && w.addr == 0x05FE00ACU) ++cpu0_lane0;
+      if (w.cpu == 0 && w.addr == 0x05FE00ADU) ++cpu0_lane1;
+      if (w.cpu == 1 && w.addr == 0x05FE00AEU) ++cpu1_lane2;
+      if (w.cpu == 1 && w.addr == 0x05FE00AFU) ++cpu1_lane3;
+    }
+    if (run == 0) {
+      base_cpu0_lane0 = cpu0_lane0;
+      base_cpu0_lane1 = cpu0_lane1;
+      base_cpu1_lane2 = cpu1_lane2;
+      base_cpu1_lane3 = cpu1_lane3;
+    } else {
+      check(cpu0_lane0==base_cpu0_lane0 && cpu0_lane1==base_cpu0_lane1 &&
+            cpu1_lane2==base_cpu1_lane2 && cpu1_lane3==base_cpu1_lane3,
+            "per-CPU lane-specific write-log address histograms should be stable under mixed-size bursts");
+    }
+  }
+}
+
+void test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+  mem.write(0x0000U,2U,0xE130U);
+  mem.write(0x0002U,2U,0xE2FFU);
+  mem.write(0x0004U,2U,0xA004U);
+  mem.write(0x0006U,2U,0x2122U);
+  mem.write(0x0010U,2U,0x6213U);
+  mem.write(0x0012U,2U,0x7001U);
+  mem.write(0x0014U,2U,0x7001U);
+  mem.write(0x0016U,2U,0xE355U);
+  mem.write(0x0018U,2U,0x2131U);
+  saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  for (int i=0;i<16;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  check(core.reg(0)==2U, "BRA target-side MOV+ADD+ADD should execute deterministically");
+  check(mem.read(0x0030U,2U)==0x0055U, "BRA target-side MOV+ADD+ADD before store should be deterministic");
+}
+
+void test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+  mem.write(0x0000U,2U,0xEF10U);
+  mem.write(0x0002U,2U,0xE130U);
+  mem.write(0x0004U,2U,0xE2FFU);
+  mem.write(0x0006U,2U,0x000BU);
+  mem.write(0x0008U,2U,0x2122U);
+  mem.write(0x0010U,2U,0x6213U);
+  mem.write(0x0012U,2U,0x7001U);
+  mem.write(0x0014U,2U,0x7001U);
+  mem.write(0x0016U,2U,0xE355U);
+  mem.write(0x0018U,2U,0x2131U);
+  saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  for (int i=0;i<17;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  check(core.reg(0)==2U, "RTS target-side MOV+ADD+ADD should execute deterministically");
+  check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD+ADD before store should be deterministic");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3097,6 +3233,9 @@ int main() {
   test_commit_horizon_nine_cycle_mixed_ram_mmio_drain_is_deterministic();
   test_commit_horizon_six_queued_mmio_reads_have_pinned_values();
   test_commit_horizon_alternating_reversals_on_both_cpus_before_convergence();
+  test_scu_overlap_three_lane_mixed_size_with_alternating_clear_masks_is_deterministic();
+  test_scu_overlap_staggered_reqtime_byte_ims_masks_with_interleaved_set_clear_is_deterministic();
+  test_scu_write_log_per_cpu_lane_specific_address_histograms_are_stable_under_mixed_size_bursts();
   test_scu_overlap_mixed_size_byte_halfword_writes_three_lanes_one_batch_are_deterministic();
   test_scu_overlap_interleaved_ist_clear_and_source_clear_is_idempotent();
   test_scu_overlap_alternating_ims_byte_masks_with_concurrent_set_clear_is_deterministic();
@@ -3181,6 +3320,8 @@ int main() {
   test_sh2_bra_both_negative_overwrite_with_target_mov_and_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_and_add_before_store_is_deterministic();
   test_sh2_same_addr_overwrite_with_five_intermediate_non_memory_instructions_is_deterministic();
+  test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
+  test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
