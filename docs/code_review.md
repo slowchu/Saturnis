@@ -1,39 +1,75 @@
 # Code Review Snapshot
 
-Date: 2026-02-16
+Date: 2026-02-17 (challenge session update)
 
-## Full-project review summary
+## Review summary
 
-1. **`BusArbiter` compile regression fixed.**
-   - Removed duplicated `update_progress`/`commit_horizon` declarations.
-   - Restored `commit_batch` function structure so arbitration/commit flow compiles and runs.
-2. **`commit_pending` is now implemented.**
-   - It commits currently committable operations and keeps only uncommitted ops in the caller-provided pending queue.
-3. **Progress-horizon terminology tightened.**
-   - Commit-horizon tests/assert messages now consistently refer to CPU **progress watermarks**.
-   - Added explicit arbiter comment clarifying that horizon gating opens only after both progress watermarks are published.
+### Latest rolling batch updates
+- Began the new TODO batch with deterministic SCU overlap coverage for three-lane mixed-size writes plus alternating clear masks and staggered-req-time IMS/set/clear interleaving.
+- Added deterministic SCU write-log lane-specific per-CPU address histogram stability checks under mixed-size bursts.
+- Expanded SH-2 delay-slot overwrite matrix with BRA/RTS target-side MOV+ADD+ADD-before-store variants.
+- Remaining tasks in this batch now focus on deeper commit-horizon, trace-order, BIOS timing parity, and DMA-scaffold follow-ups.
 
-4. **DeviceHub semantics expanded incrementally.**
-   - MMIO writes now latch into deterministic register storage with byte/halfword lane updates.
-   - MMIO reads now return latched values (with deterministic defaults for unwritten status registers) and have focused kernel coverage.
+- Added SCU overlap regressions for mixed-size three-lane writes, interleaved IST/source clear idempotence, alternating IMS byte-mask bursts with concurrent set/clear, and per-CPU address+value write-log histogram stability.
+- Expanded commit-horizon regressions to cover ten-cycle mixed RAM/MMIO drains, seven queued MMIO-read deterministic pinning across runs, and three alternating progress reversals before convergence.
+- Expanded SH-2 mixed-width delay-slot overwrite matrix with BRA/RTS target-side MOV+ADD-before-store variants and a five-intermediate non-memory overwrite flow.
+- Completed the previously in-progress trace-regression items for this batch (per-CPU READ/MMIO timing tuples, selected BARRIER timing tuples, BIOS per-CPU IFETCH timing tuples, and first-24 prefix parity).
 
-1. **Deterministic bus arbitration and commit safety**
-   - `BusArbiter` ordering is deterministic (start-time/priority/RR/final stable tie-break).
-   - Progress-watermark horizon gating is covered in tests, including pending-queue retention behavior.
-2. **Trace determinism guardrails are active**
-   - Single-thread and multithread dual-demo traces are regression-checked for stability.
-3. **DeviceHub has moved beyond pure stubs**
-   - Generic deterministic MMIO latching/readback exists.
-   - Initial explicit register semantics now exist for display status (`0x05F00010`, read-only ready) and SCU IMS (`0x05FE00A0`, writable-mask behavior).
-4. **Core test loop remains healthy**
-   - Kernel tests and trace-regression tests pass under the required build/test loop.
+- Added SCU overlap regressions for non-adjacent lane byte writes, repeated source-clear idempotence, alternating halfword IMS masking, and write-log address histogram stability.
+- Expanded commit-horizon regressions to cover nine-cycle mixed RAM/MMIO drains, six queued MMIO-read pinned values, and alternating reversal convergence on both CPUs.
+- Expanded SH-2 mixed-width delay-slot overwrite matrix with BRA/RTS target-side register-copy variants and a four-intermediate non-memory overwrite path.
+- Expanded trace regression with per-CPU IFETCH src parity, IFETCH/MMIO_READ timing tuple parity, BIOS per-CPU BARRIER parity, and first-20 commit-prefix stability.
 
-1. **Expand device model semantics further.**
-   - `DeviceHub` now supports deterministic register latching/readback but still lacks explicit SMPC/SCU/VDP/SCSP behavior.
-2. **Complete SH-2 data-memory execution path.**
-   - Architecture notes still call out partial data-memory integration.
+- Added SCU overlap regressions for opposite-lane halfword/byte interactions, three-batch alternating contention, replayed IST-clear agreement, and per-CPU write-log value histogram stability.
+- Expanded commit-horizon regressions to cover eight-cycle drains, five queued MMIO-read pinned values, and double-reversal progress convergence.
+- Expanded SH-2 mixed-width delay-slot overwrite matrix with dual target arithmetic variants and a three-intermediate non-memory overwrite path.
+- Expanded trace regression with per-CPU READ/BARRIER parity, selected MMIO_WRITE timing tuple parity, first-16 commit-prefix stability, and BIOS per-CPU MMIO kind distribution stability.
 
-## Recommended next implementation order
+- Added SCU overlap masked-lane, idempotence, alternating-window, and write-log per-CPU stability regressions.
+- Added commit-horizon seven-cycle and pinned multi-read value regressions plus midpoint progress-reversal convergence checks.
+- Expanded SH-2 both-negative overwrite coverage with follow-up target arithmetic and longer non-memory interposed flows.
+- Expanded trace regression coverage for per-CPU src parity, timing tuple parity, BIOS per-CPU src distributions, and first MMIO_READ ordering.
 
-1. Continue device-specific semantics (SMPC/SCU/VDP/SCSP) with deterministic tests.
-2. Continue SH-2 data-memory integration behind regression traces.
+### Latest 16-task follow-up updates
+- Added SCU overlap lane-accuracy, idempotence, alternating-burst consistency, and write-log delta stability checks.
+- Expanded commit-horizon coverage to include six-cycle drains, pinned queued-MMIO-read value checks, and alternating asymmetric progress updates on both CPUs.
+- Expanded dual-demo and BIOS trace assertions for src-distribution parity and exact mixed-kind commit prefix stability.
+- Expanded SH-2 mixed-width matrix with both-negative immediate overwrite scenarios and intermediate non-memory instruction overwrite flow.
+
+### Latest review updates
+- Tightened one previously permissive commit-horizon assertion to bind expected MMIO-read value to the MMIO-read op itself (by address), reducing false-pass risk.
+- Documented that some RTS mixed-width overwrite checks currently encode modeled behavior; MMIO-vs-RAM same-address overwrite remains TODO in the current SH-2 subset and now has a focused determinism guard test.
+- Added deterministic SCU overlap, commit-horizon, and trace-order checks aligned with the current TODO batch.
+
+### Expanded 16-task batch coverage
+- Added deterministic overlap set/clear two-batch SCU assertions with round-robin rotation checks.
+- Added four-cycle mixed RAM/MMIO commit-horizon drain and queue-order preservation checks.
+- Added mixed-width same-address SH-2 delay-slot overwrite tests for BRA/RTS paths.
+- Added single-thread vs multithread dual-demo per-kind count parity checks across all current commit kinds.
+
+1. **Deterministic bus arbitration and commit safety remain stable.**
+   - Existing commit-horizon/progress-watermark and deterministic ordering tests continue to pass, now including long mixed RAM/MMIO queue drains across three horizon-advance cycles with order-preservation checks.
+2. **SCU synthetic-source MMIO coverage now spans mixed-size contention, lanes, overlapping clear masks, overlapping set/clear batches, trace order, and stall stability.**
+   - Mixed-CPU and mixed-size contention paths are covered with deterministic expectations, including same-batch overlapping set/clear and overlapping clear-mask scenarios.
+   - Subword lane-mask behavior remains covered.
+   - MMIO commit `stall` fields are regression-checked across repeated runs.
+   - Trace JSONL ordering for synthetic-source MMIO commits remains asserted.
+3. **BIOS deterministic trace coverage now includes event-count stability and timing checkpoints.**
+   - Fixture comparisons remain stable.
+   - Master/slave checkpoint progressions remain covered.
+   - Selected IFETCH commit timing checkpoints and MMIO/READ/WRITE/BARRIER count stability are asserted.
+   - BIOS fixture cache-hit true/false commit-count stability is now explicitly asserted across repeated runs.
+   - DMA-tagged commit count checks are pinned to deterministic zero until DMA-tagged paths are introduced.
+4. **SH-2 branch/delay-slot coverage includes memory-op slot interactions.**
+   - BRA/RTS with MOV.W and MOV.L delay-slot memory read/write operations are covered and deterministic, including same-address delay-slot-store plus target-store overwrite scenarios.
+   - Branch-in-delay-slot first-branch-wins policy remains documented and tested.
+
+## Risks and follow-ups
+
+- SCU source wiring is still synthetic in this slice; full hardware source modeling remains TODO.
+- DMA-tagged commit paths are not modeled yet; count assertions currently enforce zero tagged events for stability.
+- SH-2 remains a vertical-slice subset (no full timing/ISA/exception model).
+
+## TODO tracking
+
+Backlog and next tasks are maintained in `docs/todo.md`.
