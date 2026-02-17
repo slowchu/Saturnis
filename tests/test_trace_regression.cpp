@@ -1,5 +1,6 @@
 #include "core/emulator.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -8,13 +9,6 @@
 namespace {
 
 std::vector<std::uint8_t> make_deterministic_bios_image() {
-  // Minimal deterministic instruction stream:
-  // 0x0000: MOV #0x40,R1
-  // 0x0002: MOV.W @R1,R2
-  // 0x0004: ADD #1,R2
-  // 0x0006: MOV.L R2,@R1
-  // 0x0008: NOP
-  // 0x0040: initial data word 0xFF80
   std::vector<std::uint8_t> bios(0x80U, 0U);
   bios[0x00] = 0x40U;
   bios[0x01] = 0xE1U;
@@ -74,6 +68,27 @@ std::string commit_kind_sequence(const std::string &trace) {
     out += trace.substr(pos, end - pos);
     out.push_back('|');
     pos = end + 1;
+  }
+  return out;
+}
+
+std::string first_n_commit_prefixes(const std::string &trace, std::size_t n) {
+  std::string out;
+  std::size_t line_start = 0;
+  std::size_t seen = 0;
+  while (line_start < trace.size() && seen < n) {
+    const std::size_t line_end = trace.find('\n', line_start);
+    const std::size_t end = (line_end == std::string::npos) ? trace.size() : line_end;
+    const auto line = trace.substr(line_start, end - line_start);
+    if (line.rfind("COMMIT ", 0) == 0) {
+      out += line.substr(0, std::min<std::size_t>(line.size(), 48U));
+      out.push_back('\n');
+      ++seen;
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    line_start = line_end + 1;
   }
   return out;
 }
@@ -139,6 +154,22 @@ int main() {
     return 1;
   }
 
+  const std::size_t single_cpu0_src_read = count_occurrences(single_a, R"("cpu":0,"src":"READ")");
+  const std::size_t single_cpu1_src_read = count_occurrences(single_a, R"("cpu":1,"src":"READ")");
+  const std::size_t mt_cpu0_src_read = count_occurrences(baseline_mt, R"("cpu":0,"src":"READ")");
+  const std::size_t mt_cpu1_src_read = count_occurrences(baseline_mt, R"("cpu":1,"src":"READ")");
+  if (single_cpu0_src_read != mt_cpu0_src_read || single_cpu1_src_read != mt_cpu1_src_read) {
+    std::cerr << "single-thread and multithread per-CPU src-read counts diverged\n";
+    return 1;
+  }
+
+  const auto single_ifetch_line = first_line_containing(single_a, R"("kind":"IFETCH")");
+  const auto mt_ifetch_line = first_line_containing(baseline_mt, R"("kind":"IFETCH")");
+  if (!single_ifetch_line.empty() && single_ifetch_line != mt_ifetch_line) {
+    std::cerr << "single-thread and multithread selected commit timing window diverged\n";
+    return 1;
+  }
+
   const std::size_t single_cache_hit_true = count_occurrences(single_a, R"("cache_hit":true)");
   const std::size_t single_cache_hit_false = count_occurrences(single_a, R"("cache_hit":false)");
   for (int run = 0; run < 5; ++run) {
@@ -155,6 +186,15 @@ int main() {
     const auto mt_trace = emu.run_dual_demo_trace_multithread();
     if (commit_kind_sequence(mt_trace) != baseline_kind_order) {
       std::cerr << "dual-demo mixed-kind commit sequence changed on multithread run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const auto baseline_prefixes = first_n_commit_prefixes(single_a, 8U);
+  for (int run = 0; run < 5; ++run) {
+    const auto mt_trace = emu.run_dual_demo_trace_multithread();
+    if (first_n_commit_prefixes(mt_trace, 8U) != baseline_prefixes) {
+      std::cerr << "dual-demo mixed-kind commit prefixes changed on multithread run " << run << '\n';
       return 1;
     }
   }
@@ -193,16 +233,10 @@ int main() {
   const std::size_t fixture_write = count_occurrences(bios_fixture, R"("kind":"WRITE")");
   for (int run = 0; run < 5; ++run) {
     const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
-    if (count_occurrences(bios_trace, R"("kind":"IFETCH")") != fixture_ifetch) {
-      std::cerr << "bios fixture IFETCH commit counts changed on run " << run << '\n';
-      return 1;
-    }
-    if (count_occurrences(bios_trace, R"("kind":"READ")") != fixture_read) {
-      std::cerr << "bios fixture READ commit counts changed on run " << run << '\n';
-      return 1;
-    }
-    if (count_occurrences(bios_trace, R"("kind":"WRITE")") != fixture_write) {
-      std::cerr << "bios fixture WRITE commit counts changed on run " << run << '\n';
+    if (count_occurrences(bios_trace, R"("kind":"IFETCH")") != fixture_ifetch ||
+        count_occurrences(bios_trace, R"("kind":"READ")") != fixture_read ||
+        count_occurrences(bios_trace, R"("kind":"WRITE")") != fixture_write) {
+      std::cerr << "bios IFETCH/READ/WRITE counts changed on run " << run << '\n';
       return 1;
     }
   }
@@ -213,20 +247,11 @@ int main() {
   const std::size_t fixture_dma_tagged = count_occurrences(bios_fixture, R"("src":"DMA")");
   for (int run = 0; run < 5; ++run) {
     const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
-    if (count_occurrences(bios_trace, R"("kind":"MMIO_READ")") != fixture_mmio_reads) {
-      std::cerr << "bios fixture MMIO_READ commit counts changed on run " << run << '\n';
-      return 1;
-    }
-    if (count_occurrences(bios_trace, R"("kind":"MMIO_WRITE")") != fixture_mmio_writes) {
-      std::cerr << "bios fixture MMIO_WRITE commit counts changed on run " << run << '\n';
-      return 1;
-    }
-    if (count_occurrences(bios_trace, R"("kind":"BARRIER")") != fixture_barrier) {
-      std::cerr << "bios fixture BARRIER commit counts changed on run " << run << '\n';
-      return 1;
-    }
-    if (count_occurrences(bios_trace, R"("src":"DMA")") != fixture_dma_tagged) {
-      std::cerr << "bios fixture DMA-tagged commit counts changed on run " << run << '\n';
+    if (count_occurrences(bios_trace, R"("kind":"MMIO_READ")") != fixture_mmio_reads ||
+        count_occurrences(bios_trace, R"("kind":"MMIO_WRITE")") != fixture_mmio_writes ||
+        count_occurrences(bios_trace, R"("kind":"BARRIER")") != fixture_barrier ||
+        count_occurrences(bios_trace, R"("src":"DMA")") != fixture_dma_tagged) {
+      std::cerr << "bios MMIO/BARRIER/DMA counts changed on run " << run << '\n';
       return 1;
     }
   }
@@ -240,12 +265,22 @@ int main() {
   const std::size_t fixture_cache_hit_false = count_occurrences(bios_fixture, R"("cache_hit":false)");
   for (int run = 0; run < 5; ++run) {
     const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
-    if (count_occurrences(bios_trace, R"("cache_hit":true)") != fixture_cache_hit_true) {
-      std::cerr << "bios fixture cache-hit=true commit counts changed on run " << run << '\n';
+    if (count_occurrences(bios_trace, R"("cache_hit":true)") != fixture_cache_hit_true ||
+        count_occurrences(bios_trace, R"("cache_hit":false)") != fixture_cache_hit_false) {
+      std::cerr << "bios cache-hit counts changed on run " << run << '\n';
       return 1;
     }
-    if (count_occurrences(bios_trace, R"("cache_hit":false)") != fixture_cache_hit_false) {
-      std::cerr << "bios fixture cache-hit=false commit counts changed on run " << run << '\n';
+  }
+
+  const std::size_t fixture_src_ifetch = count_occurrences(bios_fixture, R"("src":"IFETCH")");
+  const std::size_t fixture_src_read = count_occurrences(bios_fixture, R"("src":"READ")");
+  const std::size_t fixture_src_mmio = count_occurrences(bios_fixture, R"("src":"MMIO")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    if (count_occurrences(bios_trace, R"("src":"IFETCH")") != fixture_src_ifetch ||
+        count_occurrences(bios_trace, R"("src":"READ")") != fixture_src_read ||
+        count_occurrences(bios_trace, R"("src":"MMIO")") != fixture_src_mmio) {
+      std::cerr << "bios src distribution changed on run " << run << '\n';
       return 1;
     }
   }
@@ -279,6 +314,20 @@ int main() {
     }
     if (!fixture_mmio_read_line.empty() && bios_trace.find(fixture_mmio_read_line) == std::string::npos) {
       std::cerr << "bios MMIO_READ timing tuple line changed on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const std::size_t fixture_first_ifetch = bios_fixture.find(R"("kind":"IFETCH")");
+  const std::size_t fixture_first_mmio = bios_fixture.find(R"("kind":"MMIO_WRITE")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    const std::size_t run_ifetch = bios_trace.find(R"("kind":"IFETCH")");
+    const std::size_t run_mmio = bios_trace.find(R"("kind":"MMIO_WRITE")");
+    if ((fixture_first_ifetch != std::string::npos && fixture_first_mmio != std::string::npos) &&
+        ((run_ifetch == std::string::npos) || (run_mmio == std::string::npos) ||
+         ((run_ifetch < run_mmio) != (fixture_first_ifetch < fixture_first_mmio)))) {
+      std::cerr << "bios MMIO ordering relative to IFETCH changed on run " << run << '\n';
       return 1;
     }
   }

@@ -1778,6 +1778,227 @@ void test_sh2_mmio_ram_same_address_overwrite_is_todo_and_current_subset_stays_d
   }
 }
 
+
+void test_scu_overlap_byte_halfword_same_batch_has_lane_accurate_ist_visibility() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp set_half{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 2, 0x12F0U};
+  const saturnis::bus::BusOp clear_byte{1, 0U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x10U};
+  (void)arbiter.commit_batch({set_half, clear_byte});
+
+  const auto source = arbiter.commit({0, 1U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  const auto ist = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(source.value == 0x000002F0U, "byte/halfword overlap should resolve source register lanes deterministically");
+  check(ist.value == source.value, "lane-accurate overlap should produce matching unmasked IST visibility");
+}
+
+void test_scu_overlap_replayed_clears_are_idempotent_across_runs() {
+  std::uint32_t baseline = 0U;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x0000003FU});
+    (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x0000000FU});
+    (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x0000000FU});
+
+    const auto source = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+    if (run == 0) {
+      baseline = source.value;
+    } else {
+      check(source.value == baseline,
+            "replayed clear masks should be idempotent and deterministic across repeated runs");
+    }
+  }
+}
+
+void test_scu_overlap_alternating_set_clear_bursts_keep_ist_source_consistent() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000033U});
+  (void)arbiter.commit({1, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000003U});
+  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x000000C0U});
+  (void)arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000010U});
+
+  const auto source = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  const auto ist = arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check(source.value == 0x000000E0U, "alternating set/clear bursts should produce deterministic source state");
+  check(ist.value == source.value, "unmasked IST view should stay consistent with source pending bits after bursts");
+}
+
+void test_scu_overlap_write_log_monotonic_deltas_are_stable_across_runs() {
+  std::vector<std::uint64_t> baseline_deltas;
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit_batch({{0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ADU, 1, 0x11U},
+                                {1, 0U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x01U}});
+    (void)arbiter.commit_batch({{0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 2, 0x00F0U},
+                                {1, 2U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 2, 0x000FU}});
+
+    const auto &writes = dev.writes();
+    check(writes.size() == 4U, "monotonic-delta overlap run should produce four deterministic MMIO writes");
+    std::vector<std::uint64_t> deltas{writes[1].t - writes[0].t, writes[2].t - writes[1].t, writes[3].t - writes[2].t};
+    check(writes[0].t < writes[1].t && writes[1].t < writes[2].t && writes[2].t < writes[3].t,
+          "overlap write-log timestamps should be strictly monotonic");
+    if (run == 0) {
+      baseline_deltas = deltas;
+    } else {
+      check(deltas == baseline_deltas, "overlap write-log timestamp deltas should be stable across repeated runs");
+    }
+  }
+}
+
+void test_commit_horizon_six_cycle_alternating_mmio_pressure_drains_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 1U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x0000000FU},
+                                            {1, 3U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U},
+                                            {0, 6U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000003U},
+                                            {1, 9U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U},
+                                            {0, 12U, 4, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000030U},
+                                            {1, 15U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U},
+                                            {0, 18U, 6, saturnis::bus::BusKind::Write, 0x7700U, 4, 0x44U}};
+
+  arbiter.update_progress(0, 4U); arbiter.update_progress(1, 4U); check(arbiter.commit_pending(pending).size() == 2U, "cycle1");
+  arbiter.update_progress(0, 7U); arbiter.update_progress(1, 7U); check(arbiter.commit_pending(pending).size() == 1U, "cycle2");
+  arbiter.update_progress(0, 10U); arbiter.update_progress(1, 10U); check(arbiter.commit_pending(pending).size() == 1U, "cycle3");
+  arbiter.update_progress(0, 13U); arbiter.update_progress(1, 13U); check(arbiter.commit_pending(pending).size() == 1U, "cycle4");
+  arbiter.update_progress(0, 16U); arbiter.update_progress(1, 16U); check(arbiter.commit_pending(pending).size() == 1U, "cycle5");
+  arbiter.update_progress(0, 25U); arbiter.update_progress(1, 25U); check(arbiter.commit_pending(pending).size() == 1U, "cycle6");
+
+  check(pending.empty(), "six-cycle alternating MMIO pressure queue should deterministically drain");
+}
+
+void test_commit_horizon_long_sequence_pins_each_queued_mmio_read_value() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 1U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000001U},
+                                            {1, 2U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U},
+                                            {0, 6U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000004U},
+                                            {1, 7U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U},
+                                            {0, 11U, 4, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00000001U},
+                                            {1, 12U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U}};
+
+  arbiter.update_progress(0, 4U); arbiter.update_progress(1, 4U);
+  const auto c1 = arbiter.commit_pending(pending);
+  check(c1.size() == 2U && c1[1].response.value == 0x00000001U, "first queued MMIO read should see first queued write");
+
+  arbiter.update_progress(0, 9U); arbiter.update_progress(1, 9U);
+  const auto c2 = arbiter.commit_pending(pending);
+  check(c2.size() == 2U && c2[1].response.value == 0x00000005U, "second queued MMIO read should see cumulative queued writes");
+
+  arbiter.update_progress(0, 20U); arbiter.update_progress(1, 20U);
+  const auto c3 = arbiter.commit_pending(pending);
+  check(c3.size() == 2U, "third cycle should drain final queued write/read pair");
+  const auto final_source = arbiter.commit({0, 21U, 6, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+  check(final_source.value == 0x00000004U, "state after queued clear should be deterministic at end of sequence");
+  check(pending.empty(), "long queued MMIO read/value sequence should fully drain");
+}
+
+void test_commit_horizon_alternating_asymmetric_updates_on_both_cpus_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::bus::BusOp> pending{{0, 2U, 0, saturnis::bus::BusKind::Write, 0x7800U, 4, 0x1U},
+                                            {1, 5U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x2U},
+                                            {0, 8U, 2, saturnis::bus::BusKind::Write, 0x7804U, 4, 0x3U},
+                                            {1, 11U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x1U}};
+
+  arbiter.update_progress(0, 9U);
+  check(arbiter.commit_pending(pending).empty(), "alternating-asymmetric test should block before both watermarks");
+
+  arbiter.update_progress(1, 4U);
+  (void)arbiter.commit_pending(pending);
+  check(pending.size() == 3U, "phase2 should only release earliest op at low horizon");
+
+  arbiter.update_progress(1, 10U);
+  (void)arbiter.commit_pending(pending);
+  check(pending.size() <= 1U,
+        "phase3 should deterministically release additional committable ops after cpu1 lead update");
+
+  arbiter.update_progress(0, 20U);
+  arbiter.update_progress(1, 20U);
+  (void)arbiter.commit_pending(pending);
+  check(pending.empty(), "phase4 should deterministically converge and drain remaining ops");
+}
+
+
+void test_sh2_bra_mixed_width_both_negative_immediates_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE122U); // MOV #0x22,R1
+  mem.write(0x0002U, 2U, 0xE2FFU); // MOV #-1,R2
+  mem.write(0x0004U, 2U, 0xA002U); // BRA
+  mem.write(0x0006U, 2U, 0x2122U); // MOV.L R2,@R1
+  mem.write(0x000CU, 2U, 0xE3FFU); // MOV #-1,R3
+  mem.write(0x000EU, 2U, 0x2131U); // MOV.W R3,@R1
+
+  saturnis::cpu::SH2Core core(0); core.reset(0U, 0x0001FFF0U);
+  for (int i=0;i<7;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "BRA both-negative mixed-width overwrite should be deterministic");
+}
+
+void test_sh2_rts_mixed_width_both_negative_immediates_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xEF0EU); // MOV #14,R15
+  mem.write(0x0002U, 2U, 0xE122U); // MOV #0x22,R1
+  mem.write(0x0004U, 2U, 0xE2FFU); // MOV #-1,R2
+  mem.write(0x0006U, 2U, 0x000BU); // RTS
+  mem.write(0x0008U, 2U, 0x2122U); // MOV.L R2,@R1
+  mem.write(0x000EU, 2U, 0xE3FFU); // MOV #-1,R3
+  mem.write(0x0010U, 2U, 0x2131U); // MOV.W R3,@R1
+
+  saturnis::cpu::SH2Core core(0); core.reset(0U, 0x0001FFF0U);
+  for (int i=0;i<11;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite should be deterministic");
+}
+
+void test_sh2_same_addr_overwrite_with_intermediate_non_memory_instruction_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE122U); // MOV #0x22,R1
+  mem.write(0x0002U, 2U, 0xE201U); // MOV #1,R2
+  mem.write(0x0004U, 2U, 0xA003U); // BRA +3 (target 0x000E)
+  mem.write(0x0006U, 2U, 0x2121U); // MOV.W R2,@R1 (delay)
+  mem.write(0x000EU, 2U, 0x7001U); // ADD #1,R0 (non-memory)
+  mem.write(0x0010U, 2U, 0xE355U); // MOV #0x55,R3
+  mem.write(0x0012U, 2U, 0x2131U); // MOV.W R3,@R1
+
+  saturnis::cpu::SH2Core core(0); core.reset(0U, 0x0001FFF0U);
+  for (int i=0;i<9;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  check(mem.read(0x0022U,2U)==0x0055U, "same-address overwrite with intermediate non-memory op should be deterministic");
+}
+
 void test_sh2_add_immediate_updates_register_with_signed_imm() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -1887,6 +2108,9 @@ int main() {
   test_commit_horizon_five_cycle_interleaved_mixed_ops_drain_is_deterministic();
   test_commit_horizon_mmio_read_value_respects_horizon_blocked_write_order();
   test_commit_horizon_asymmetric_progress_updates_before_convergence_are_deterministic();
+  test_commit_horizon_six_cycle_alternating_mmio_pressure_drains_deterministically();
+  test_commit_horizon_long_sequence_pins_each_queued_mmio_read_value();
+  test_commit_horizon_alternating_asymmetric_updates_on_both_cpus_are_deterministic();
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
@@ -1907,6 +2131,10 @@ int main() {
   test_scu_overlap_staggered_req_time_matches_across_horizon_gating_runs();
   test_scu_overlap_ist_clear_while_masked_then_unmasked_is_deterministic();
   test_scu_overlap_write_log_order_and_payload_are_deterministic();
+  test_scu_overlap_byte_halfword_same_batch_has_lane_accurate_ist_visibility();
+  test_scu_overlap_replayed_clears_are_idempotent_across_runs();
+  test_scu_overlap_alternating_set_clear_bursts_keep_ist_source_consistent();
+  test_scu_overlap_write_log_monotonic_deltas_are_stable_across_runs();
   test_scu_synthetic_source_mixed_cpu_contention_is_deterministic();
   test_scu_synthetic_source_mmio_stall_is_stable_across_runs();
   test_scu_interrupt_source_subword_writes_apply_lane_masks();
@@ -1940,6 +2168,9 @@ int main() {
   test_sh2_bra_mixed_width_overwrite_with_negative_immediate_is_deterministic();
   test_sh2_rts_mixed_width_overwrite_with_negative_immediate_is_deterministic();
   test_sh2_mmio_ram_same_address_overwrite_is_todo_and_current_subset_stays_deterministic();
+  test_sh2_bra_mixed_width_both_negative_immediates_is_deterministic();
+  test_sh2_rts_mixed_width_both_negative_immediates_is_deterministic();
+  test_sh2_same_addr_overwrite_with_intermediate_non_memory_instruction_is_deterministic();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();

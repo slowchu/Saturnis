@@ -92,24 +92,43 @@
 15. [x] Add deterministic mixed-kind trace-order assertions across repeated multithread dual-demo runs.
 16. [x] Run code-review pass and document updated risks/TODOs after implementing this batch.
 
+## Next 16-task batch (completed)
+
+1. [x] Add deterministic SCU overlap tests that combine byte/halfword writes in the same batch and assert lane-accurate IST visibility.
+2. [x] Add deterministic SCU overlap tests that validate source-clear idempotence when identical clear masks are replayed across runs.
+3. [x] Add deterministic SCU overlap tests verifying IST/source register views remain consistent after alternating set/clear bursts.
+4. [x] Add deterministic SCU overlap write-log regression that checks monotonic timestamp deltas across repeated runs.
+5. [x] Add deterministic dual-demo `src`-field parity checks per CPU (`cpu0` vs `cpu1`) across single-thread and multithread runs.
+6. [x] Add deterministic dual-demo commit timing-window checks (`t_start/t_end/stall`) for selected mixed-kind commits.
+7. [x] Add deterministic BIOS fixture assertions for per-kind `src` distributions across repeated runs.
+8. [x] Add deterministic BIOS fixture assertions that selected MMIO commit ordering relative to IFETCH remains stable.
+9. [x] Expand SH-2 delay-slot matrix with BRA mixed-width overwrite cases where both source immediates are negative.
+10. [x] Expand SH-2 delay-slot matrix with RTS mixed-width overwrite cases where both source immediates are negative.
+11. [x] Add deterministic SH-2 overwrite tests for same-address sequences that include an extra non-memory instruction between delay-slot and target stores.
+12. [x] Add deterministic commit-horizon tests for six-cycle drains with alternating MMIO read/write pressure.
+13. [x] Add deterministic commit-horizon tests that pin expected values for every queued MMIO read in a long pending sequence.
+14. [x] Add deterministic commit-horizon tests that exercise horizon advances from asymmetric updates on both CPUs in alternating order.
+15. [x] Add deterministic trace-order assertions over repeated runs for exact commit-line prefixes of mixed kinds.
+16. [x] Run another code-review pass and refresh docs with newly identified risks and TODOs.
+
 ## Next tasks
 
-1. [ ] Add deterministic SCU overlap tests that combine byte/halfword writes in the same batch and assert lane-accurate IST visibility.
-2. [ ] Add deterministic SCU overlap tests that validate source-clear idempotence when identical clear masks are replayed across runs.
-3. [ ] Add deterministic SCU overlap tests verifying IST/source register views remain consistent after alternating set/clear bursts.
-4. [ ] Add deterministic SCU overlap write-log regression that checks monotonic timestamp deltas across repeated runs.
-5. [ ] Add deterministic dual-demo `src`-field parity checks per CPU (`cpu0` vs `cpu1`) across single-thread and multithread runs.
-6. [ ] Add deterministic dual-demo commit timing-window checks (`t_start/t_end/stall`) for selected mixed-kind commits.
-7. [ ] Add deterministic BIOS fixture assertions for per-kind `src` distributions across repeated runs.
-8. [ ] Add deterministic BIOS fixture assertions that selected MMIO commit ordering relative to IFETCH remains stable.
-9. [ ] Expand SH-2 delay-slot matrix with BRA mixed-width overwrite cases where both source immediates are negative.
-10. [ ] Expand SH-2 delay-slot matrix with RTS mixed-width overwrite cases where both source immediates are negative.
-11. [ ] Add deterministic SH-2 overwrite tests for same-address sequences that include an extra non-memory instruction between delay-slot and target stores.
-12. [ ] Add deterministic commit-horizon tests for six-cycle drains with alternating MMIO read/write pressure.
-13. [ ] Add deterministic commit-horizon tests that pin expected values for every queued MMIO read in a long pending sequence.
-14. [ ] Add deterministic commit-horizon tests that exercise horizon advances from asymmetric updates on both CPUs in alternating order.
-15. [ ] Add deterministic trace-order assertions over repeated runs for exact commit-line prefixes of mixed kinds.
-16. [ ] Run another code-review pass and refresh docs with newly identified risks and TODOs.
+1. [ ] Add deterministic SCU overlap tests combining halfword clear with byte set on opposite lanes while IMS masks one lane.
+2. [ ] Add deterministic SCU overlap tests validating IST clear idempotence when replayed with interleaved source-set writes.
+3. [ ] Add deterministic SCU overlap tests comparing source register and IST views under alternating mask/unmask windows.
+4. [ ] Add deterministic SCU write-log checks for per-CPU entry counts under repeated overlap contention bursts.
+5. [ ] Add deterministic dual-demo per-CPU `src:"MMIO"` parity checks between single-thread and multithread traces.
+6. [ ] Add deterministic dual-demo selected commit-line timing tuple checks (`t_start/t_end/stall`) across repeated runs.
+7. [ ] Add deterministic BIOS fixture checks for per-CPU `src` distributions across repeated runs.
+8. [ ] Add deterministic BIOS fixture checks for first MMIO_READ ordering relative to IFETCH commits.
+9. [ ] Expand SH-2 delay-slot matrix with BRA both-negative mixed-width overwrite plus follow-up target arithmetic checks.
+10. [ ] Expand SH-2 delay-slot matrix with RTS both-negative mixed-width overwrite plus follow-up target arithmetic checks.
+11. [ ] Add deterministic SH-2 overwrite test with two non-memory instructions between delay-slot and target store.
+12. [ ] Add deterministic commit-horizon regression for seven-cycle drains with alternating RAM/MMIO pressure.
+13. [ ] Add deterministic commit-horizon regression pinning values for four queued MMIO reads in one pending sequence.
+14. [ ] Add deterministic commit-horizon regression where CPU progress alternation reverses midway before convergence.
+15. [ ] Add deterministic trace-prefix assertions for the first 12 commit lines across repeated multithread runs.
+16. [ ] Run another code-review pass and refresh docs with any newly discovered risks/TODOs.
 
 ## Notes
 
