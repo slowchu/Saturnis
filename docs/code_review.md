@@ -5,6 +5,11 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+- Added SCU overlap regressions for opposite-lane halfword/byte interactions, three-batch alternating contention, replayed IST-clear agreement, and per-CPU write-log value histogram stability.
+- Expanded commit-horizon regressions to cover eight-cycle drains, five queued MMIO-read pinned values, and double-reversal progress convergence.
+- Expanded SH-2 mixed-width delay-slot overwrite matrix with dual target arithmetic variants and a three-intermediate non-memory overwrite path.
+- Expanded trace regression with per-CPU READ/BARRIER parity, selected MMIO_WRITE timing tuple parity, first-16 commit-prefix stability, and BIOS per-CPU MMIO kind distribution stability.
+
 - Added SCU overlap masked-lane, idempotence, alternating-window, and write-log per-CPU stability regressions.
 - Added commit-horizon seven-cycle and pinned multi-read value regressions plus midpoint progress-reversal convergence checks.
 - Expanded SH-2 both-negative overwrite coverage with follow-up target arithmetic and longer non-memory interposed flows.
