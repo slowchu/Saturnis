@@ -2806,6 +2806,81 @@ void test_sh2_bsr_jsr_jmp_and_rts_use_pr_with_delay_slots_deterministically() {
         "trace should include BSR target checkpoint with delay-slot semantics");
 }
 
+void test_sh2_expanded_mov_addressing_modes_are_deterministic_and_bus_blocking() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U,2U,0xE110U); // MOV #16,R1
+  mem.write(0x0002U,2U,0xE280U); // MOV #-128,R2
+  mem.write(0x0004U,2U,0x2120U); // MOV.B R2,@R1
+  mem.write(0x0006U,2U,0x6310U); // MOV.B @R1,R3
+  mem.write(0x0008U,2U,0xE421U); // MOV #0x21,R4
+  mem.write(0x000AU,2U,0x2144U); // MOV.B R4,@-R1
+  mem.write(0x000CU,2U,0x6514U); // MOV.B @R1+,R5
+  mem.write(0x000EU,2U,0xE002U); // MOV #2,R0
+  mem.write(0x0010U,2U,0x8012U); // MOV.B R0,@(2,R1)
+  mem.write(0x0012U,2U,0x8412U); // MOV.B @(2,R1),R0
+  mem.write(0x0014U,2U,0x0009U); // NOP
+  mem.write(0x0016U,2U,0x0009U); // NOP
+  mem.write(0x0018U,2U,0x9201U); // MOV.W @(1,PC),R2
+  mem.write(0x001AU,2U,0xD301U); // MOV.L @(1,PC),R3
+  mem.write(0x001CU,2U,0x0009U); // NOP (padding)
+  mem.write(0x001EU,2U,0x007FU); // PC-relative word literal
+  mem.write(0x0020U,4U,0x12345678U); // PC-relative long literal
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U,0x0001FFF0U);
+  for (int i=0;i<15;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(mem.read(0x000FU,1U)==0x21U, "MOV.B @-Rn should predecrement and store deterministic byte");
+  check(core.reg(1)==0x0010U, "MOV.B @Rm+ should post-increment source register deterministically");
+  check(core.reg(3)==0x12345678U, "MOV.L @(disp,PC),Rn should load deterministic literal through blocking bus op");
+  check(core.reg(2)==0x0000007FU, "MOV.W @(disp,PC),Rn should sign-extend deterministic literal");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"kind\":\"READ\"") != std::string::npos,
+        "expanded MOV addressing should emit deterministic blocking READ commits");
+  check(json.find("\"kind\":\"WRITE\"") != std::string::npos,
+        "expanded MOV addressing should emit deterministic blocking WRITE commits");
+}
+
+void test_sh2_shift_rotate_subset_updates_t_flag_and_values_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE180U); // MOV #-128,R1 -> 0xFFFFFF80
+  mem.write(0x0002U, 2U, 0x4100U); // SHLL R1 (T=1)
+  mem.write(0x0004U, 2U, 0x4200U); // SHLL R2 (R2 starts 0, T=0)
+  mem.write(0x0006U, 2U, 0xE305U); // MOV #5,R3
+  mem.write(0x0008U, 2U, 0x4301U); // SHLR R3 (T=1, R3=2)
+  mem.write(0x000AU, 2U, 0xE440U); // MOV #64,R4
+  mem.write(0x000CU, 2U, 0x4404U); // ROTL R4 (T=0, R4=128)
+  mem.write(0x000EU, 2U, 0x4505U); // ROTR R5 (R5 starts 0, T=0)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 8; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(1) == 0xFFFFFF00U, "SHLL should shift left and preserve deterministic wrap semantics");
+  check(core.reg(2) == 0U, "SHLL on zero should remain zero deterministically");
+  check(core.reg(3) == 2U, "SHLR should shift right logically by one");
+  check(core.reg(4) == 128U, "ROTL should rotate msb into lsb deterministically");
+  check(core.reg(5) == 0U, "ROTR of zero should remain zero deterministically");
+  check(core.sr() == 0x000000F0U, "final T-bit should be clear after deterministic rotate-right on zero");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"sr\":241") != std::string::npos,
+        "trace should capture T=1 during shift-edge transitions");
+  check(json.find("\"sr\":240") != std::string::npos,
+        "trace should capture T=0 during deterministic shift/rotate sequence");
+}
+
 void test_sh2_tbit_sett_clrt_movt_and_sr_trace_are_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3040,6 +3115,8 @@ int main() {
   test_sh2_rts_both_negative_overwrite_with_target_register_copy_before_store_is_deterministic();
   test_sh2_same_addr_overwrite_with_four_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_tbit_sett_clrt_movt_and_sr_trace_are_deterministic();
+  test_sh2_expanded_mov_addressing_modes_are_deterministic_and_bus_blocking();
+  test_sh2_shift_rotate_subset_updates_t_flag_and_values_deterministically();
   test_sh2_cmp_eq_and_tst_update_tbit_deterministically();
   test_sh2_bt_bf_and_s_forms_follow_deterministic_branch_rules();
   test_sh2_bsr_jsr_jmp_and_rts_use_pr_with_delay_slots_deterministically();

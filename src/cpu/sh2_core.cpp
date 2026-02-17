@@ -61,6 +61,7 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   pending_mem_op_.reset();
   pending_branch_target_.reset();
   pr_ = 0;
+  gbr_ = 0;
 }
 
 bool SH2Core::t_flag() const { return (sr_ & kSrTBit) != 0U; }
@@ -74,7 +75,7 @@ void SH2Core::set_t_flag(bool value) {
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
-  // Minimal subset: NOP, SETT/CLRT/MOVT, CMP/TST, BRA/BT/BF/BSR/JMP/JSR/RTS, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn.
+  // Minimal subset: NOP, SETT/CLRT/MOVT, CMP/TST, SHLL/SHLR/ROTL/ROTR, BRA/BT/BF/BSR/JMP/JSR/RTS, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn.
   const auto delay_slot_target = pending_branch_target_;
   pending_branch_target_.reset();
 
@@ -124,6 +125,28 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
     r_[n] = r_[m];
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4000U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    set_t_flag((r_[n] & 0x80000000U) != 0U);
+    r_[n] <<= 1U;
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4001U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    set_t_flag((r_[n] & 0x1U) != 0U);
+    r_[n] >>= 1U;
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4004U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const bool msb = (r_[n] & 0x80000000U) != 0U;
+    set_t_flag(msb);
+    r_[n] = (r_[n] << 1U) | (msb ? 1U : 0U);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4005U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const bool lsb = (r_[n] & 0x1U) != 0U;
+    set_t_flag(lsb);
+    r_[n] = (r_[n] >> 1U) | (lsb ? 0x80000000U : 0U);
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
     const std::uint32_t branch_pc = pc_;
@@ -209,7 +232,10 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
 
   if (pending_mem_op_.has_value()) {
     const auto &pending = *pending_mem_op_;
-    out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(pending.phys_addr, pending.kind == PendingMemOp::Kind::WriteLong),
+    const bool is_write = pending.kind == PendingMemOp::Kind::WriteByte ||
+                          pending.kind == PendingMemOp::Kind::WriteWord ||
+                          pending.kind == PendingMemOp::Kind::WriteLong;
+    out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(pending.phys_addr, is_write),
                         pending.phys_addr, pending.size, pending.value};
     return out;
   }
@@ -226,16 +252,11 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
       const auto instr = static_cast<std::uint16_t>(cached & 0xFFFFU);
       std::uint32_t n = 0;
       std::uint32_t m = 0;
-      if (is_movl_mem_to_reg(instr, n, m)) {
+      if ((instr & 0xF00FU) == 0x6000U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
         const std::uint32_t data_phys = mem::to_phys(r_[m]);
-        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, data_phys, 4U, 0U, n};
-        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 4U, 0U};
-        return out;
-      }
-      if (is_movl_reg_to_mem(instr, n, m)) {
-        const std::uint32_t data_phys = mem::to_phys(r_[n]);
-        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, data_phys, 4U, r_[m], 0U};
-        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 4U, r_[m]};
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadByte, data_phys, 1U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 1U, 0U};
         return out;
       }
       if (is_movw_mem_to_reg(instr, n, m)) {
@@ -244,11 +265,124 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 2U, 0U};
         return out;
       }
+      if (is_movl_mem_to_reg(instr, n, m)) {
+        const std::uint32_t data_phys = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, data_phys, 4U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 4U, 0U};
+        return out;
+      }
+      if ((instr & 0xF00FU) == 0x6004U || (instr & 0xF00FU) == 0x6005U || (instr & 0xF00FU) == 0x6006U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint8_t sz = ((instr & 0x000FU) == 0x4U) ? 1U : (((instr & 0x000FU) == 0x5U) ? 2U : 4U);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::ReadByte : ((sz == 2U) ? PendingMemOp::Kind::ReadWord : PendingMemOp::Kind::ReadLong);
+        const std::uint32_t data_phys = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, 0U, n, m, sz};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, sz, 0U};
+        return out;
+      }
+      if ((instr & 0xF00FU) == 0x2000U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint32_t data_phys = mem::to_phys(r_[n]);
+        const std::uint32_t write_value = r_[m] & 0xFFU;
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteByte, data_phys, 1U, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 1U, write_value};
+        return out;
+      }
       if (is_movw_reg_to_mem(instr, n, m)) {
         const std::uint32_t data_phys = mem::to_phys(r_[n]);
         const std::uint32_t write_value = r_[m] & 0xFFFFU;
         pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteWord, data_phys, 2U, write_value, 0U};
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 2U, write_value};
+        return out;
+      }
+      if (is_movl_reg_to_mem(instr, n, m)) {
+        const std::uint32_t data_phys = mem::to_phys(r_[n]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, data_phys, 4U, r_[m], 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 4U, r_[m]};
+        return out;
+      }
+      if ((instr & 0xF00FU) == 0x2004U || (instr & 0xF00FU) == 0x2005U || (instr & 0xF00FU) == 0x2006U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint8_t sz = ((instr & 0x000FU) == 0x4U) ? 1U : (((instr & 0x000FU) == 0x5U) ? 2U : 4U);
+        r_[n] -= sz;
+        const std::uint32_t data_phys = mem::to_phys(r_[n]);
+        const std::uint32_t write_value = (sz == 1U) ? (r_[m] & 0xFFU) : ((sz == 2U) ? (r_[m] & 0xFFFFU) : r_[m]);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::WriteByte : ((sz == 2U) ? PendingMemOp::Kind::WriteWord : PendingMemOp::Kind::WriteLong);
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, sz, write_value};
+        return out;
+      }
+      if ((instr & 0xFF00U) == 0x8400U || (instr & 0xFF00U) == 0x8500U) {
+        m = (instr >> 4U) & 0x0FU;
+        const std::uint32_t disp = instr & 0x0FU;
+        const std::uint8_t sz = ((instr & 0xFF00U) == 0x8400U) ? 1U : 2U;
+        const std::uint32_t data_phys = mem::to_phys(r_[m] + disp * sz);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::ReadByte : PendingMemOp::Kind::ReadWord;
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, 0U, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, sz, 0U};
+        return out;
+      }
+      if ((instr & 0xF000U) == 0x5000U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint32_t disp = instr & 0x0FU;
+        const std::uint32_t data_phys = mem::to_phys(r_[m] + disp * 4U);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, data_phys, 4U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 4U, 0U};
+        return out;
+      }
+      if ((instr & 0xF000U) == 0x8000U && ((instr & 0x0F00U) == 0x0000U || (instr & 0x0F00U) == 0x0100U)) {
+        n = (instr >> 4U) & 0x0FU;
+        const std::uint32_t disp = instr & 0x0FU;
+        const std::uint8_t sz = ((instr & 0x0F00U) == 0x0000U) ? 1U : 2U;
+        const std::uint32_t data_phys = mem::to_phys(r_[n] + disp * sz);
+        const std::uint32_t write_value = (sz == 1U) ? (r_[0] & 0xFFU) : (r_[0] & 0xFFFFU);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::WriteByte : PendingMemOp::Kind::WriteWord;
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, sz, write_value};
+        return out;
+      }
+      if ((instr & 0xF000U) == 0x1000U) {
+        n = (instr >> 8U) & 0x0FU; m = (instr >> 4U) & 0x0FU;
+        const std::uint32_t disp = instr & 0x0FU;
+        const std::uint32_t data_phys = mem::to_phys(r_[n] + disp * 4U);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, data_phys, 4U, r_[m], 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 4U, r_[m]};
+        return out;
+      }
+      if ((instr & 0xFF00U) == 0xC400U || (instr & 0xFF00U) == 0xC500U || (instr & 0xFF00U) == 0xC600U) {
+        const std::uint32_t disp = instr & 0xFFU;
+        const std::uint8_t sz = ((instr & 0xFF00U) == 0xC400U) ? 1U : (((instr & 0xFF00U) == 0xC500U) ? 2U : 4U);
+        const std::uint32_t data_phys = mem::to_phys(gbr_ + disp * sz);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::ReadByte : ((sz == 2U) ? PendingMemOp::Kind::ReadWord : PendingMemOp::Kind::ReadLong);
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, 0U, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, sz, 0U};
+        return out;
+      }
+      if ((instr & 0xFF00U) == 0xC000U || (instr & 0xFF00U) == 0xC100U || (instr & 0xFF00U) == 0xC200U) {
+        const std::uint32_t disp = instr & 0xFFU;
+        const std::uint8_t sz = ((instr & 0xFF00U) == 0xC000U) ? 1U : (((instr & 0xFF00U) == 0xC100U) ? 2U : 4U);
+        const std::uint32_t data_phys = mem::to_phys(gbr_ + disp * sz);
+        const std::uint32_t write_value = (sz == 1U) ? (r_[0] & 0xFFU) : ((sz == 2U) ? (r_[0] & 0xFFFFU) : r_[0]);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::WriteByte : ((sz == 2U) ? PendingMemOp::Kind::WriteWord : PendingMemOp::Kind::WriteLong);
+        pending_mem_op_ = PendingMemOp{kind, data_phys, sz, write_value, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, sz, write_value};
+        return out;
+      }
+      if ((instr & 0xF000U) == 0x9000U) {
+        n = (instr >> 8U) & 0x0FU;
+        const std::uint32_t disp = instr & 0xFFU;
+        const std::uint32_t data_phys = mem::to_phys(pc_ + 4U + disp * 2U);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadWord, data_phys, 2U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 2U, 0U};
+        return out;
+      }
+      if ((instr & 0xF000U) == 0xD000U) {
+        n = (instr >> 8U) & 0x0FU;
+        const std::uint32_t disp = instr & 0xFFU;
+        const std::uint32_t data_phys = mem::to_phys((pc_ + 4U) & ~0x3U); 
+        const std::uint32_t addr = data_phys + disp * 4U;
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, addr, 4U, 0U, n};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, false), addr, 4U, 0U};
         return out;
       }
 
@@ -282,6 +416,12 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
+    } else if (pending.kind == PendingMemOp::Kind::ReadByte) {
+      const std::uint8_t byte = static_cast<std::uint8_t>(response.value & 0xFFU);
+      r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
+    }
+    if (pending.post_inc_reg.has_value()) {
+      r_[*pending.post_inc_reg] += pending.post_inc_size;
     }
 
     if (pending_branch_target_.has_value()) {

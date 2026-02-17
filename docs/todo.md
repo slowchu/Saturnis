@@ -142,11 +142,11 @@
 2. [x] SH-2: Add compare/test ops needed for BIOS-style control flow (e.g., CMP/EQ + minimal set) + regression.
 3. [x] SH-2: Implement conditional branches (BT/BF + /S forms if you choose) with delay-slot semantics + matrix tests.
 4. [x] SH-2: Implement BSR/JSR/JMP (and any needed PR behavior) + delay-slot regression coverage.
-5. [ ] SH-2: Expand load/store addressing modes for MOV.{B/W/L}:
+5. [x] SH-2: Expand load/store addressing modes for MOV.{B/W/L}:
    - @Rm, @Rm+, @-Rn
    - @(disp,Rm), @(disp,GBR), @(disp,PC) where applicable
    Ensure all cache-miss/uncached/MMIO cases remain blocking BusOps + tests.
-6. [ ] SH-2: Add shifts/rotates/bit ops subset required for common bring-up code paths + flag-edge tests.
+6. [x] SH-2: Add shifts/rotates/bit ops subset required for common bring-up code paths + flag-edge tests.
 7. [ ] SH-2: Add exception/interrupt entry + return scaffolding (vector fetch + RTE) in a deterministic form.
 8. [ ] SCU DMA: Add deterministic register file for DMA channels (reset defaults + R/W masks + lane semantics) + tests.
 9. [ ] SCU DMA: Implement DMA engine as a BusOp producer emitting DMA-tagged ops (non-zero),
