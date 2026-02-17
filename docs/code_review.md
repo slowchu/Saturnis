@@ -5,6 +5,7 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+
 ### New 16-task batch completion updates
 - Added SCU overlap regressions for non-adjacent byte-lane overlap resolution, repeated source-clear idempotence, alternating halfword IMS retention checks, and write-log address histogram stability across overlap bursts.
 - Expanded dual-demo trace regression checks with per-CPU `src:"IFETCH"` parity, selected `IFETCH`/`MMIO_READ` timing-tuple parity, and first-20 commit-prefix stability across repeated multithread runs.
