@@ -163,12 +163,34 @@ int main() {
     return 1;
   }
 
+
+  const auto single_cpu0_read_timing_line = first_line_containing(single_a, R"("cpu":0,"kind":"READ")");
+  const auto single_cpu1_read_timing_line = first_line_containing(single_a, R"("cpu":1,"kind":"READ")");
+  const auto mt_cpu0_read_timing_line = first_line_containing(baseline_mt, R"("cpu":0,"kind":"READ")");
+  const auto mt_cpu1_read_timing_line = first_line_containing(baseline_mt, R"("cpu":1,"kind":"READ")");
+  if ((!single_cpu0_read_timing_line.empty() && single_cpu0_read_timing_line != mt_cpu0_read_timing_line) ||
+      (!single_cpu1_read_timing_line.empty() && single_cpu1_read_timing_line != mt_cpu1_read_timing_line)) {
+    std::cerr << "single-thread and multithread per-CPU READ timing tuple lines diverged\n";
+    return 1;
+  }
+
   const std::size_t single_cpu0_src_mmio = count_occurrences(single_a, R"("cpu":0,"src":"MMIO")");
   const std::size_t single_cpu1_src_mmio = count_occurrences(single_a, R"("cpu":1,"src":"MMIO")");
   const std::size_t mt_cpu0_src_mmio = count_occurrences(baseline_mt, R"("cpu":0,"src":"MMIO")");
   const std::size_t mt_cpu1_src_mmio = count_occurrences(baseline_mt, R"("cpu":1,"src":"MMIO")");
   if (single_cpu0_src_mmio != mt_cpu0_src_mmio || single_cpu1_src_mmio != mt_cpu1_src_mmio) {
     std::cerr << "single-thread and multithread per-CPU src-mmio counts diverged\n";
+    return 1;
+  }
+
+
+  const auto single_cpu0_mmio_timing_line = first_line_containing(single_a, R"("cpu":0,"src":"MMIO")");
+  const auto single_cpu1_mmio_timing_line = first_line_containing(single_a, R"("cpu":1,"src":"MMIO")");
+  const auto mt_cpu0_mmio_timing_line = first_line_containing(baseline_mt, R"("cpu":0,"src":"MMIO")");
+  const auto mt_cpu1_mmio_timing_line = first_line_containing(baseline_mt, R"("cpu":1,"src":"MMIO")");
+  if ((!single_cpu0_mmio_timing_line.empty() && single_cpu0_mmio_timing_line != mt_cpu0_mmio_timing_line) ||
+      (!single_cpu1_mmio_timing_line.empty() && single_cpu1_mmio_timing_line != mt_cpu1_mmio_timing_line)) {
+    std::cerr << "single-thread and multithread per-CPU MMIO timing tuple lines diverged\n";
     return 1;
   }
 
@@ -209,11 +231,32 @@ int main() {
     }
   }
 
+
+  const auto baseline_barrier_timing_line = first_line_containing(single_a, R"("kind":"BARRIER")");
+  for (int run = 0; run < 5; ++run) {
+    const auto mt_trace = emu.run_dual_demo_trace_multithread();
+    const auto run_barrier_timing_line = first_line_containing(mt_trace, R"("kind":"BARRIER")");
+    if (!baseline_barrier_timing_line.empty() && run_barrier_timing_line != baseline_barrier_timing_line) {
+      std::cerr << "dual-demo selected BARRIER timing tuple changed on multithread run " << run << '\n';
+      return 1;
+    }
+  }
+
   const auto baseline_prefixes = first_n_commit_prefixes(single_a, 12U);
   for (int run = 0; run < 5; ++run) {
     const auto mt_trace = emu.run_dual_demo_trace_multithread();
     if (first_n_commit_prefixes(mt_trace, 12U) != baseline_prefixes) {
       std::cerr << "dual-demo mixed-kind commit prefixes changed on multithread run " << run << '\n';
+      return 1;
+    }
+  }
+
+
+  const auto baseline_prefixes_24 = first_n_commit_prefixes(single_a, 24U);
+  for (int run = 0; run < 5; ++run) {
+    const auto mt_trace = emu.run_dual_demo_trace_multithread();
+    if (first_n_commit_prefixes(mt_trace, 24U) != baseline_prefixes_24) {
+      std::cerr << "dual-demo first 24 commit prefixes changed on multithread run " << run << '\n';
       return 1;
     }
   }
@@ -338,6 +381,20 @@ int main() {
         count_occurrences(bios_trace, R"("cpu":0,"kind":"WRITE")") != fixture_cpu0_write ||
         count_occurrences(bios_trace, R"("cpu":1,"kind":"WRITE")") != fixture_cpu1_write) {
       std::cerr << "bios per-cpu commit-kind distribution changed on run " << run << '\n';
+      return 1;
+    }
+  }
+
+
+  const auto fixture_cpu0_ifetch_timing_line = first_line_containing(bios_fixture, R"("cpu":0,"kind":"IFETCH")");
+  const auto fixture_cpu1_ifetch_timing_line = first_line_containing(bios_fixture, R"("cpu":1,"kind":"IFETCH")");
+  for (int run = 0; run < 5; ++run) {
+    const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
+    const auto run_cpu0_ifetch_timing_line = first_line_containing(bios_trace, R"("cpu":0,"kind":"IFETCH")");
+    const auto run_cpu1_ifetch_timing_line = first_line_containing(bios_trace, R"("cpu":1,"kind":"IFETCH")");
+    if ((!fixture_cpu0_ifetch_timing_line.empty() && run_cpu0_ifetch_timing_line != fixture_cpu0_ifetch_timing_line) ||
+        (!fixture_cpu1_ifetch_timing_line.empty() && run_cpu1_ifetch_timing_line != fixture_cpu1_ifetch_timing_line)) {
+      std::cerr << "bios per-CPU IFETCH timing tuple lines changed on run " << run << '\n';
       return 1;
     }
   }

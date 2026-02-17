@@ -8,7 +8,7 @@ Date: 2026-02-17 (challenge session update)
 - Added SCU overlap regressions for mixed-size three-lane writes, interleaved IST/source clear idempotence, alternating IMS byte-mask bursts with concurrent set/clear, and per-CPU address+value write-log histogram stability.
 - Expanded commit-horizon regressions to cover ten-cycle mixed RAM/MMIO drains, seven queued MMIO-read deterministic pinning across runs, and three alternating progress reversals before convergence.
 - Expanded SH-2 mixed-width delay-slot overwrite matrix with BRA/RTS target-side MOV+ADD-before-store variants and a five-intermediate non-memory overwrite flow.
-- Remaining in-progress items in this batch are trace-regression focused (per-CPU READ/MMIO timing tuples, selected BARRIER timing tuples, BIOS per-CPU IFETCH timing tuples, and first-24 prefix parity).
+- Completed the previously in-progress trace-regression items for this batch (per-CPU READ/MMIO timing tuples, selected BARRIER timing tuples, BIOS per-CPU IFETCH timing tuples, and first-24 prefix parity).
 
 - Added SCU overlap regressions for non-adjacent lane byte writes, repeated source-clear idempotence, alternating halfword IMS masking, and write-log address histogram stability.
 - Expanded commit-horizon regressions to cover nine-cycle mixed RAM/MMIO drains, six queued MMIO-read pinned values, and alternating reversal convergence on both CPUs.
