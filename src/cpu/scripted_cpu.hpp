@@ -31,8 +31,10 @@ public:
   [[nodiscard]] bool done() const;
   [[nodiscard]] core::Tick local_time() const;
   [[nodiscard]] std::optional<PendingBusOp> produce();
-  void apply_response(std::size_t script_index, const bus::BusResponse &response);
+  void apply_response(std::size_t script_index, const bus::BusResponse &response, std::uint64_t producer_token = 0,
+                      core::TraceLog *trace = nullptr);
   [[nodiscard]] std::optional<std::uint32_t> last_read() const;
+  [[nodiscard]] std::size_t store_buffer_size() const;
 
 private:
   int cpu_id_;
@@ -43,6 +45,7 @@ private:
   mem::StoreBuffer store_buffer_;
   mem::TinyCache cache_;
   std::optional<std::uint32_t> last_read_;
+  std::uint64_t next_store_id_ = 1;
 };
 
 } // namespace saturnis::cpu

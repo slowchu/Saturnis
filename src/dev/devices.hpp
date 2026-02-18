@@ -27,6 +27,7 @@ private:
   std::uint32_t smpc_last_command_ = 0U;
   std::uint32_t smpc_command_result_ = 0U;
   std::uint32_t vdp1_irq_level_ = 0U;
+  std::uint32_t vdp1_event_counter_ = 0U;
 };
 
 } // namespace saturnis::dev
