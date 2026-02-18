@@ -3825,9 +3825,9 @@ void test_trace_halt_on_fault_stops_deterministically_at_first_fault() {
   check(committed.size() == 1U, "halt-on-fault mode must stop batch commit at first fault boundary");
 
   const auto json = trace.to_jsonl();
-  check(json.find(""reason":"INVALID_BUS_OP"") != std::string::npos,
+  check(json.find("\"reason\":\"INVALID_BUS_OP\"") != std::string::npos,
         "halt-on-fault mode must retain deterministic INVALID_BUS_OP fault marker");
-  check(json.find(""phys":4096") == std::string::npos,
+  check(json.find("\"phys\":4096") == std::string::npos,
         "halt-on-fault mode must prevent post-fault operations from entering the commit trace");
 #endif
 }
