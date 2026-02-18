@@ -186,6 +186,10 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   } else if (instr == 0x000BU) {
     next_branch_target = pr_;
     pc_ += 2U;
+  } else if (instr == 0x002BU) {
+    trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, exception_return_pc_, "SYNTHETIC_RTE"});
+    sr_ = exception_return_sr_;
+    pc_ = exception_return_pc_;
   } else {
     trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, static_cast<std::uint32_t>(instr), "ILLEGAL_OP"});
     pc_ += 2U;
@@ -211,6 +215,7 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
 
 
   if (pending_exception_vector_.has_value()) {
+    trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, *pending_exception_vector_, "SYNTHETIC_EXCEPTION_ENTRY"});
     const std::uint32_t vector_phys = mem::to_phys(static_cast<std::uint32_t>(*pending_exception_vector_) * 4U);
     pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ExceptionVectorRead, vector_phys, 4U, 0U, 0U, std::nullopt, 0U, 0U};
     pending_exception_vector_.reset();
@@ -315,9 +320,13 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     const auto pending = *pending_mem_op_;
     pending_mem_op_.reset();
     if (pending.kind == PendingMemOp::Kind::ExceptionVectorRead) {
-      exception_return_pc_ = pc_;
+      exception_return_pc_ = u32_add(pc_, 2U);
       exception_return_sr_ = sr_;
       pc_ = response.value;
+      t_ += 1;
+      ++executed_;
+      trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
+      return;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
@@ -362,6 +371,8 @@ void SH2Core::set_t_flag(bool value) {
     sr_ &= ~kSrTBit;
   }
 }
+
+void SH2Core::request_exception_vector(std::uint32_t vector) { pending_exception_vector_ = vector; }
 
 void SH2Core::step(bus::BusArbiter &arbiter, core::TraceLog &trace, std::uint64_t seq) {
   const auto produced = produce_until_bus(seq, trace, 1);

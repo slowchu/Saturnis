@@ -8,6 +8,7 @@
 namespace saturnis::mem {
 
 struct StoreEntry {
+  std::uint64_t store_id = 0;
   std::uint32_t phys = 0;
   std::uint8_t size = 4;
   std::uint32_t value = 0;
@@ -17,6 +18,8 @@ class StoreBuffer {
 public:
   void push(StoreEntry entry);
   [[nodiscard]] std::optional<std::uint32_t> forward(std::uint32_t phys, std::uint8_t size) const;
+  [[nodiscard]] bool retire(std::uint64_t store_id);
+  [[nodiscard]] std::size_t size() const;
 
 private:
   std::deque<StoreEntry> entries_;

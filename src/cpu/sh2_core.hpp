@@ -32,6 +32,7 @@ public:
   [[nodiscard]] std::uint32_t sr() const;
   [[nodiscard]] std::uint32_t pr() const;
   void set_pr(std::uint32_t value);
+  void request_exception_vector(std::uint32_t vector);
 
 
 private:

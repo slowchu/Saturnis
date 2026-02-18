@@ -106,7 +106,7 @@ void test_tiny_cache_uses_big_endian_multibyte_layout() {
 void test_store_buffer_retains_entries_beyond_previous_capacity() {
   saturnis::mem::StoreBuffer sb;
   for (std::uint32_t i = 0; i < 20U; ++i) {
-    sb.push({0x4000U + i * 4U, 4U, 0x90000000U + i});
+    sb.push({static_cast<std::uint64_t>(i + 1U), 0x4000U + i * 4U, 4U, 0x90000000U + i});
   }
 
   const auto first = sb.forward(0x4000U, 4U);
@@ -3785,6 +3785,95 @@ void test_bus_arbiter_enqueue_contract_violation_faults_deterministically() {
 #endif
 }
 
+void test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  saturnis::cpu::ScriptedCPU cpu(0, {
+    {saturnis::cpu::ScriptOpKind::Write, 0x00002000U, 4U, 0xAAAAAAAAU, 0U},
+    {saturnis::cpu::ScriptOpKind::Write, 0x00002000U, 4U, 0xBBBBBBBBU, 0U},
+    {saturnis::cpu::ScriptOpKind::Read,  0x00002000U, 4U, 0U,          0U},
+  });
+
+  const auto p0 = cpu.produce();
+  const auto p1 = cpu.produce();
+  const auto p2 = cpu.produce();
+  check(p0.has_value() && p1.has_value(), "scripted CPU should emit two pending store bus ops");
+  check(!p2.has_value(), "latest store should forward into following read without bus request");
+  check(cpu.last_read().has_value() && *cpu.last_read() == 0xBBBBBBBBU,
+        "store buffer forwarding must pick newest same-address store value");
+  check(cpu.store_buffer_size() == 2U, "store buffer should contain both in-flight stores before retire");
+
+  const auto c0 = arbiter.commit_batch({p0->op});
+  check(c0.size() == 1U, "first store op should commit");
+  cpu.apply_response(p0->script_index, c0[0].response, p0->op.producer_token, &trace);
+  check(cpu.store_buffer_size() == 1U, "retire-by-store-id should remove only first committed store entry");
+
+  const auto c1 = arbiter.commit_batch({p1->op});
+  check(c1.size() == 1U, "second store op should commit");
+  cpu.apply_response(p1->script_index, c1[0].response, p1->op.producer_token, &trace);
+  check(cpu.store_buffer_size() == 0U, "retire-by-store-id should drain store buffer once all stores commit");
+}
+
+void test_scripted_cpu_cache_fill_mismatch_faults_deterministically() {
+  saturnis::core::TraceLog trace;
+  trace.set_halt_on_fault(true);
+  saturnis::cpu::ScriptedCPU cpu(0, {
+    {saturnis::cpu::ScriptOpKind::Read, 0x00001000U, 4U, 0U, 0U},
+    {saturnis::cpu::ScriptOpKind::Read, 0x00001000U, 4U, 0U, 0U},
+  });
+
+  const auto first = cpu.produce();
+  check(first.has_value(), "first read should miss cache and issue bus request");
+
+  saturnis::bus::BusResponse bad{};
+  bad.value = 0x11223344U;
+  bad.line_base = first->op.phys_addr / static_cast<std::uint32_t>(16U) + 1U;
+  bad.line_data.assign(16U, 0U);
+  cpu.apply_response(first->script_index, bad, first->op.producer_token, &trace);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"CACHE_FILL_MISMATCH\"") != std::string::npos,
+        "cache fill mismatch must emit deterministic CACHE_FILL_MISMATCH fault");
+  check(trace.should_halt(), "halt-on-fault mode must latch on cache-fill mismatch");
+
+  const auto second = cpu.produce();
+  check(second.has_value() && second->op.kind == saturnis::bus::BusKind::Read,
+        "mismatched fill must not silently populate cache; subsequent read should still require bus op");
+}
+
+void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0002U, 2U, 0x0009U); // NOP at exception return target
+  mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler 0x40
+  mem.write(0x0040U, 2U, 0x002BU); // RTE
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.request_exception_vector(4U);
+
+  core.step(arbiter, trace, 0U);
+  check(core.pc() == 0x0040U, "synthetic exception entry should vector to handler address");
+
+  core.step(arbiter, trace, 1U);
+  check(core.pc() == 0x0002U, "synthetic RTE should restore deterministic exception return PC");
+
+  core.step(arbiter, trace, 2U);
+  check(core.pc() == 0x0004U, "execution should continue deterministically after synthetic RTE return");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
+        "synthetic exception entry must be explicitly trace-labeled");
+  check(json.find("\"reason\":\"SYNTHETIC_RTE\"") != std::string::npos,
+        "synthetic RTE return path must be explicitly trace-labeled");
+}
+
 void test_p0_sh2_imm8_sign_extension_semantics() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4051,6 +4140,9 @@ int main() {
   test_p0_ram_lane_microtest_longword_to_byte_offsets();
   test_p0_mmio_lane_microtest_byte_halfword_and_lane_isolation();
   test_bus_arbiter_enqueue_contract_violation_faults_deterministically();
+  test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id();
+  test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
+  test_sh2_synthetic_exception_entry_and_rte_roundtrip();
   test_p0_sh2_imm8_sign_extension_semantics();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();
