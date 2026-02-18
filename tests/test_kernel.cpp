@@ -1018,6 +1018,88 @@ void test_vdp1_source_event_status_register_is_read_only_and_lane_stable() {
         "VDP1 source-event status low halfword should deterministically pack IRQ-level and event-counter bits");
 }
 
+void test_vdp1_command_status_is_read_only_under_write_attempts() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00098U, 4U, 0x77U});
+  const auto before = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  (void)arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05D0009CU, 4U, 0xFFFFFFFFU});
+  const auto after = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check(before.value == after.value,
+        "VDP1 command status register should remain deterministic read-only under write attempts");
+}
+
+void test_vdp1_command_completion_byte_lane_pulse_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00098U, 4U, 0x21U});
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05D000A3U, 1U, 0x1U});
+  const auto status = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check((status.value & 0x1U) == 0U && ((status.value >> 8U) & 0xFFU) == 1U,
+        "VDP1 completion byte-lane pulse should deterministically clear busy and increment completion count");
+}
+
+void test_scripted_cpu_store_buffer_stress_never_exceeds_capacity() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::cpu::ScriptOp> ops;
+  for (std::uint32_t i = 0; i < 48U; ++i) {
+    ops.push_back({saturnis::cpu::ScriptOpKind::Write, 0x00003000U, 4U, 0xABCD0000U + i, 0U});
+    if ((i % 6U) == 0U) {
+      ops.push_back({saturnis::cpu::ScriptOpKind::Read, 0x00003000U, 4U, 0U, 0U});
+    }
+  }
+
+  saturnis::cpu::ScriptedCPU cpu0(0, ops);
+  std::size_t peak = 0U;
+  while (!cpu0.done()) {
+    const auto pending = cpu0.produce();
+    if (!pending.has_value()) {
+      continue;
+    }
+    const auto response = arbiter.commit(pending->op);
+    cpu0.apply_response(pending->script_index, response, pending->op.producer_token, &trace);
+    peak = std::max(peak, cpu0.store_buffer_size());
+  }
+
+  check(peak <= 16U,
+        "scripted CPU store-buffer stress should deterministically remain within bounded capacity");
+}
+
+void test_sh2_synthetic_rte_without_context_trace_is_stable_across_runs() {
+  std::string baseline;
+  for (int run = 0; run < 4; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0x002BU);
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, static_cast<std::uint64_t>(run));
+
+    const auto json = trace.to_jsonl();
+    check(json.find("\"reason\":\"SYNTHETIC_RTE_WITHOUT_CONTEXT\"") != std::string::npos,
+          "synthetic RTE without context should emit deterministic marker in repeated runs");
+    if (run == 0) {
+      baseline = json;
+    } else {
+      check(json == baseline,
+            "synthetic RTE without context trace should remain byte-identical across repeated runs");
+    }
+  }
+}
+
 void test_vdp1_source_event_counter_wrap_policy_is_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3862,44 +3944,6 @@ void test_bus_arbiter_invalid_size_access_is_deterministic() {
 #endif
 }
 
-void test_bus_arbiter_invalid_size_access_is_deterministic() {
-#ifndef NDEBUG
-  // In debug builds invalid BusOps are fail-fast assertions by design.
-  return;
-#else
-  saturnis::core::TraceLog trace_a;
-  saturnis::mem::CommittedMemory mem_a;
-  saturnis::dev::DeviceHub dev_a;
-  saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
-
-  saturnis::core::TraceLog trace_b;
-  saturnis::mem::CommittedMemory mem_b;
-  saturnis::dev::DeviceHub dev_b;
-  saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
-
-  const saturnis::bus::BusOp invalid_ram{0, 0U, 0U, saturnis::bus::BusKind::Read, 0x00002000U, 3U, 0U};
-  const saturnis::bus::BusOp invalid_mmio{0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 3U, 0x123456U};
-
-  const auto ram_a = arbiter_a.commit(invalid_ram);
-  const auto mmio_a = arbiter_a.commit(invalid_mmio);
-  const auto ram_b = arbiter_b.commit(invalid_ram);
-  const auto mmio_b = arbiter_b.commit(invalid_mmio);
-
-  check(ram_a.value == 0xBAD0BAD0U && mmio_a.value == 0xBAD0BAD0U &&
-            ram_b.value == 0xBAD0BAD0U && mmio_b.value == 0xBAD0BAD0U,
-        "invalid bus-op size should return deterministic BAD0BAD0 sentinel for RAM/MMIO paths");
-
-  const auto ja = trace_a.to_jsonl();
-  const auto jb = trace_b.to_jsonl();
-  check(ja == jb,
-        "invalid-size bus-op faults should emit byte-identical traces across repeated runs");
-  check(ja.find("\"reason\":\"INVALID_BUS_OP\"") != std::string::npos,
-        "invalid-size bus-op faults should emit explicit INVALID_BUS_OP marker");
-  check(ja.find("\"detail\":318775296") != std::string::npos,
-        "invalid-size bus-op faults should include encoded size-validation class in deterministic detail payload");
-#endif
-}
-
 void test_sh2_mov_register_copies_source_to_destination() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4514,6 +4558,8 @@ int main() {
   test_vdp1_command_completion_ack_clear_is_stable_across_runs();
   test_vdp1_source_event_command_completion_path_is_deterministic();
   test_vdp1_source_event_counter_wrap_policy_is_deterministic();
+  test_vdp1_command_status_is_read_only_under_write_attempts();
+  test_vdp1_command_completion_byte_lane_pulse_is_deterministic();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
@@ -4583,9 +4629,11 @@ int main() {
   test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id();
   test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
   test_scripted_cpu_store_buffer_stress_retires_boundedly();
+  test_scripted_cpu_store_buffer_stress_never_exceeds_capacity();
   test_sh2_synthetic_exception_entry_and_rte_roundtrip();
   test_sh2_synthetic_exception_nested_entry_guard_is_deterministic();
   test_sh2_synthetic_rte_without_context_faults_loudly();
+  test_sh2_synthetic_rte_without_context_trace_is_stable_across_runs();
   test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();
   test_p0_sh2_movbw_load_sign_extension();

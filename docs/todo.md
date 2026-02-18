@@ -239,3 +239,23 @@
 14. [x] Add deterministic regression for VDP1 event counter saturation/wrap policy (document chosen behavior and enforce with tests).
 15. [x] Refresh architecture/docs to describe VDP1 command/completion path assumptions and known hardware-accuracy gaps.
 16. [x] Run another full-project code-review pass and refresh docs with newly discovered risks/TODOs.
+
+
+## Next tasks (priority hardening batch, completed)
+
+1. [x] Add deterministic VDP1 command-status read-only regression under direct write attempts.
+2. [x] Add deterministic VDP1 completion byte-lane pulse regression (`0x05D000A3` byte write path).
+3. [x] Pin VDP1 CPU1-owner stress fixture ST/MT parity and ensure deterministic command-submit ownership line visibility.
+4. [x] Extend VDP1 stress regression with repeated alternating-owner stability checks.
+5. [x] Add deterministic enqueue-contract interleaved-batch regression for same-producer req_time inversion.
+6. [x] Add deterministic “fault-free stress” assertions for VDP1 stress fixtures (halt-on-fault policy compatibility).
+7. [x] Expand INVALID_BUS_OP alignment fault checks to pin encoded detail-class payload values.
+8. [x] Add scripted CPU store-buffer stress bounded-retirement regression (retire-to-empty).
+9. [x] Add scripted CPU store-buffer peak-capacity regression (must not exceed configured bound).
+10. [x] Add deterministic SH-2 synthetic exception nested-entry guard regression.
+11. [x] Add repeated-run stability regression for SH-2 `SYNTHETIC_RTE_WITHOUT_CONTEXT` trace markers.
+12. [x] Extend contention stress regression to pin first-32 commit-prefix stability across repeated MT runs.
+13. [x] Extend dual-demo regression to pin first-32 commit-prefix stability across repeated MT runs.
+14. [x] Retain deterministic VDP1 event-counter wrap policy regression and ensure explicit TODO documentation linkage.
+15. [x] Refresh architecture notes with updated scaffold-policy constraints and known fidelity gaps.
+16. [x] Run another focused full-project code-review pass and refresh risk notes.

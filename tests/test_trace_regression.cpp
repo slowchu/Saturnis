@@ -213,6 +213,7 @@ int main() {
   }
 
   const auto stress_prefix = commit_prefix_window(stress_single, 64U);
+  const auto stress_prefix32 = first_n_commit_prefixes(stress_single, 32U);
   for (int run = 0; run < 80; ++run) {
     const auto stress_mt = emu.run_contention_stress_trace_multithread();
     if (stress_mt != stress_mt_baseline) {
@@ -221,6 +222,10 @@ int main() {
     }
     if (commit_prefix_window(stress_mt, 64U) != stress_prefix) {
       std::cerr << "contention stress multithread commit-prefix window drifted on run " << run << '\n';
+      return 1;
+    }
+    if (first_n_commit_prefixes(stress_mt, 32U) != stress_prefix32) {
+      std::cerr << "contention stress multithread first-32 commit prefixes drifted on run " << run << '\n';
       return 1;
     }
   }
@@ -292,6 +297,12 @@ int main() {
   const auto vdp1_stress_cpu1_mt = emu.run_vdp1_source_event_stress_trace_cpu1_owner_multithread();
   if (vdp1_stress_cpu1_single.empty() || vdp1_stress_cpu1_mt.empty() || vdp1_stress_cpu1_single != vdp1_stress_cpu1_mt) {
     std::cerr << "VDP1 source-event stress (cpu1-owner) single-thread and multithread traces diverged\n";
+    return 1;
+  }
+
+  const auto cpu1_submit_line = first_line_containing(vdp1_stress_cpu1_single, R"("cpu":1,"kind":"MMIO_WRITE","phys":97517720)");
+  if (cpu1_submit_line.empty()) {
+    std::cerr << "VDP1 cpu1-owner stress trace missing deterministic cpu1 command-submit line\n";
     return 1;
   }
 

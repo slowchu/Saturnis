@@ -4,6 +4,20 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-18 priority review (repeat hardening session)
+- Conducted a focused review over VDP1 command/completion MMIO scaffolding, arbiter fault payload determinism, scripted store-buffer boundedness, and ST/MT trace-prefix parity checks.
+- Prioritized risk classes for this session:
+  1. VDP1 command-status behavior drift (lane/read-only semantics) under future register expansion.
+  2. Producer/arbiter contract regressions that could surface as false monotonic faults or unstable detail payloads.
+  3. Long-run scripted stress risk (store-buffer growth or prefix-drift under MT contention).
+- Session closeout notes:
+  1. Added deterministic tests for VDP1 command-status read-only + byte-lane completion pulse behavior.
+  2. Added CPU1-owner stress visibility and additional commit-prefix parity checks.
+  3. Added explicit boundedness checks for store-buffer stress and retained fail-loud arbiter detail assertions.
+- Remaining medium-priority follow-ups:
+  1. Introduce non-CPU producer provenance for VDP1 events when a fuller renderer pipeline exists.
+  2. Expand synthetic exception coverage into nested return-order semantics once stack-accurate RTE is modeled.
+
 ### 2026-02-18 completion review (new 16-task batch closeout)
 - Completed the 16-task batch with focused deterministic coverage additions around VDP1 command-status lane semantics, command-completion/SCU-ack behavior, alternating ownership stress parity (CPU0-owner and CPU1-owner fixtures), enqueue-contract regression hardening, and counter-wrap policy assertions.
 - Added/extended deterministic trace checks for command-completion metadata (`src`/`owner`/`tag`) and first-32 commit-prefix stability under repeated multithread runs.
