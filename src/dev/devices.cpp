@@ -82,10 +82,10 @@ struct MmioRegisterSpec {
 
 [[nodiscard]] std::uint32_t lane_shift(std::uint32_t addr, std::uint8_t size) {
   if (size == 1U) {
-    return (addr & 0x3U) * 8U;
+    return (3U - (addr & 0x3U)) * 8U;
   }
   if (size == 2U) {
-    return (addr & 0x2U) * 8U;
+    return (2U - (addr & 0x2U)) * 8U;
   }
   return 0U;
 }
