@@ -5,6 +5,9 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+- Performed another focused code-review pass after SMPC + VDP1/SCU updates; current residual risks: SH-2 mixed-width BRA/RTS target-side overwrite coverage still has explicit TODO-backed modeled-value guards, and broader non-synthetic VDP1 interrupt-source modeling remains pending.
+- Added first VDP1->SCU interrupt handoff scaffold behavior: deterministic bridge register toggling a SCU pending source bit with focused set/clear/masked-visibility assertions.
+- Implemented the first SMPC command write/read vertical slice beyond status-ready defaults: command register latching, deterministic result register encoding, and ready-bit stability checks.
 - Addressed external code-review critical correctness findings: removed erroneous PR updates on SH-2 loads to R15 (`ReadByte`/`ReadWord`/`ReadLong`) and switched committed memory + tiny-cache multi-byte read/write semantics to big-endian ordering.
 - Added focused regression coverage for big-endian memory/cache byte layout and store-buffer overflow retention (no silent eviction beyond 16 queued stores).
 - Expanded BIOS trace fixture flow to append one deterministic DMA-routed MMIO write/read pair via `commit_dma`, and added fixture assertions that both DMA MMIO write/read commits are present.

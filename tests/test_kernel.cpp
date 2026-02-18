@@ -752,6 +752,24 @@ void test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic() {
         "SCU synthetic-source MMIO writes should appear in deterministic commit order in trace JSONL");
 }
 
+
+void test_smpc_command_write_updates_deterministic_command_and_result_registers() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05D00084U, 4, 0x00000042U});
+
+  const auto command = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05D00084U, 4, 0U});
+  const auto result = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05D00088U, 4, 0U});
+  const auto status = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05D00080U, 4, 0U});
+
+  check(command.value == 0x00000042U, "SMPC command register should latch deterministic low-byte command value");
+  check(result.value == 0xA5000042U, "SMPC command result register should deterministically encode last command");
+  check(status.value == 0x1U, "SMPC status ready bit should remain asserted after command write/read vertical slice");
+}
+
 void test_smpc_status_register_is_read_only_and_ready() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -764,6 +782,34 @@ void test_smpc_status_register_is_read_only_and_ready() {
   (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D00080U, 4, 0xFFFFFFFFU});
   const auto after = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05D00080U, 4, 0U});
   check(after.value == 0x1U, "SMPC status should remain read-only");
+}
+
+
+void test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial_ist = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((initial_ist.value & 0x00000020U) == 0U,
+        "VDP1/SCU handoff scaffold should start with deterministic cleared pending bit");
+
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D0008CU, 1, 0x1U});
+  const auto asserted_ist = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((asserted_ist.value & 0x00000020U) != 0U,
+        "VDP1/SCU handoff scaffold should assert deterministic SCU pending source bit");
+
+  (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05D0008CU, 1, 0x0U});
+  const auto cleared_ist = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((cleared_ist.value & 0x00000020U) == 0U,
+        "VDP1/SCU handoff scaffold should clear deterministic SCU pending source bit");
+
+  (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000020U});
+  (void)arbiter.commit({0, 6U, 6, saturnis::bus::BusKind::MmioWrite, 0x05D0008CU, 1, 0x1U});
+  const auto masked_ist = arbiter.commit({0, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((masked_ist.value & 0x00000020U) == 0U,
+        "VDP1/SCU handoff scaffold should respect IMS masking for deterministic pending-bit visibility");
 }
 
 void test_vdp2_tvmd_register_masks_to_low_16_bits() {
@@ -3550,7 +3596,9 @@ int main() {
   test_scu_interrupt_source_subword_writes_apply_lane_masks();
   test_scu_interrupt_source_write_log_is_deterministic();
   test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic();
+  test_smpc_command_write_updates_deterministic_command_and_result_registers();
   test_smpc_status_register_is_read_only_and_ready();
+  test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();

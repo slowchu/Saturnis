@@ -194,9 +194,9 @@
 3. [x] Introduce a minimal bus-level owner/tag field for future DMA/SCU arbitration provenance in traces.
 4. [x] Expand BIOS fixture to include one deterministic MMIO write/read pair routed through the future DMA path.
 5. [x] Add focused regression for commit-horizon fairness when CPU and DMA producers contend on same MMIO address.
-6. [ ] Add first SMPC command write/read vertical-slice behavior beyond status-ready defaults.
-7. [ ] Add VDP1/SCU interrupt handoff scaffold with deterministic pending-bit assertions.
-8. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+6. [x] Add first SMPC command write/read vertical-slice behavior beyond status-ready defaults.
+7. [x] Add VDP1/SCU interrupt handoff scaffold with deterministic pending-bit assertions.
+8. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
 
 ## Notes
 
