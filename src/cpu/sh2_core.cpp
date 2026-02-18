@@ -74,10 +74,6 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   std::optional<std::uint32_t> next_branch_target;
   auto write_reg = [this](std::uint32_t n, std::uint32_t value) {
     r_[n] = value;
-    if (n == 15U) {
-      // TODO: Remove PR mirroring once LDS/STS and real call/return paths are implemented.
-      pr_ = value;
-    }
   };
   if (instr == 0x0009U) {
     pc_ += 2U;
@@ -355,16 +351,6 @@ void SH2Core::step(bus::BusArbiter &arbiter, core::TraceLog &trace, std::uint64_
   apply_ifetch_and_step(resp, trace);
 }
 
-
-bool SH2Core::t_flag() const { return (sr_ & kSrTBit) != 0U; }
-
-void SH2Core::set_t_flag(bool value) {
-  if (value) {
-    sr_ |= kSrTBit;
-  } else {
-    sr_ &= ~kSrTBit;
-  }
-}
 
 std::uint32_t SH2Core::pc() const { return pc_; }
 
