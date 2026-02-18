@@ -42,6 +42,20 @@ inline std::string_view kind_name(BusKind kind) {
   return "UNKNOWN";
 }
 
+inline std::string_view owner_name(const BusOp &op) {
+  if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
+    return "DMA";
+  }
+  return "CPU";
+}
+
+inline std::string_view provenance_tag(const BusOp &op) {
+  if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
+    return "DMA";
+  }
+  return "CPU";
+}
+
 inline std::string_view source_name(const BusOp &op) {
   if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
     return "DMA";

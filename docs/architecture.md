@@ -13,6 +13,7 @@
 ## Addressing semantics
 
 - Physical address: `phys = vaddr & 0x1FFFFFFF`.
+- Memory accesses are modeled as SH-2 big-endian for committed RAM and cache line read/write assembly.
 - Uncached alias when `vaddr & 0x20000000`.
 - MMIO ranges are always uncached and strongly ordered by bus commit.
 
@@ -64,15 +65,16 @@ Commit trace lines record timing explicitly:
 - `t_start`
 - `t_end`
 - `stall`
+- producer provenance fields (`src`, `owner`, `tag`)
 - CPU/op/address/value metadata
 
 This makes bus occupancy and WAIT behavior directly inspectable in regression traces.
 
 ## Current limitations
 
-- SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn, BRA/RTS with deterministic delay-slot flow including first-branch-wins branch-in-delay-slot policy and branch-after-slot behavior for MOV.L/MOV.W memory-op delay slots across read/write combinations, including same-address delay-slot-store then target-store overwrite checks plus mixed-width overwrite combinations (documented and regression-tested), and MOV.L/MOV.W data-memory forms).
+- SH-2 interpreter is intentionally minimal (bring-up subset with deterministic IFETCH, MOV #imm, ADD #imm, ADD Rm,Rn, MOV Rm,Rn, BRA/RTS with deterministic delay-slot flow including first-branch-wins branch-in-delay-slot policy and branch-after-slot behavior for MOV.L/MOV.W memory-op delay slots across read/write combinations, including same-address delay-slot-store then target-store overwrite checks plus mixed-width overwrite combinations (documented and regression-tested), and MOV.L/MOV.W data-memory forms). RTS flows branch from PR explicitly (no SP-to-PR mirroring side effect), and RTS-target tests pin PR directly.
 - SH-2 interpreter now supports blocking MOV.L/MOV.W data-memory read/write execution via deterministic bus/MMIO commits. Direct MMIO-vs-RAM same-address overwrite scenarios are still TODO in this vertical slice because current implemented instruction forms cannot materialize full MMIO base addresses in-register.
 - Device models include deterministic semantics for representative SMPC/SCU/VDP/SCSP registers, including SCU IMS/IST mask-pending interactions with synthetic interrupt-source wiring, deterministic MMIO transition logging, trace-ordered MMIO commit assertions, mixed-size contention coverage including overlapping source-clear masks and overlapping same-batch source set/clear operations, and VDP2 TVMD/TVSTAT behavior.
 - VDP rendering is placeholder/debug-oriented.
-- BIOS execution support is partial and not cycle-accurate, but fixed mini-image bring-up traces are regression-checked for deterministic fixture stability across repeated runs, dual-CPU state-checkpoint consistency, selected commit timing checkpoint stability, MMIO/READ/WRITE/BARRIER commit-count stability, cache-hit true/false count stability, single-thread vs multithread dual-demo per-kind/src parity (including per-CPU IFETCH parity), selected IFETCH/MMIO_READ/MMIO_WRITE/BARRIER timing tuple parity, per-CPU READ/MMIO timing tuple parity, exact mixed-kind commit-prefix stability (first-12/16/20/24/28 windows), dual-demo selected MMIO_READ/MMIO_WRITE/BARRIER triplet line stability, and BIOS per-CPU src/MMIO-kind/BARRIER distribution plus per-CPU IFETCH/MMIO/BARRIER timing-tuple parity (with DMA-tagged counts pinned to zero and a TODO scaffold until DMA modeling exists).
+- BIOS execution support is partial and not cycle-accurate, but fixed mini-image bring-up traces are regression-checked for deterministic fixture stability across repeated runs, dual-CPU state-checkpoint consistency, selected commit timing checkpoint stability, MMIO/READ/WRITE/BARRIER commit-count stability, cache-hit true/false count stability, single-thread vs multithread dual-demo per-kind/src parity (including per-CPU IFETCH parity), selected IFETCH/MMIO_READ/MMIO_WRITE/BARRIER timing tuple parity, per-CPU READ/MMIO timing tuple parity, exact mixed-kind commit-prefix stability (first-12/16/20/24/28 windows), dual-demo selected MMIO_READ/MMIO_WRITE/BARRIER triplet line stability, and BIOS per-CPU src/MMIO-kind/BARRIER distribution plus per-CPU IFETCH/MMIO/BARRIER timing-tuple parity. A focused deterministic DMA-produced bus-op trace regression now exercises `BusArbiter::commit_dma` write/read MMIO flow and asserts stable `src:"DMA"` trace output plus readback parity across repeated runs. BIOS trace fixtures now append one deterministic DMA MMIO write/read pair after CPU bring-up, and commit-horizon fairness coverage includes CPU-vs-DMA same-address MMIO contention with deterministic DMA-first arbitration and CPU follow-up visibility.
 - `OpBarrier` is implemented as an explicit bus barrier operation (deterministic stall, no memory read/write side effect).
