@@ -21,6 +21,8 @@ constexpr std::uint32_t kVdp2TvmdAddr = 0x05F80000U;
 constexpr std::uint32_t kVdp2TvstatAddr = 0x05F80004U;
 constexpr std::uint32_t kScspMcierAddr = 0x05C00000U;
 constexpr std::uint32_t kVdp1ScuIrqBridgeAddr = 0x05D0008CU;
+constexpr std::uint32_t kVdp1EventTriggerAddr = 0x05D00090U;
+constexpr std::uint32_t kVdp1EventStatusAddr = 0x05D00094U;
 constexpr std::uint32_t kVdp1ScuIrqMask = 0x00000020U;
 
 struct MmioRegisterSpec {
@@ -76,6 +78,12 @@ struct MmioRegisterSpec {
   }
   if (word_addr == kVdp1ScuIrqBridgeAddr) {
     return MmioRegisterSpec{0x00000000U, 0x00000001U};
+  }
+  if (word_addr == kVdp1EventTriggerAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000001U};
+  }
+  if (word_addr == kVdp1EventStatusAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000000U};
   }
   return std::nullopt;
 }
@@ -134,6 +142,8 @@ std::uint32_t DeviceHub::read(std::uint64_t, int, std::uint32_t addr, std::uint8
     value = smpc_command_result_;
   } else if (word_addr == kVdp1ScuIrqBridgeAddr) {
     value = vdp1_irq_level_ & 0x1U;
+  } else if (word_addr == kVdp1EventStatusAddr) {
+    value = (vdp1_event_counter_ & 0xFFU) | ((vdp1_irq_level_ & 0x1U) << 8U);
   } else {
     const auto spec = register_spec(word_addr);
     const std::uint32_t persisted_value = read_persisted_or_zero(mmio_regs_, word_addr);
@@ -193,6 +203,15 @@ void DeviceHub::write(std::uint64_t t, int cpu, std::uint32_t addr, std::uint8_t
       scu_interrupt_source_pending_ |= kVdp1ScuIrqMask;
     } else {
       scu_interrupt_source_pending_ &= ~kVdp1ScuIrqMask;
+    }
+    return;
+  }
+
+  if (word_addr == kVdp1EventTriggerAddr) {
+    if ((write_bits & 0x1U) != 0U) {
+      ++vdp1_event_counter_;
+      vdp1_irq_level_ = 1U;
+      scu_interrupt_source_pending_ |= kVdp1ScuIrqMask;
     }
     return;
   }

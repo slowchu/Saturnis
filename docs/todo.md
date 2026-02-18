@@ -206,9 +206,9 @@
 ## Next tasks (repopulated)
 
 1. [x] Replace SH-2 mixed-width BRA/RTS overwrite TODO-guard expectations with architectural target-side overwrite semantics and focused regressions.
-2. [ ] Add centralized BusOp size validation in `BusArbiter`/MMIO path and regression checks for invalid-size rejection semantics.
-3. [ ] Add deterministic stress regression for `run_scripted_pair_multithread` progress/response liveness under extended contention windows.
-4. [ ] Refactor multithread scripted-pair coordination away from pure busy-wait yield loops toward deterministic bounded waiting.
-5. [ ] Expand VDP1->SCU interrupt scaffold from bridge register to first source-driven event path while preserving IMS/IST determinism assertions.
-6. [ ] Add trace-level assertions for VDP1->SCU handoff commits (`src`, `owner`, `tag`, timing tuple) under repeated runs.
-7. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+2. [x] Add centralized BusOp size validation in `BusArbiter`/MMIO path and regression checks for invalid-size rejection semantics.
+3. [x] Add deterministic stress regression for `run_scripted_pair_multithread` progress/response liveness under extended contention windows.
+4. [x] Refactor multithread scripted-pair coordination away from pure busy-wait yield loops toward deterministic bounded waiting.
+5. [x] Expand VDP1->SCU interrupt scaffold from bridge register to first source-driven event path while preserving IMS/IST determinism assertions.
+6. [x] Add trace-level assertions for VDP1->SCU handoff commits (`src`, `owner`, `tag`, timing tuple) under repeated runs.
+7. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.

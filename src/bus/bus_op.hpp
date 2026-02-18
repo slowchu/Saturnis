@@ -22,6 +22,7 @@ struct BusOp {
   bool fill_cache_line = false;
   std::uint8_t cache_line_size = 0;
   BusProducer producer = BusProducer::Auto;
+  std::uint64_t producer_token = 0;
 };
 
 inline std::string_view kind_name(BusKind kind) {

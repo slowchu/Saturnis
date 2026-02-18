@@ -98,6 +98,29 @@ std::string commit_kind_sequence(const std::string &trace) {
   return out;
 }
 
+
+
+std::string commit_prefix_window(const std::string &trace, std::size_t n) {
+  std::string out;
+  std::size_t line_start = 0;
+  std::size_t seen = 0;
+  while (line_start < trace.size() && seen < n) {
+    const std::size_t line_end = trace.find('\n', line_start);
+    const std::size_t end = (line_end == std::string::npos) ? trace.size() : line_end;
+    const auto line = trace.substr(line_start, end - line_start);
+    if (line.rfind("COMMIT ", 0) == 0) {
+      out += line;
+      out.push_back('\n');
+      ++seen;
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    line_start = line_end + 1;
+  }
+  return out;
+}
+
 std::string first_n_commit_prefixes(const std::string &trace, std::size_t n) {
   std::string out;
   std::size_t line_start = 0;
@@ -158,6 +181,31 @@ int main() {
     }
     if (stressed_mt != single_a) {
       std::cerr << "multithread liveness stress trace parity mismatch on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const auto stress_single = emu.run_contention_stress_trace();
+  if (stress_single.empty()) {
+    std::cerr << "contention stress single-thread trace is empty\n";
+    return 1;
+  }
+
+  const auto stress_mt_baseline = emu.run_contention_stress_trace_multithread();
+  if (stress_mt_baseline != stress_single) {
+    std::cerr << "contention stress single-thread and multithread traces diverged\n";
+    return 1;
+  }
+
+  const auto stress_prefix = commit_prefix_window(stress_single, 64U);
+  for (int run = 0; run < 80; ++run) {
+    const auto stress_mt = emu.run_contention_stress_trace_multithread();
+    if (stress_mt != stress_mt_baseline) {
+      std::cerr << "contention stress multithread trace mismatch on run " << run << '\n';
+      return 1;
+    }
+    if (commit_prefix_window(stress_mt, 64U) != stress_prefix) {
+      std::cerr << "contention stress multithread commit-prefix window drifted on run " << run << '\n';
       return 1;
     }
   }
