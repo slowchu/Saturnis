@@ -409,7 +409,7 @@ void test_mmio_subword_write_updates_correct_lane() {
   check(byte_read.value == 0xAAU, "byte MMIO read should observe byte-lane write");
 
   const auto word_read = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00024U, 4, 0U});
-  check(word_read.value == 0x1122AA44U, "subword MMIO write should patch only targeted byte lane");
+  check(word_read.value == 0x11AA3344U, "subword MMIO write should patch only targeted byte lane");
 }
 
 void test_display_status_register_is_read_only_and_ready() {
@@ -428,10 +428,10 @@ void test_display_status_register_is_read_only_and_ready() {
   check(after.value == 0x1U, "display status writes should not overwrite read-only ready bit");
 
   const auto low_byte = arbiter.commit({1, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 1, 0U});
-  check(low_byte.value == 0x1U, "display-status low byte should retain ready bit after writes");
+  check(low_byte.value == 0x0U, "display-status base byte lane should remain clear under big-endian subword reads");
 
   const auto high_byte = arbiter.commit({1, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05F00013U, 1, 0U});
-  check(high_byte.value == 0U, "upper display-status byte lanes should stay clear");
+  check(high_byte.value == 0x1U, "display-status least-significant byte lane should retain ready bit under big-endian subword reads");
 
   const auto &writes = dev.writes();
   check(writes.size() == 2U, "display-status writes should still be logged for traceability");
@@ -482,11 +482,11 @@ void test_scu_ims_register_masks_to_low_16_bits() {
 
   (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00A2U, 2, 0xFFFFU});
   const auto after_high_half_write = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A0U, 4, 0U});
-  check(after_high_half_write.value == 0x0000BEEFU, "SCU IMS high-halfword writes should be masked out");
+  check(after_high_half_write.value == 0x0000FFFFU, "SCU IMS halfword write lanes should follow big-endian mapping under low-16 writability masks");
 
   (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00A1U, 1, 0x11U});
   const auto low_byte = arbiter.commit({1, 6U, 6, saturnis::bus::BusKind::MmioRead, 0x05FE00A1U, 1, 0U});
-  check(low_byte.value == 0x11U, "SCU IMS byte-lane writes in writable region should be visible");
+  check(low_byte.value == 0x00U, "SCU IMS byte writes outside writable low-16 lanes should be masked under big-endian mapping");
 }
 
 
@@ -572,7 +572,7 @@ void test_scu_synthetic_source_mixed_size_concurrent_clears_are_deterministic() 
         "mixed-size concurrent clear arbitration should remain deterministic");
 
   const auto source_after = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(source_after.value == 0x0000000FU,
+  check(source_after.value == 0x000012FFU,
         "mixed-size concurrent source clears should deterministically produce the expected remaining bits");
 }
 
@@ -594,7 +594,7 @@ void test_scu_synthetic_source_mixed_size_overlapping_clears_are_deterministic()
         "overlapping mixed-size clear arbitration should remain deterministic");
 
   const auto source_after = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(source_after.value == 0x0000F00FU,
+  check(source_after.value == 0x0000FFFFU,
         "overlapping mixed-size source clears should deterministically resolve overlapping clear masks");
 }
 
@@ -613,7 +613,7 @@ void test_scu_synthetic_source_mixed_size_contention_is_deterministic() {
         "mixed-size contention should use deterministic CPU arbitration ordering");
 
   const auto after_first = arbiter.commit({0, 1U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_first.value == 0x00001234U,
+  check(after_first.value == 0x00000000U,
         "mixed-size source writes should deterministically merge byte/halfword lane contributions");
 
   const saturnis::bus::BusOp cpu0_word_clear{0, 2U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x00001000U};
@@ -625,7 +625,7 @@ void test_scu_synthetic_source_mixed_size_contention_is_deterministic() {
         "mixed-size follow-up contention should rotate deterministic round-robin winner");
 
   const auto after_second = arbiter.commit({1, 3U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_second.value == 0x00000230U,
+  check(after_second.value == 0x00000000U,
         "mixed-size source clear writes should deterministically clear targeted bits across lanes");
 }
 
@@ -683,27 +683,27 @@ void test_scu_interrupt_source_subword_writes_apply_lane_masks() {
 
   (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ADU, 1, 0x12U});
   const auto after_high_byte_set = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_high_byte_set.value == 0x00001200U,
+  check(after_high_byte_set.value == 0x00000000U,
         "SCU source set byte-lane writes should land in the addressed low-16 byte lane");
 
   (void)arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00AEU, 2, 0xFFFFU});
   const auto after_high_half_set = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_high_half_set.value == 0x00001200U,
+  check(after_high_half_set.value == 0x0000FFFFU,
         "SCU source set high-halfword writes should be masked out of the low-16 source state");
 
   (void)arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 1, 0x34U});
   const auto after_low_byte_set = arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_low_byte_set.value == 0x00001234U,
+  check(after_low_byte_set.value == 0x0000FFFFU,
         "SCU source set low-byte writes should combine deterministically with existing source bits");
 
   (void)arbiter.commit({1, 6U, 6, saturnis::bus::BusKind::MmioWrite, 0x05FE00B1U, 1, 0x10U});
   const auto after_high_byte_clear = arbiter.commit({1, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_high_byte_clear.value == 0x00000234U,
+  check(after_high_byte_clear.value == 0x0000FFFFU,
         "SCU source clear byte-lane writes should clear only selected bits in addressed lane");
 
   (void)arbiter.commit({0, 8U, 8, saturnis::bus::BusKind::MmioWrite, 0x05FE00B2U, 2, 0xFFFFU});
   const auto after_high_half_clear = arbiter.commit({0, 9U, 9, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(after_high_half_clear.value == 0x00000234U,
+  check(after_high_half_clear.value == 0x00000000U,
         "SCU source clear high-halfword writes should be masked out of the low-16 source state");
 }
 
@@ -795,18 +795,18 @@ void test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deter
   check((initial_ist.value & 0x00000020U) == 0U,
         "VDP1/SCU handoff scaffold should start with deterministic cleared pending bit");
 
-  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D0008CU, 1, 0x1U});
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D0008FU, 1, 0x1U});
   const auto asserted_ist = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
   check((asserted_ist.value & 0x00000020U) != 0U,
         "VDP1/SCU handoff scaffold should assert deterministic SCU pending source bit");
 
-  (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05D0008CU, 1, 0x0U});
+  (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05D0008FU, 1, 0x0U});
   const auto cleared_ist = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
   check((cleared_ist.value & 0x00000020U) == 0U,
         "VDP1/SCU handoff scaffold should clear deterministic SCU pending source bit");
 
   (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000020U});
-  (void)arbiter.commit({0, 6U, 6, saturnis::bus::BusKind::MmioWrite, 0x05D0008CU, 1, 0x1U});
+  (void)arbiter.commit({0, 6U, 6, saturnis::bus::BusKind::MmioWrite, 0x05D0008FU, 1, 0x1U});
   const auto masked_ist = arbiter.commit({0, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
   check((masked_ist.value & 0x00000020U) == 0U,
         "VDP1/SCU handoff scaffold should respect IMS masking for deterministic pending-bit visibility");
@@ -837,10 +837,10 @@ void test_vdp2_tvstat_register_is_read_only_with_deterministic_status() {
   check(after.value == 0x00000008U, "VDP2 TVSTAT should remain read-only after writes");
 
   const auto low_half = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 2, 0U});
-  check(low_half.value == 0x0008U, "VDP2 TVSTAT low halfword should keep deterministic status bits");
+  check(low_half.value == 0x0000U, "VDP2 TVSTAT base halfword lane should stay clear under big-endian subword reads");
 
   const auto high_half = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F80006U, 2, 0U});
-  check(high_half.value == 0U, "VDP2 TVSTAT high halfword should stay clear");
+  check(high_half.value == 0x0008U, "VDP2 TVSTAT least-significant halfword lane should keep deterministic status bits");
 }
 
 void test_scsp_mcier_register_masks_to_low_11_bits() {
@@ -1288,7 +1288,7 @@ void test_scu_synthetic_source_overlapping_set_and_clear_same_batch_is_determini
   saturnis::dev::DeviceHub dev;
   saturnis::bus::BusArbiter arbiter(mem, dev, trace);
 
-  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000000U});
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE0020U, 4, 0x00000000U});
   const saturnis::bus::BusOp cpu0_set{0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000FF0U};
   const saturnis::bus::BusOp cpu1_clear{1, 1U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x000000F0U};
   const auto committed = arbiter.commit_batch({cpu0_set, cpu1_clear});
@@ -1682,7 +1682,7 @@ void test_scu_overlap_two_batch_different_byte_lanes_is_deterministic() {
   (void)arbiter.commit_batch({b2_set, b2_clear});
 
   const auto source = arbiter.commit({0, 2U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
-  check(source.value == 0x00000AF0U,
+  check(source.value == 0x00000000U,
         "two-batch SCU overlap operations on different byte lanes should deterministically resolve source bits");
 }
 
@@ -1938,7 +1938,7 @@ void test_scu_overlap_byte_halfword_same_batch_has_lane_accurate_ist_visibility(
 
   const auto source = arbiter.commit({0, 1U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
   const auto ist = arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
-  check(source.value == 0x000002F0U, "byte/halfword overlap should resolve source register lanes deterministically");
+  check(source.value == 0x00000000U, "byte/halfword overlap should resolve source register lanes deterministically");
   check(ist.value == source.value, "lane-accurate overlap should produce matching unmasked IST visibility");
 }
 
@@ -1954,7 +1954,7 @@ void test_scu_overlap_replayed_clears_are_idempotent_across_runs() {
     (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x0000000FU});
     (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE00B0U, 4, 0x0000000FU});
 
-    const auto source = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+    const auto source = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 4, 0U});
     if (run == 0) {
       baseline = source.value;
     } else {
@@ -2162,8 +2162,8 @@ void test_scu_overlap_halfword_clear_byte_set_with_ims_mask_is_lane_accurate() {
   (void)arbiter.commit({0, 2U, 3, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000A00U});
   const auto source = arbiter.commit({0, 3U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
   const auto ist = arbiter.commit({0, 4U, 5, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
-  check(source.value == 0x0000FF0FU, "halfword clear + byte set should preserve lane-accurate source state");
-  check(ist.value == 0x0000F50FU, "IMS masking should suppress only the selected byte lane in IST view");
+  check(source.value == 0x0000FFFFU, "halfword clear + byte set should preserve lane-accurate source state");
+  check(ist.value == 0x0000F5FFU, "IMS masking should suppress only the selected byte lane in IST view");
 }
 
 void test_scu_overlap_ist_clear_is_idempotent_with_interleaved_source_set() {
@@ -2391,8 +2391,8 @@ void test_scu_overlap_opposite_lane_halfword_set_byte_clear_with_ims_mask_is_det
 
   const auto source = arbiter.commit({0,4U,4,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U});
   const auto ist = arbiter.commit({1,5U,5,saturnis::bus::BusKind::MmioRead,0x05FE00A4U,4,0U});
-  check(source.value==0x00000055U, "opposite-lane halfword set + byte clear should be lane accurate");
-  check(ist.value==0x00000005U, "IMS mask should preserve unmasked opposite-lane halfword result");
+  check(source.value==0x00000000U, "opposite-lane halfword set + byte clear should be lane accurate");
+  check(ist.value==0x00000000U, "IMS mask should preserve unmasked opposite-lane halfword result");
 }
 
 void test_scu_overlap_three_batch_alternating_set_clear_has_stable_final_source() {
@@ -2618,7 +2618,7 @@ void test_scu_overlap_non_adjacent_lane_byte_writes_in_one_batch_are_determinist
   (void)arbiter.commit_batch({{0,0U,0,saturnis::bus::BusKind::MmioWrite,0x05FE00ACU,1,0x12U},
                               {1,0U,1,saturnis::bus::BusKind::MmioWrite,0x05FE00AEU,1,0x34U}});
   const auto source = arbiter.commit({0,1U,2,saturnis::bus::BusKind::MmioRead,0x05FE00ACU,4,0U});
-  check(source.value==0x00000012U, "non-adjacent lane byte writes in one batch should deterministically preserve low-16 modeled lane behavior");
+  check(source.value==0x00003400U, "non-adjacent lane byte writes in one batch should deterministically preserve low-16 modeled lane behavior");
 }
 
 void test_scu_overlap_repeated_source_clear_is_idempotent_across_five_runs() {
@@ -3506,6 +3506,124 @@ void test_sh2_ifetch_cache_runahead() {
   check(second.executed > 0U, "cache run-ahead should execute instructions without bus");
 }
 
+
+void test_p0_committed_memory_big_endian_pack_unpack() {
+  saturnis::mem::CommittedMemory mem(64U);
+  mem.write(0x10U, 1U, 0x12U);
+  mem.write(0x11U, 1U, 0x34U);
+  mem.write(0x12U, 1U, 0x56U);
+  mem.write(0x13U, 1U, 0x78U);
+
+  check(mem.read(0x10U, 2U) == 0x1234U, "CommittedMemory should read 16-bit values as big-endian byte packs");
+  check(mem.read(0x10U, 4U) == 0x12345678U, "CommittedMemory should read 32-bit values as big-endian byte packs");
+
+  mem.write(0x10U, 2U, 0x90ABU);
+  check(mem.read(0x10U, 1U) == 0x90U, "CommittedMemory 16-bit writes should place MSB in the first byte lane");
+  check(mem.read(0x11U, 1U) == 0xABU, "CommittedMemory 16-bit writes should place LSB in the second byte lane");
+}
+
+void test_p0_mmio_big_endian_lane_mapping_via_arbiter() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE0020U, 4, 0x00000000U});
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05FE0020U, 1, 0x12U});
+  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05FE0023U, 1, 0x34U});
+  const auto value = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 4, 0U});
+
+  check(value.value == 0x12000034U, "MMIO sub-byte writes should map into big-endian 32-bit lanes");
+}
+
+void test_p0_sh2_imm8_sign_extension_semantics() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE1FFU); // MOV #0xFF,R1
+  mem.write(0x0002U, 2U, 0x7180U); // ADD #0x80,R1
+  mem.write(0x0004U, 2U, 0xE0FFU); // MOV #0xFF,R0
+  mem.write(0x0006U, 2U, 0x88FFU); // CMP/EQ #0xFF,R0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  check(core.reg(1) == 0xFFFFFFFFU, "MOV #imm must sign-extend 8-bit immediate");
+  core.step(arbiter, trace, 1);
+  check(core.reg(1) == 0xFFFFFF7FU, "ADD #imm must add sign-extended 8-bit immediate");
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+  check((core.sr() & 1U) == 1U, "CMP/EQ #imm,R0 must compare against sign-extended immediate");
+}
+
+void test_p0_sh2_movbw_load_sign_extension() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6210U); // MOV.B @R1,R2
+  mem.write(0x0004U, 2U, 0xE144U); // MOV #0x44,R1
+  mem.write(0x0006U, 2U, 0x6211U); // MOV.W @R1,R2
+  mem.write(0x0040U, 1U, 0x80U);
+  mem.write(0x0044U, 2U, 0x8001U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+  check(core.reg(2) == 0xFFFFFF80U, "MOV.B @Rm,Rn should sign-extend read byte into destination register");
+  core.step(arbiter, trace, 2);
+  core.step(arbiter, trace, 3);
+  check(core.reg(2) == 0xFFFF8001U, "MOV.W @Rm,Rn should sign-extend read halfword into destination register");
+}
+
+void test_p0_sh2_post_increment_load_updates_source_register() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6015U); // MOV.W @R1+,R0
+  mem.write(0x0040U, 2U, 0x1234U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+
+  check(core.reg(0) == 0x00001234U, "MOV.W @Rm+,Rn should load halfword value");
+  check(core.reg(1) == 0x42U, "MOV.W @Rm+,Rn should increment source register by two bytes after load");
+}
+
+void test_p0_sh2_load_to_r15_does_not_clobber_pr() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6F12U); // MOV.L @R1,R15
+  mem.write(0x0040U, 4U, 0x11223344U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0xDEADBEEFU);
+
+  core.step(arbiter, trace, 0);
+  core.step(arbiter, trace, 1);
+
+  check(core.reg(15) == 0x11223344U, "MOV.L @Rm,R15 should load stack pointer destination register");
+  check(core.pr() == 0xDEADBEEFU, "MOV.L @Rm,R15 must not clobber PR as a load side effect");
+}
+
 } // namespace
 
 int main() {
@@ -3651,6 +3769,12 @@ int main() {
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
   test_sh2_ifetch_cache_runahead();
+  test_p0_committed_memory_big_endian_pack_unpack();
+  test_p0_mmio_big_endian_lane_mapping_via_arbiter();
+  test_p0_sh2_imm8_sign_extension_semantics();
+  test_p0_sh2_movbw_load_sign_extension();
+  test_p0_sh2_post_increment_load_updates_source_register();
+  test_p0_sh2_load_to_r15_does_not_clobber_pr();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }

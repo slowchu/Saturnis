@@ -93,7 +93,8 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     set_t_flag(r_[n] == r_[m]);
     pc_ += 2U;
   } else if ((instr & 0xFF00U) == 0x8800U) {
-    const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
+    const std::int8_t imm8 = static_cast<std::int8_t>(instr & 0xFFU);
+    const std::int32_t imm = static_cast<std::int32_t>(imm8);
     set_t_flag(r_[0] == static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x2008U) {
@@ -103,12 +104,14 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
+    const std::int8_t imm8 = static_cast<std::int8_t>(instr & 0xFFU);
+    const std::int32_t imm = static_cast<std::int32_t>(imm8);
     write_reg(n, static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0x7000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    const std::int32_t imm = static_cast<std::int8_t>(instr & 0xFFU);
+    const std::int8_t imm8 = static_cast<std::int8_t>(instr & 0xFFU);
+    const std::int32_t imm = static_cast<std::int32_t>(imm8);
     write_reg(n, r_[n] + static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x300CU) {
@@ -300,6 +303,10 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     } else if (pending.kind == PendingMemOp::Kind::ReadByte) {
       const std::uint8_t byte = static_cast<std::uint8_t>(response.value & 0xFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
+    }
+
+    if (pending.post_inc_reg.has_value()) {
+      r_[*pending.post_inc_reg] += pending.post_inc_size;
     }
 
     if (pending_branch_target_.has_value()) {
