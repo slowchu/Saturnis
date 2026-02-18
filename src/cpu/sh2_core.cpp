@@ -294,21 +294,12 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       pc_ = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
-      if (pending.dst_reg == 15U) {
-        pr_ = r_[pending.dst_reg];
-      }
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
-      if (pending.dst_reg == 15U) {
-        pr_ = r_[pending.dst_reg];
-      }
     } else if (pending.kind == PendingMemOp::Kind::ReadByte) {
       const std::uint8_t byte = static_cast<std::uint8_t>(response.value & 0xFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
-      if (pending.dst_reg == 15U) {
-        pr_ = r_[pending.dst_reg];
-      }
     }
 
     if (pending_branch_target_.has_value()) {

@@ -13,6 +13,7 @@
 ## Addressing semantics
 
 - Physical address: `phys = vaddr & 0x1FFFFFFF`.
+- Memory accesses are modeled as SH-2 big-endian for committed RAM and cache line read/write assembly.
 - Uncached alias when `vaddr & 0x20000000`.
 - MMIO ranges are always uncached and strongly ordered by bus commit.
 

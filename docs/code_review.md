@@ -5,6 +5,8 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+- Addressed external code-review critical correctness findings: removed erroneous PR updates on SH-2 loads to R15 (`ReadByte`/`ReadWord`/`ReadLong`) and switched committed memory + tiny-cache multi-byte read/write semantics to big-endian ordering.
+- Added focused regression coverage for big-endian memory/cache byte layout and store-buffer overflow retention (no silent eviction beyond 16 queued stores).
 - Expanded BIOS trace fixture flow to append one deterministic DMA-routed MMIO write/read pair via `commit_dma`, and added fixture assertions that both DMA MMIO write/read commits are present.
 - Added focused commit-horizon fairness regression where CPU and DMA producers contend on the same MMIO address; test now pins DMA-first priority with immediate CPU follow-up visibility.
 - Completed a full-project review pass (bus/core/cpu/devices/tests/docs) and confirmed the current TODO ordering remains focused on highest-value next work: DMA trace/provenance completion and DMA-vs-CPU fairness before broader SMPC/VDP vertical slices.
