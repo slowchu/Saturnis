@@ -50,7 +50,8 @@ bool TinyCache::read(std::uint32_t phys, std::uint8_t size, std::uint32_t &out) 
   }
   out = 0;
   for (std::size_t i = 0; i < size; ++i) {
-    out = (out << 8U) | static_cast<std::uint32_t>(line.bytes[offset + i]);
+    const std::size_t shift = 8U * (static_cast<std::size_t>(size) - 1U - i);
+    out |= static_cast<std::uint32_t>(line.bytes[offset + i]) << shift;
   }
   return true;
 }
@@ -89,8 +90,8 @@ std::uint32_t CommittedMemory::read(std::uint32_t phys, std::uint8_t size) const
   }
   std::uint32_t out = 0;
   for (std::size_t i = 0; i < size; ++i) {
-    out = (out << 8U) |
-          static_cast<std::uint32_t>(bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()]);
+    const std::size_t shift = 8U * (static_cast<std::size_t>(size) - 1U - i);
+    out |= static_cast<std::uint32_t>(bytes_[phys + static_cast<std::uint32_t>(i)]) << shift;
   }
   return out;
 }
@@ -101,7 +102,7 @@ void CommittedMemory::write(std::uint32_t phys, std::uint8_t size, std::uint32_t
   }
   for (std::size_t i = 0; i < size; ++i) {
     const std::size_t shift = 8U * (static_cast<std::size_t>(size) - 1U - i);
-    bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()] = static_cast<std::uint8_t>((value >> shift) & 0xFFU);
+    bytes_[phys + static_cast<std::uint32_t>(i)] = static_cast<std::uint8_t>((value >> shift) & 0xFFU);
   }
 }
 
