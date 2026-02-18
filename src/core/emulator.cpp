@@ -329,6 +329,11 @@ std::string Emulator::run_bios_trace(const std::vector<std::uint8_t> &bios_image
     }
   }
 
+  // Deterministic DMA probe for BIOS fixture evolution: one MMIO write/read pair
+  // routed through the DMA producer path for stable trace coverage.
+  (void)arbiter.commit_dma({0, 0U, seq++, bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000031U});
+  (void)arbiter.commit_dma({0, 1U, seq++, bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+
   return trace.to_jsonl();
 }
 

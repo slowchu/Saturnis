@@ -5,6 +5,8 @@ Date: 2026-02-17 (challenge session update)
 ## Review summary
 
 ### Latest rolling batch updates
+- Expanded BIOS trace fixture flow to append one deterministic DMA-routed MMIO write/read pair via `commit_dma`, and added fixture assertions that both DMA MMIO write/read commits are present.
+- Added focused commit-horizon fairness regression where CPU and DMA producers contend on the same MMIO address; test now pins DMA-first priority with immediate CPU follow-up visibility.
 - Completed a full-project review pass (bus/core/cpu/devices/tests/docs) and confirmed the current TODO ordering remains focused on highest-value next work: DMA trace/provenance completion and DMA-vs-CPU fairness before broader SMPC/VDP vertical slices.
 - Added deterministic first DMA MMIO commit timing/value tuple assertions and introduced explicit trace provenance fields (`owner`, `tag`) for future DMA/SCU arbitration analysis.
 - Converted the DMA trace-regression TODO scaffold into an executable deterministic DMA bus-op path test using `BusArbiter::commit_dma` write+readback runs.

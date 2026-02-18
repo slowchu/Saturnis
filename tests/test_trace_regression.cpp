@@ -388,6 +388,8 @@ int main() {
   const std::size_t fixture_mmio_writes = count_occurrences(bios_fixture, R"("kind":"MMIO_WRITE")");
   const std::size_t fixture_barrier = count_occurrences(bios_fixture, R"("kind":"BARRIER")");
   const std::size_t fixture_dma_tagged = count_occurrences(bios_fixture, R"("src":"DMA")");
+  const std::size_t fixture_dma_mmio_writes = count_occurrences(bios_fixture, R"("cpu":-1,"kind":"MMIO_WRITE")");
+  const std::size_t fixture_dma_mmio_reads = count_occurrences(bios_fixture, R"("cpu":-1,"kind":"MMIO_READ")");
   for (int run = 0; run < 5; ++run) {
     const auto bios_trace = emu.run_bios_trace(bios_image, 32U);
     if (count_occurrences(bios_trace, R"("kind":"MMIO_READ")") != fixture_mmio_reads ||
@@ -397,6 +399,10 @@ int main() {
       std::cerr << "bios MMIO/BARRIER/DMA counts changed on run " << run << '\n';
       return 1;
     }
+  }
+  if (fixture_dma_mmio_writes == 0U || fixture_dma_mmio_reads == 0U) {
+    std::cerr << "bios fixture missing deterministic DMA MMIO write/read pair\n";
+    return 1;
   }
 
   std::uint32_t dma_baseline_value = 0U;

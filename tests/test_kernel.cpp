@@ -3116,6 +3116,45 @@ void test_commit_horizon_four_alternating_reversals_on_both_cpus_before_converge
   check(pending.empty(), "quad-reversal phase7 should converge deterministically");
 }
 
+
+void test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address() {
+  constexpr std::uint32_t kAddr = 0x05FE0028U;
+  constexpr std::uint32_t kCpuValue = 0x00012345U;
+  constexpr std::uint32_t kDmaValue = 0x00034567U;
+
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    saturnis::bus::BusOp dma_write{0, 2U, 1, saturnis::bus::BusKind::MmioWrite, kAddr, 4, kDmaValue};
+    dma_write.cpu_id = -1;
+    dma_write.producer = saturnis::bus::BusProducer::Dma;
+
+    std::vector<saturnis::bus::BusOp> pending{{0, 2U, 0, saturnis::bus::BusKind::MmioWrite, kAddr, 4, kCpuValue},
+                                              dma_write,
+                                              {0, 3U, 2, saturnis::bus::BusKind::MmioRead, kAddr, 4, 0U}};
+
+    arbiter.update_progress(0, 10U);
+    arbiter.update_progress(1, 10U);
+    const auto committed = arbiter.commit_pending(pending);
+
+    check(pending.empty(), "CPU/DMA contention sequence should fully drain once horizon opens");
+    check(committed.size() == 3U, "CPU/DMA contention sequence should commit all queued MMIO operations");
+    check(committed[0].op.cpu_id == -1, "DMA should win equal-time MMIO contention by deterministic priority");
+    check(committed[1].op.cpu_id == 0, "CPU MMIO op should still commit immediately after DMA winner");
+    check(committed[2].response.value == kCpuValue,
+          "CPU MMIO write should deterministically become visible after DMA-first contention ordering");
+
+    const auto json = trace.to_jsonl();
+    check(json.find(R"("cpu":-1,"kind":"MMIO_WRITE","phys":100532264)") != std::string::npos,
+          "CPU/DMA fairness regression trace should include the DMA MMIO write checkpoint");
+    check(json.find(R"("cpu":0,"kind":"MMIO_WRITE","phys":100532264)") != std::string::npos,
+          "CPU/DMA fairness regression trace should include the CPU MMIO write checkpoint");
+  }
+}
+
 void test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically() {
   std::uint32_t baseline = 0U;
   std::string baseline_trace;
@@ -3506,6 +3545,7 @@ int main() {
   test_sh2_same_addr_overwrite_with_six_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
+  test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
