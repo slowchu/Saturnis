@@ -149,6 +149,19 @@ int main() {
     return 1;
   }
 
+  // Multithread liveness/determinism stress: completion + byte-identical parity.
+  for (int run = 0; run < 120; ++run) {
+    const auto stressed_mt = emu.run_dual_demo_trace_multithread();
+    if (stressed_mt.empty()) {
+      std::cerr << "multithread liveness stress produced empty trace on run " << run << '\n';
+      return 1;
+    }
+    if (stressed_mt != single_a) {
+      std::cerr << "multithread liveness stress trace parity mismatch on run " << run << '\n';
+      return 1;
+    }
+  }
+
   // Tier A (hard determinism): byte-for-byte trace identity checks across runs and ST/MT modes.
 
   if (!trace_contains_checkpoint(single_a, R"(TRACE {"version":1})")) {

@@ -117,6 +117,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
   auto producer = [](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
                      Mailbox<core::Tick> &progress, std::atomic<bool> &done) {
     std::optional<cpu::PendingBusOp> waiting;
+    std::uint32_t idle_spins = 0U;
     while (true) {
       if (!waiting && !cpu.done()) {
         waiting = cpu.produce();
@@ -140,7 +141,11 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
         continue;
       }
 
-      std::this_thread::yield();
+      static constexpr std::uint32_t kProducerYieldInterval = 32U;
+      ++idle_spins;
+      if ((idle_spins % kProducerYieldInterval) == 0U) {
+        std::this_thread::yield();
+      }
       (void)cpu_id;
     }
   };
@@ -150,6 +155,8 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
 
   std::optional<cpu::PendingBusOp> p0;
   std::optional<cpu::PendingBusOp> p1;
+  std::uint32_t wait_spins = 0U;
+  std::uint32_t loop_spins = 0U;
 
   while (true) {
     if (!p0) {
@@ -188,7 +195,11 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
     }
 
     if ((p0 && !p1 && !done1.load()) || (p1 && !p0 && !done0.load())) {
-      std::this_thread::yield();
+      static constexpr std::uint32_t kCoordinatorYieldInterval = 16U;
+      ++wait_spins;
+      if ((wait_spins % kCoordinatorYieldInterval) == 0U) {
+        std::this_thread::yield();
+      }
       continue;
     }
 
@@ -211,7 +222,11 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       break;
     }
 
-    std::this_thread::yield();
+    static constexpr std::uint32_t kLoopYieldInterval = 8U;
+    ++loop_spins;
+    if ((loop_spins % kLoopYieldInterval) == 0U) {
+      std::this_thread::yield();
+    }
   }
 
   t0.join();
