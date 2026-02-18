@@ -3604,7 +3604,7 @@ void test_p0_sh2_post_increment_load_updates_source_register() {
 }
 
 
-void test_p0_sh2_post_increment_self_load_uses_address_update_not_loaded_value() {
+void test_p0_sh2_post_increment_self_load_skips_increment_when_m_equals_n() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -3612,7 +3612,7 @@ void test_p0_sh2_post_increment_self_load_uses_address_update_not_loaded_value()
 
   mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
   mem.write(0x0002U, 2U, 0x6115U); // MOV.W @R1+,R1
-  mem.write(0x0040U, 2U, 0x0000U);
+  mem.write(0x0040U, 2U, 0x8001U);
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
@@ -3620,8 +3620,8 @@ void test_p0_sh2_post_increment_self_load_uses_address_update_not_loaded_value()
   core.step(arbiter, trace, 0);
   core.step(arbiter, trace, 1);
 
-  check(core.reg(1) == 0x42U,
-        "MOV.W @R1+,R1 should apply post-increment from pre-load address, not increment loaded value");
+  check(core.reg(1) == 0xFFFF8001U,
+        "MOV.W @R1+,R1 should load sign-extended value and skip post-increment when m == n");
 }
 
 void test_p0_sh2_load_to_r15_does_not_clobber_pr() {
@@ -3795,7 +3795,7 @@ int main() {
   test_p0_sh2_imm8_sign_extension_semantics();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();
-  test_p0_sh2_post_increment_self_load_uses_address_update_not_loaded_value();
+  test_p0_sh2_post_increment_self_load_skips_increment_when_m_equals_n();
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
   std::cout << "saturnis kernel tests passed\n";
   return 0;

@@ -305,13 +305,8 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
     }
 
-    if (pending.post_inc_reg.has_value()) {
-      const auto post_inc_reg = *pending.post_inc_reg;
-      if (post_inc_reg == pending.dst_reg) {
-        r_[post_inc_reg] = pending.post_inc_base_before + pending.post_inc_size;
-      } else {
-        r_[post_inc_reg] += pending.post_inc_size;
-      }
+    if (pending.post_inc_reg.has_value() && *pending.post_inc_reg != pending.dst_reg) {
+      r_[*pending.post_inc_reg] += pending.post_inc_size;
     }
 
     if (pending_branch_target_.has_value()) {
