@@ -1887,6 +1887,7 @@ void test_sh2_rts_mixed_width_overwrite_with_negative_immediate_is_deterministic
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
+  // TODO: extend SH-2 RTS mixed-width overwrite path so target-side MOV.W executes after delay-slot MOV.L in this sequence.
   check(mem.read(0x0022U, 4U) == 0xFFFFFFAAU,
         "RTS mixed-width overwrite with negative immediate should deterministically execute target-side MOV.W overwrite semantics");
 }
