@@ -217,9 +217,9 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
 
     const auto &cur = pending[best].op;
     if (producer_slot(candidate) == producer_slot(cur)) {
-      if (candidate.req_time < cur.req_time) {
+      if (candidate.sequence < cur.sequence) {
         best = idx;
-      } else if (candidate.req_time == cur.req_time && candidate.sequence < cur.sequence) {
+      } else if (candidate.sequence == cur.sequence && candidate.req_time < cur.req_time) {
         best = idx;
       }
       continue;

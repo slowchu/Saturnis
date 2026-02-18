@@ -94,6 +94,7 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   pending_exception_vector_.reset();
   exception_return_pc_ = 0;
   exception_return_sr_ = 0;
+  has_exception_return_context_ = false;
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
@@ -187,9 +188,15 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = pr_;
     pc_ += 2U;
   } else if (instr == 0x002BU) {
-    trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, exception_return_pc_, "SYNTHETIC_RTE"});
-    sr_ = exception_return_sr_;
-    pc_ = exception_return_pc_;
+    if (!has_exception_return_context_) {
+      trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, 0U, "SYNTHETIC_RTE_WITHOUT_CONTEXT"});
+      pc_ += 2U;
+    } else {
+      trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, exception_return_pc_, "SYNTHETIC_RTE"});
+      sr_ = exception_return_sr_;
+      pc_ = exception_return_pc_;
+      has_exception_return_context_ = false;
+    }
   } else {
     trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, static_cast<std::uint32_t>(instr), "ILLEGAL_OP"});
     pc_ += 2U;
@@ -322,6 +329,7 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     if (pending.kind == PendingMemOp::Kind::ExceptionVectorRead) {
       exception_return_pc_ = u32_add(pc_, 2U);
       exception_return_sr_ = sr_;
+      has_exception_return_context_ = true;
       pc_ = response.value;
       t_ += 1;
       ++executed_;
@@ -355,7 +363,13 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
   }
 
   if (!response.line_data.empty()) {
-    icache_.fill_line(response.line_base, response.line_data);
+    const std::uint32_t phys = mem::to_phys(pc_);
+    const std::uint32_t expected_line_base = phys / static_cast<std::uint32_t>(icache_.line_size());
+    if (response.line_base != expected_line_base || response.line_data.size() != icache_.line_size()) {
+      trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, phys, "CACHE_FILL_MISMATCH"});
+    } else {
+      icache_.fill_line(response.line_base, response.line_data);
+    }
   }
   const std::uint16_t instr = static_cast<std::uint16_t>(response.value & 0xFFFFU);
   execute_instruction(instr, trace, true);

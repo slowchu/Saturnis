@@ -3874,6 +3874,48 @@ void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
         "synthetic RTE return path must be explicitly trace-labeled");
 }
 
+void test_sh2_synthetic_rte_without_context_faults_loudly() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x002BU); // RTE without prior synthetic exception entry
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+
+  check(core.pc() == 0x0002U,
+        "RTE without synthetic exception context should fail loud and advance deterministically");
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"SYNTHETIC_RTE_WITHOUT_CONTEXT\"") != std::string::npos,
+        "RTE without synthetic exception context should emit explicit deterministic fault marker");
+}
+
+void test_sh2_ifetch_cache_fill_mismatch_faults_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  saturnis::bus::BusResponse bad{};
+  bad.value = 0x0009U; // NOP
+  bad.stall = 0U;
+  bad.line_base = 1U;
+  bad.line_data.assign(8U, 0U); // wrong size for icache line
+  core.apply_ifetch_and_step(bad, trace);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"CACHE_FILL_MISMATCH\"") != std::string::npos,
+        "IFETCH cache-fill mismatch should emit deterministic CACHE_FILL_MISMATCH fault");
+  check(core.pc() == 0x0002U,
+        "IFETCH cache-fill mismatch should still retire response instruction deterministically");
+}
+
 void test_p0_sh2_imm8_sign_extension_semantics() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4143,6 +4185,8 @@ int main() {
   test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id();
   test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
   test_sh2_synthetic_exception_entry_and_rte_roundtrip();
+  test_sh2_synthetic_rte_without_context_faults_loudly();
+  test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();

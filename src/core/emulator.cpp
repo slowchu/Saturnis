@@ -140,7 +140,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
 
       ScriptResponse response;
       if (resp.try_pop(response)) {
-        cpu.apply_response(response.script_index, response.response, response.producer_token, &trace);
+        cpu.apply_response(response.script_index, response.response, response.producer_token, nullptr);
         progress.push(cpu.local_time());
         waiting.reset();
         continue;
