@@ -4,6 +4,17 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-18 focused follow-up review (VDP1 command/completion vertical slice)
+- Performed a focused review on VDP1 source-event scaffolding, trace regression parity, and deterministic single-thread/multithread stress behavior.
+- Completed the remaining VDP1 TODOs by introducing a minimal command/completion-producing path and pinning status/IST timing tuples across ST/MT stress fixtures.
+- Confirmed deterministic invariants still hold in the reviewed paths:
+  1. Command submission and completion are explicit MMIO transitions (no wall-clock dependence).
+  2. Source-event counter/IRQ/pending transitions remain deterministic and trace-visible.
+  3. ST/MT scripted stress traces for the new VDP1 path are byte-identical in repeated runs.
+- Residual risks after this pass:
+  1. VDP1 command/completion path is still synthetic and not mapped to real draw-list execution semantics.
+  2. Event-counter wrap/saturation policy is currently implementation-defined and should be explicitly documented/tested next.
+
 ### 2026-02-18 focused follow-up review (multithread bounded waiting + VDP1 source event path)
 - Performed another focused pass over scripted multithread coordination, VDP1/SCU interrupt scaffolding, bus validation details, and deterministic trace regressions.
 - Completed previously open high-value follow-ups:

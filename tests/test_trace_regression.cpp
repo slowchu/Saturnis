@@ -252,6 +252,42 @@ int main() {
     return 1;
   }
 
+  const auto vdp1_stress_single = emu.run_vdp1_source_event_stress_trace();
+  if (vdp1_stress_single.empty()) {
+    std::cerr << "VDP1 source-event stress single-thread trace is empty\n";
+    return 1;
+  }
+
+  const auto vdp1_stress_mt_baseline = emu.run_vdp1_source_event_stress_trace_multithread();
+  if (vdp1_stress_mt_baseline != vdp1_stress_single) {
+    std::cerr << "VDP1 source-event stress single-thread and multithread traces diverged\n";
+    return 1;
+  }
+
+  const auto vdp1_stress_status_line =
+      nth_line_containing(vdp1_stress_single, R"("kind":"MMIO_READ","phys":97517716)", 2U);
+  const auto vdp1_stress_ist_line =
+      nth_line_containing(vdp1_stress_single, R"("kind":"MMIO_READ","phys":100532388)", 2U);
+  if (vdp1_stress_status_line.empty() || vdp1_stress_ist_line.empty()) {
+    std::cerr << "VDP1 source-event stress trace missing status/IST timing tuple lines\n";
+    return 1;
+  }
+
+  for (int run = 0; run < 32; ++run) {
+    const auto vdp1_stress_mt = emu.run_vdp1_source_event_stress_trace_multithread();
+    if (vdp1_stress_mt != vdp1_stress_mt_baseline) {
+      std::cerr << "VDP1 source-event stress multithread trace mismatch on run " << run << '\n';
+      return 1;
+    }
+
+    const auto status_line_mt = nth_line_containing(vdp1_stress_mt, R"("kind":"MMIO_READ","phys":97517716)", 2U);
+    const auto ist_line_mt = nth_line_containing(vdp1_stress_mt, R"("kind":"MMIO_READ","phys":100532388)", 2U);
+    if (status_line_mt != vdp1_stress_status_line || ist_line_mt != vdp1_stress_ist_line) {
+      std::cerr << "VDP1 source-event stress status/IST timing tuple drifted on run " << run << '\n';
+      return 1;
+    }
+  }
+
   // Tier A (hard determinism): byte-for-byte trace identity checks across runs and ST/MT modes.
 
   if (!trace_contains_checkpoint(single_a, R"(TRACE {"version":1})")) {

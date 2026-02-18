@@ -901,6 +901,40 @@ void test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs() {
   }
 }
 
+void test_vdp1_source_event_command_completion_path_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00098U, 4U, 0x34U});
+  const auto busy_status = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check((busy_status.value & 0x1U) != 0U,
+        "VDP1 command status should set deterministic busy bit after command submission");
+  check(((busy_status.value >> 16U) & 0xFFU) == 0x34U,
+        "VDP1 command status should expose deterministically latched command byte");
+
+  (void)arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05D000A0U, 4U, 0x1U});
+  const auto done_status = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check((done_status.value & 0x1U) == 0U,
+        "VDP1 command status should clear deterministic busy bit after completion pulse");
+  check(((done_status.value >> 8U) & 0xFFU) == 1U,
+        "VDP1 command status should increment deterministic completion counter");
+
+  const auto event_status = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((event_status.value & 0x1FFU) == 0x101U,
+        "VDP1 command completion should deterministically produce source-event status counter/IRQ bits");
+
+  const auto asserted_ist = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  check((asserted_ist.value & 0x00000020U) != 0U,
+        "VDP1 command completion should assert deterministic SCU source pending bit");
+
+  (void)arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioWrite, 0x05D000A0U, 4U, 0x1U});
+  const auto status_after_extra_complete = arbiter.commit({0, 7U, 7U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check(status_after_extra_complete.value == event_status.value,
+        "VDP1 completion pulse without pending command should leave deterministic status unchanged");
+}
+
 void test_vdp1_source_event_status_register_is_read_only_and_lane_stable() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4276,6 +4310,7 @@ int main() {
   test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically();
   test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs();
   test_vdp1_source_event_status_register_is_read_only_and_lane_stable();
+  test_vdp1_source_event_command_completion_path_is_deterministic();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();

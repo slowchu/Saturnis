@@ -287,6 +287,23 @@ std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> contention_str
   return {cpu0_ops, cpu1_ops};
 }
 
+std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> vdp1_source_event_stress_scripts() {
+  std::vector<cpu::ScriptOp> cpu0_ops;
+  std::vector<cpu::ScriptOp> cpu1_ops;
+
+  for (std::uint32_t cmd = 1U; cmd <= 6U; ++cmd) {
+    cpu0_ops.push_back({cpu::ScriptOpKind::Write, 0x05D00098U, 4U, cmd, 0U});
+    cpu0_ops.push_back({cpu::ScriptOpKind::Write, 0x05D000A0U, 4U, 1U, 0U});
+    cpu0_ops.push_back({cpu::ScriptOpKind::Read, 0x05D00094U, 4U, 0U, 0U});
+
+    cpu1_ops.push_back({cpu::ScriptOpKind::Read, 0x05FE00A4U, 4U, 0U, 0U});
+    cpu1_ops.push_back({cpu::ScriptOpKind::Write, 0x05FE00A8U, 4U, 0x00000020U, 0U});
+    cpu1_ops.push_back({cpu::ScriptOpKind::Read, 0x05D0009CU, 4U, 0U, 0U});
+  }
+
+  return {cpu0_ops, cpu1_ops};
+}
+
 std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> dual_demo_scripts() {
   std::vector<cpu::ScriptOp> cpu0_ops{{cpu::ScriptOpKind::Write, 0x00001000U, 4, 0xDEADBEEFU, 0},
                                       {cpu::ScriptOpKind::Compute, 0, 0, 0, 3},
@@ -351,6 +368,34 @@ std::string Emulator::run_contention_stress_trace_multithread() {
   bus::BusArbiter arbiter(mem, dev, trace);
 
   const auto [cpu0_ops, cpu1_ops] = contention_stress_scripts();
+  cpu::ScriptedCPU cpu0(0, cpu0_ops);
+  cpu::ScriptedCPU cpu1(1, cpu1_ops);
+  run_scripted_pair_multithread(cpu0, cpu1, arbiter, trace);
+
+  return trace.to_jsonl();
+}
+
+std::string Emulator::run_vdp1_source_event_stress_trace() {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = vdp1_source_event_stress_scripts();
+  cpu::ScriptedCPU cpu0(0, cpu0_ops);
+  cpu::ScriptedCPU cpu1(1, cpu1_ops);
+  run_scripted_pair(cpu0, cpu1, arbiter, trace);
+
+  return trace.to_jsonl();
+}
+
+std::string Emulator::run_vdp1_source_event_stress_trace_multithread() {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = vdp1_source_event_stress_scripts();
   cpu::ScriptedCPU cpu0(0, cpu0_ops);
   cpu::ScriptedCPU cpu1(1, cpu1_ops);
   run_scripted_pair_multithread(cpu0, cpu1, arbiter, trace);
