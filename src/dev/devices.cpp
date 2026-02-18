@@ -21,6 +21,11 @@ constexpr std::uint32_t kVdp2TvmdAddr = 0x05F80000U;
 constexpr std::uint32_t kVdp2TvstatAddr = 0x05F80004U;
 constexpr std::uint32_t kScspMcierAddr = 0x05C00000U;
 constexpr std::uint32_t kVdp1ScuIrqBridgeAddr = 0x05D0008CU;
+constexpr std::uint32_t kVdp1EventTriggerAddr = 0x05D00090U;
+constexpr std::uint32_t kVdp1EventStatusAddr = 0x05D00094U;
+constexpr std::uint32_t kVdp1CommandAddr = 0x05D00098U;
+constexpr std::uint32_t kVdp1CommandStatusAddr = 0x05D0009CU;
+constexpr std::uint32_t kVdp1CommandCompleteAddr = 0x05D000A0U;
 constexpr std::uint32_t kVdp1ScuIrqMask = 0x00000020U;
 
 struct MmioRegisterSpec {
@@ -75,6 +80,21 @@ struct MmioRegisterSpec {
     return MmioRegisterSpec{0x00000000U, 0x000007FFU};
   }
   if (word_addr == kVdp1ScuIrqBridgeAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000001U};
+  }
+  if (word_addr == kVdp1EventTriggerAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000001U};
+  }
+  if (word_addr == kVdp1EventStatusAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000000U};
+  }
+  if (word_addr == kVdp1CommandAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x000000FFU};
+  }
+  if (word_addr == kVdp1CommandStatusAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000000U};
+  }
+  if (word_addr == kVdp1CommandCompleteAddr) {
     return MmioRegisterSpec{0x00000000U, 0x00000001U};
   }
   return std::nullopt;
@@ -134,6 +154,14 @@ std::uint32_t DeviceHub::read(std::uint64_t, int, std::uint32_t addr, std::uint8
     value = smpc_command_result_;
   } else if (word_addr == kVdp1ScuIrqBridgeAddr) {
     value = vdp1_irq_level_ & 0x1U;
+  } else if (word_addr == kVdp1EventStatusAddr) {
+    value = (vdp1_event_counter_ & 0xFFU) | ((vdp1_irq_level_ & 0x1U) << 8U);
+  } else if (word_addr == kVdp1CommandAddr) {
+    value = vdp1_last_command_ & 0xFFU;
+  } else if (word_addr == kVdp1CommandStatusAddr) {
+    const std::uint32_t busy = vdp1_command_pending_ ? 1U : 0U;
+    const std::uint32_t completed = (vdp1_completed_counter_ & 0xFFU) << 8U;
+    value = busy | completed | ((vdp1_last_command_ & 0xFFU) << 16U);
   } else {
     const auto spec = register_spec(word_addr);
     const std::uint32_t persisted_value = read_persisted_or_zero(mmio_regs_, word_addr);
@@ -193,6 +221,34 @@ void DeviceHub::write(std::uint64_t t, int cpu, std::uint32_t addr, std::uint8_t
       scu_interrupt_source_pending_ |= kVdp1ScuIrqMask;
     } else {
       scu_interrupt_source_pending_ &= ~kVdp1ScuIrqMask;
+    }
+    return;
+  }
+
+  const auto signal_vdp1_completion = [this]() {
+    ++vdp1_event_counter_;
+    ++vdp1_completed_counter_;
+    vdp1_irq_level_ = 1U;
+    scu_interrupt_source_pending_ |= kVdp1ScuIrqMask;
+    vdp1_command_pending_ = false;
+  };
+
+  if (word_addr == kVdp1CommandAddr) {
+    vdp1_last_command_ = write_bits & 0xFFU;
+    vdp1_command_pending_ = (vdp1_last_command_ != 0U);
+    return;
+  }
+
+  if (word_addr == kVdp1EventTriggerAddr) {
+    if ((write_bits & 0x1U) != 0U) {
+      signal_vdp1_completion();
+    }
+    return;
+  }
+
+  if (word_addr == kVdp1CommandCompleteAddr) {
+    if ((write_bits & 0x1U) != 0U && vdp1_command_pending_) {
+      signal_vdp1_completion();
     }
     return;
   }

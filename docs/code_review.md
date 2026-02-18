@@ -4,6 +4,35 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-18 completion review (new 16-task batch closeout)
+- Completed the 16-task batch with focused deterministic coverage additions around VDP1 command-status lane semantics, command-completion/SCU-ack behavior, alternating ownership stress parity (CPU0-owner and CPU1-owner fixtures), enqueue-contract regression hardening, and counter-wrap policy assertions.
+- Added/extended deterministic trace checks for command-completion metadata (`src`/`owner`/`tag`) and first-32 commit-prefix stability under repeated multithread runs.
+- Added targeted robustness tests for store-buffer bounded retirement stress and encoded INVALID_BUS_OP detail-class payload checks.
+- Residual risks after this closeout pass:
+  1. VDP1 command/completion behavior remains intentionally synthetic and not cycle/hardware-accurate.
+  2. TinyCache mismatch parity in true producer-threaded execution still relies on existing deterministic coordinator behavior and should be revisited when broader cache producer paths are added.
+
+### 2026-02-18 focused follow-up review (VDP1 command/completion vertical slice)
+- Performed a focused review on VDP1 source-event scaffolding, trace regression parity, and deterministic single-thread/multithread stress behavior.
+- Completed the remaining VDP1 TODOs by introducing a minimal command/completion-producing path and pinning status/IST timing tuples across ST/MT stress fixtures.
+- Confirmed deterministic invariants still hold in the reviewed paths:
+  1. Command submission and completion are explicit MMIO transitions (no wall-clock dependence).
+  2. Source-event counter/IRQ/pending transitions remain deterministic and trace-visible.
+  3. ST/MT scripted stress traces for the new VDP1 path are byte-identical in repeated runs.
+- Residual risks after this pass:
+  1. VDP1 command/completion path is still synthetic and not mapped to real draw-list execution semantics.
+  2. Event-counter wrap/saturation policy is currently implementation-defined and should be explicitly documented/tested next.
+
+### 2026-02-18 focused follow-up review (multithread bounded waiting + VDP1 source event path)
+- Performed another focused pass over scripted multithread coordination, VDP1/SCU interrupt scaffolding, bus validation details, and deterministic trace regressions.
+- Completed previously open high-value follow-ups:
+  1. Replaced pure yield-based hot-loop behavior in `run_scripted_pair_multithread` with deterministic bounded waiting via an explicit signal hub (`condition_variable` wake-on-progress model).
+  2. Expanded VDP1->SCU handoff from bridge-only toggling to a first source-driven event trigger path with deterministic event counter/status visibility.
+  3. Added repeated-run trace-level assertions for VDP1 handoff commits, pinning `src`/`owner`/`tag` fields and stable timing-line tuples.
+- Current top residual risks after this pass:
+  1. Scripted multithread coordination still relies on host thread scheduling for wake timing (behavior remains deterministic under current arbitration rules/tests, but throughput profile is host-dependent).
+  2. VDP1 interrupt-source model remains synthetic (event trigger scaffold), not yet mapped to real rendering/command completion sources.
+
 ### 2026-02-18 focused review (post-SMPC/VDP1 scaffold)
 - Performed a focused pass over bus arbitration, SH-2 execute/load paths, device MMIO scaffolds, trace regressions, and TODO hygiene.
 - Confirmed deterministic invariants still hold under current test matrix (single-thread and multithread trace parity loops remain stable in CI loop).
