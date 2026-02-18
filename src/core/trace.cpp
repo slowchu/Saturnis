@@ -4,6 +4,10 @@
 #include <sstream>
 
 namespace saturnis::core {
+namespace {
+constexpr std::uint32_t kTraceVersion = 1U;
+}
+
 
 void TraceLog::add_commit(const CommitEvent &event) {
   std::ostringstream ss;
@@ -35,6 +39,16 @@ void TraceLog::add_state(const CpuSnapshot &state) {
   lines_.push_back(ss.str());
 }
 
+
+void TraceLog::add_fault(const FaultEvent &fault) {
+  std::ostringstream ss;
+  ss << "FAULT "
+     << "{\"t\":" << fault.t << ",\"cpu\":" << fault.cpu
+     << ",\"pc\":" << fault.pc << ",\"detail\":" << fault.detail
+     << ",\"reason\":\"" << fault.reason << "\"}";
+  lines_.push_back(ss.str());
+}
+
 std::string TraceLog::to_jsonl() const {
   std::ostringstream ss;
   ss.imbue(std::locale::classic());
@@ -43,6 +57,7 @@ std::string TraceLog::to_jsonl() const {
 }
 
 void TraceLog::write_jsonl(std::ostream &os) const {
+  os << "TRACE {\"version\":" << kTraceVersion << "}\n";
   for (const auto &line : lines_) {
     os << line << '\n';
   }

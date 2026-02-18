@@ -5,6 +5,23 @@ namespace {
 
 constexpr std::uint32_t kSrTBit = 0x00000001U;
 
+[[nodiscard]] constexpr std::uint32_t u32_add(std::uint32_t a, std::uint32_t b) {
+  return a + b;
+}
+
+[[nodiscard]] constexpr std::uint32_t u32_sub(std::uint32_t a, std::uint32_t b) {
+  return a - b;
+}
+
+[[nodiscard]] constexpr std::uint32_t u32_add_i32(std::uint32_t a, std::int32_t b) {
+  return b >= 0 ? u32_add(a, static_cast<std::uint32_t>(b))
+                : u32_sub(a, static_cast<std::uint32_t>(-static_cast<std::int64_t>(b)));
+}
+
+[[nodiscard]] constexpr std::int32_t signext8(std::uint32_t x) {
+  return static_cast<std::int32_t>(static_cast<std::int8_t>(x & 0xFFU));
+}
+
 [[nodiscard]] bool is_movl_mem_to_reg(std::uint16_t instr, std::uint32_t &n, std::uint32_t &m) {
   if ((instr & 0xF00FU) != 0x6002U) {
     return false;
@@ -93,8 +110,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     set_t_flag(r_[n] == r_[m]);
     pc_ += 2U;
   } else if ((instr & 0xFF00U) == 0x8800U) {
-    const std::int8_t imm8 = static_cast<std::int8_t>(instr & 0xFFU);
-    const std::int32_t imm = static_cast<std::int32_t>(imm8);
+    const std::int32_t imm = signext8(instr);
     set_t_flag(r_[0] == static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x2008U) {
@@ -104,20 +120,18 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xE000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    const std::int8_t imm8 = static_cast<std::int8_t>(instr & 0xFFU);
-    const std::int32_t imm = static_cast<std::int32_t>(imm8);
+    const std::int32_t imm = signext8(instr);
     write_reg(n, static_cast<std::uint32_t>(imm));
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0x7000U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    const std::int8_t imm8 = static_cast<std::int8_t>(instr & 0xFFU);
-    const std::int32_t imm = static_cast<std::int32_t>(imm8);
-    write_reg(n, r_[n] + static_cast<std::uint32_t>(imm));
+    const std::int32_t imm = signext8(instr);
+    write_reg(n, u32_add_i32(r_[n], imm));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x300CU) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
-    write_reg(n, r_[n] + r_[m]);
+    write_reg(n, u32_add(r_[n], r_[m]));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x6003U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
@@ -165,7 +179,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = pr_;
     pc_ += 2U;
   } else {
-    // Unknown opcode treated as NOP for vertical-slice robustness.
+    trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, static_cast<std::uint32_t>(instr), "ILLEGAL_OP"});
     pc_ += 2U;
   }
 
@@ -186,6 +200,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
 
 Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &trace, std::uint32_t runahead_budget) {
   Sh2ProduceResult out;
+
 
   if (pending_exception_vector_.has_value()) {
     const std::uint32_t vector_phys = mem::to_phys(static_cast<std::uint32_t>(*pending_exception_vector_) * 4U);
@@ -306,7 +321,7 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     }
 
     if (pending.post_inc_reg.has_value() && *pending.post_inc_reg != pending.dst_reg) {
-      r_[*pending.post_inc_reg] += pending.post_inc_size;
+      r_[*pending.post_inc_reg] = u32_add(r_[*pending.post_inc_reg], pending.post_inc_size);
     }
 
     if (pending_branch_target_.has_value()) {

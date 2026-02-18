@@ -3461,6 +3461,112 @@ void test_sh2_add_register_updates_destination() {
 }
 
 
+
+
+void test_sh2_illegal_opcode_faults_deterministically_without_silent_progress() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xFFFFU); // unsupported opcode in current subset
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0);
+  const auto pc_after_fault = core.pc();
+  core.step(arbiter, trace, 1);
+
+  check(pc_after_fault == 0x0002U && core.pc() == 0x0004U,
+        "illegal opcode should fault loudly yet continue deterministic forward progress without silent behavior");
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ILLEGAL_OP\"") != std::string::npos,
+        "illegal opcode should emit ILLEGAL_OP fault marker in trace");
+  check(json.find("\"detail\":65535") != std::string::npos,
+        "illegal opcode fault should record deterministic opcode detail");
+}
+
+void test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic() {
+#ifndef NDEBUG
+  // In debug builds monotonic contract violations are fail-fast assertions by design.
+  return;
+#else
+  saturnis::core::TraceLog trace_a;
+  saturnis::mem::CommittedMemory mem_a;
+  saturnis::dev::DeviceHub dev_a;
+  saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+  saturnis::core::TraceLog trace_b;
+  saturnis::mem::CommittedMemory mem_b;
+  saturnis::dev::DeviceHub dev_b;
+  saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+
+  (void)arbiter_a.commit({0, 10U, 0U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U});
+  const auto bad_a = arbiter_a.commit({0, 9U, 1U, saturnis::bus::BusKind::Read, 0x00001004U, 4U, 0U});
+
+  (void)arbiter_b.commit({0, 10U, 0U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U});
+  const auto bad_b = arbiter_b.commit({0, 9U, 1U, saturnis::bus::BusKind::Read, 0x00001004U, 4U, 0U});
+
+  check(bad_a.value == 0xBAD0BAD0U && bad_b.value == 0xBAD0BAD0U,
+        "non-monotonic producer req_time violation should produce deterministic fault response");
+  const auto ja = trace_a.to_jsonl();
+  const auto jb = trace_b.to_jsonl();
+  check(ja == jb,
+        "non-monotonic producer req_time violation should emit byte-identical fault traces across runs");
+  check(ja.find("\"reason\":\"NON_MONOTONIC_REQ_TIME\"") != std::string::npos,
+        "non-monotonic producer req_time violation should emit explicit contract fault marker");
+#endif
+}
+
+void test_sh2_add_immediate_wraps_without_signed_overflow_ub() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6312U); // MOV.L @R1,R3
+  mem.write(0x0004U, 2U, 0x7301U); // ADD #1,R3
+  mem.write(0x0040U, 4U, 0x7FFFFFFFU);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  for (int i = 0; i < 3; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+  check(core.reg(3) == 0x80000000U,
+        "ADD #imm should wrap in uint32_t space (0x7FFFFFFF + 1 -> 0x80000000) without signed-overflow UB");
+}
+
+void test_bus_arbiter_invalid_unaligned_long_access_is_deterministic() {
+#ifndef NDEBUG
+  // In debug builds invalid BusOps are fail-fast assertions by design.
+  return;
+#else
+  saturnis::core::TraceLog trace_a;
+  saturnis::mem::CommittedMemory mem_a;
+  saturnis::dev::DeviceHub dev_a;
+  saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+  saturnis::core::TraceLog trace_b;
+  saturnis::mem::CommittedMemory mem_b;
+  saturnis::dev::DeviceHub dev_b;
+  saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+
+  const saturnis::bus::BusOp invalid{0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05FE00A2U, 4U, 0U};
+  const auto resp_a = arbiter_a.commit(invalid);
+  const auto resp_b = arbiter_b.commit(invalid);
+  check(resp_a.value == 0xBAD0BAD0U && resp_b.value == 0xBAD0BAD0U,
+        "invalid unaligned MMIO long access should return deterministic error response payload");
+  check(resp_a.stall == resp_b.stall,
+        "invalid unaligned MMIO long access should have deterministic stall accounting");
+  check(trace_a.to_jsonl() == trace_b.to_jsonl(),
+        "invalid unaligned MMIO long access should emit byte-identical deterministic trace entries across runs");
+#endif
+}
+
 void test_sh2_mov_register_copies_source_to_destination() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3787,6 +3893,10 @@ int main() {
   test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
+  test_sh2_illegal_opcode_faults_deterministically_without_silent_progress();
+  test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic();
+  test_sh2_add_immediate_wraps_without_signed_overflow_ub();
+  test_bus_arbiter_invalid_unaligned_long_access_is_deterministic();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
   test_sh2_ifetch_cache_runahead();

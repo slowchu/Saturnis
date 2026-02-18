@@ -149,6 +149,26 @@ int main() {
     return 1;
   }
 
+  // Multithread liveness/determinism stress: completion + byte-identical parity.
+  for (int run = 0; run < 120; ++run) {
+    const auto stressed_mt = emu.run_dual_demo_trace_multithread();
+    if (stressed_mt.empty()) {
+      std::cerr << "multithread liveness stress produced empty trace on run " << run << '\n';
+      return 1;
+    }
+    if (stressed_mt != single_a) {
+      std::cerr << "multithread liveness stress trace parity mismatch on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  // Tier A (hard determinism): byte-for-byte trace identity checks across runs and ST/MT modes.
+
+  if (!trace_contains_checkpoint(single_a, R"(TRACE {"version":1})")) {
+    std::cerr << "trace header missing TRACE version contract\n";
+    return 1;
+  }
+
   const std::size_t single_ifetch = count_occurrences(single_a, R"("kind":"IFETCH")");
   const std::size_t single_read = count_occurrences(single_a, R"("kind":"READ")");
   const std::size_t single_write = count_occurrences(single_a, R"("kind":"WRITE")");
@@ -590,6 +610,12 @@ int main() {
       std::cerr << "bios first MMIO_READ ordering relative to IFETCH changed on run " << run << '\n';
       return 1;
     }
+  }
+
+  // Tier B (semantic checkpoints): architectural states and contract markers.
+  if (!trace_contains_checkpoint(bios_fixture, R"(TRACE {"version":1})")) {
+    std::cerr << "bios bring-up trace missing TRACE version contract\n";
+    return 1;
   }
 
   if (!trace_contains_checkpoint(bios_fixture, "\"cpu\":0,\"pc\":2,\"sr\":240,\"r\":[0,64") ||

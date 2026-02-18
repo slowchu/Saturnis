@@ -1,9 +1,48 @@
 #include "bus/bus_arbiter.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <optional>
 
 namespace saturnis::bus {
+
+
+[[nodiscard]] bool valid_bus_size(std::uint8_t size) {
+  return size == 1U || size == 2U || size == 4U;
+}
+
+[[nodiscard]] bool is_aligned(std::uint32_t addr, std::uint8_t size) {
+  if (size == 1U) {
+    return true;
+  }
+  return (addr % static_cast<std::uint32_t>(size)) == 0U;
+}
+
+[[nodiscard]] bool is_valid_bus_op(const BusOp &op) {
+  if (op.kind == BusKind::Barrier) {
+    return true;
+  }
+  if (!valid_bus_size(op.size)) {
+    return false;
+  }
+
+  // Keep current SH-2 RAM subset behavior (which includes existing unaligned RAM tests) while
+  // hardening externalized/observable bus operations.
+  const bool require_alignment = op.kind == BusKind::MmioRead || op.kind == BusKind::MmioWrite ||
+                                 op.kind == BusKind::IFetch || mem::is_mmio(op.phys_addr);
+  return !require_alignment || is_aligned(op.phys_addr, op.size);
+}
+
+
+[[nodiscard]] std::size_t producer_slot(const BusOp &op) {
+  if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
+    return 2U;
+  }
+  if (op.cpu_id == 1) {
+    return 1U;
+  }
+  return 0U;
+}
 
 PriorityClass DefaultArbitrationPolicy::priority_of(const BusOp &op) const {
   if (op.cpu_id < 0) {
@@ -52,6 +91,36 @@ core::Tick BusArbiter::contention_extra(const BusOp &op, bool had_tie) const {
 }
 
 BusResponse BusArbiter::execute_commit(const BusOp &op, bool had_tie) {
+  if (!is_valid_bus_op(op)) {
+#ifndef NDEBUG
+    assert(false && "invalid BusOp: size must be 1/2/4 and address must satisfy size alignment");
+#endif
+    const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
+    trace_.add_fault(core::FaultEvent{start, op.cpu_id, 0U,
+                                      static_cast<std::uint32_t>((op.phys_addr & 0xFFFFU) | (static_cast<std::uint32_t>(op.size) << 24U)),
+                                      "INVALID_BUS_OP"});
+    const core::Tick finish = start;
+    const core::Tick stall = finish - op.req_time;
+    constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
+    trace_.add_commit(core::CommitEvent{start, finish, op, stall, kInvalidBusOpValue, false});
+    return BusResponse{kInvalidBusOpValue, stall, start, finish, 0U, {}};
+  }
+
+  const auto slot = producer_slot(op);
+  if (producer_seen_[slot] && op.req_time < producer_last_req_time_[slot]) {
+#ifndef NDEBUG
+    assert(false && "producer req_time must be monotonic");
+#endif
+    const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
+    trace_.add_fault(core::FaultEvent{start, op.cpu_id, 0U, static_cast<std::uint32_t>(op.req_time & 0xFFFFFFFFU),
+                                      "NON_MONOTONIC_REQ_TIME"});
+    constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
+    trace_.add_commit(core::CommitEvent{start, start, op, 0U, kInvalidBusOpValue, false});
+    return BusResponse{kInvalidBusOpValue, 0U, start, start, 0U, {}};
+  }
+  producer_seen_[slot] = true;
+  producer_last_req_time_[slot] = op.req_time;
+
   const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
   const core::Tick latency = base_latency(op) + contention_extra(op, had_tie);
   const core::Tick finish = start + latency;
