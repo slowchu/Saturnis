@@ -901,6 +901,61 @@ void test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs() {
   }
 }
 
+void test_vdp1_command_status_lane_reads_are_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00098U, 4U, 0x5AU});
+  const auto status_full = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check(status_full.value == 0x005A0001U,
+        "VDP1 command status fullword should deterministically pack busy+command before completion");
+
+  const auto status_upper_half = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 2U, 0U});
+  const auto status_lower_half = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05D0009EU, 2U, 0U});
+  check(status_upper_half.value == 0x005AU,
+        "VDP1 command status upper halfword should deterministically expose command byte field");
+  check(status_lower_half.value == 0x0001U,
+        "VDP1 command status lower halfword should deterministically expose busy/completed fields");
+
+  const auto byte0 = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 1U, 0U});
+  const auto byte1 = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05D0009DU, 1U, 0U});
+  const auto byte2 = arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioRead, 0x05D0009EU, 1U, 0U});
+  const auto byte3 = arbiter.commit({0, 7U, 7U, saturnis::bus::BusKind::MmioRead, 0x05D0009FU, 1U, 0U});
+  check(byte0.value == 0x00U && byte1.value == 0x5AU && byte2.value == 0x00U && byte3.value == 0x01U,
+        "VDP1 command status byte lanes should deterministically map big-endian packed fields");
+}
+
+void test_vdp1_command_completion_ack_clear_is_stable_across_runs() {
+  std::uint32_t baseline_after_clear = 0U;
+
+  for (int run = 0; run < 6; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00098U, 4U, 0x11U});
+    (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05D000A0U, 4U, 0x1U});
+    const auto ist_asserted = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+    check((ist_asserted.value & 0x00000020U) != 0U,
+          "VDP1 command completion should deterministically assert SCU source pending bit before ack clear");
+
+    (void)arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+    const auto ist_after_clear = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+    check((ist_after_clear.value & 0x00000020U) == 0U,
+          "VDP1 command completion pending source bit should deterministically clear through SCU IST clear ack");
+
+    if (run == 0) {
+      baseline_after_clear = ist_after_clear.value;
+    } else {
+      check(ist_after_clear.value == baseline_after_clear,
+            "VDP1 command completion clear/ack sequence should remain deterministic across repeated runs");
+    }
+  }
+}
+
 void test_vdp1_source_event_command_completion_path_is_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -961,6 +1016,25 @@ void test_vdp1_source_event_status_register_is_read_only_and_lane_stable() {
         "VDP1 source-event status high halfword should remain deterministic zero in current scaffold");
   check(lower_half.value == 0x0101U,
         "VDP1 source-event status low halfword should deterministically pack IRQ-level and event-counter bits");
+}
+
+void test_vdp1_source_event_counter_wrap_policy_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::uint64_t t = 0U;
+  for (std::uint32_t i = 0; i < 256U; ++i) {
+    (void)arbiter.commit({0, t, t, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+    ++t;
+    (void)arbiter.commit({0, t, t, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+    ++t;
+  }
+
+  const auto status = arbiter.commit({0, t, t, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((status.value & 0xFFU) == 0U,
+        "VDP1 source-event counter should deterministically wrap modulo 256 in current scaffold policy");
 }
 
 void test_vdp2_tvmd_register_masks_to_low_16_bits() {
@@ -3638,6 +3712,34 @@ void test_sh2_illegal_opcode_faults_deterministically_without_silent_progress() 
         "illegal opcode fault should record deterministic opcode detail");
 }
 
+void test_enqueue_contract_fault_is_deterministic_under_interleaved_batch_contention() {
+  std::string baseline;
+
+  for (int run = 0; run < 4; ++run) {
+    saturnis::core::TraceLog trace;
+    trace.set_halt_on_fault(true);
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    std::vector<saturnis::bus::BusOp> ops{
+        {0, 20U, 2U, saturnis::bus::BusKind::Write, 0x00001000U, 4U, 0x11111111U},
+        {1, 19U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U},
+        {0, 18U, 3U, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 4U, 0x2222U}};
+    (void)arbiter.commit_batch(ops);
+
+    const auto json = trace.to_jsonl();
+    check(json.find("\"reason\":\"ENQUEUE_NON_MONOTONIC_REQ_TIME\"") != std::string::npos,
+          "interleaved batch with same-producer req_time inversion should deterministically fault enqueue contract");
+    if (run == 0) {
+      baseline = json;
+    } else {
+      check(json == baseline,
+            "enqueue-contract fault trace should remain byte-identical across repeated interleaved runs");
+    }
+  }
+}
+
 void test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic() {
 #ifndef NDEBUG
   // In debug builds monotonic contract violations are fail-fast assertions by design.
@@ -3713,8 +3815,50 @@ void test_bus_arbiter_invalid_unaligned_long_access_is_deterministic() {
         "invalid unaligned MMIO long access should return deterministic error response payload");
   check(resp_a.stall == resp_b.stall,
         "invalid unaligned MMIO long access should have deterministic stall accounting");
-  check(trace_a.to_jsonl() == trace_b.to_jsonl(),
+  const auto ja = trace_a.to_jsonl();
+  const auto jb = trace_b.to_jsonl();
+  check(ja == jb,
         "invalid unaligned MMIO long access should emit byte-identical deterministic trace entries across runs");
+  check(ja.find("\"detail\":603979938") != std::string::npos,
+        "invalid unaligned MMIO long access should encode deterministic alignment-validation class in fault detail");
+#endif
+}
+
+void test_bus_arbiter_invalid_size_access_is_deterministic() {
+#ifndef NDEBUG
+  // In debug builds invalid BusOps are fail-fast assertions by design.
+  return;
+#else
+  saturnis::core::TraceLog trace_a;
+  saturnis::mem::CommittedMemory mem_a;
+  saturnis::dev::DeviceHub dev_a;
+  saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+  saturnis::core::TraceLog trace_b;
+  saturnis::mem::CommittedMemory mem_b;
+  saturnis::dev::DeviceHub dev_b;
+  saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+
+  const saturnis::bus::BusOp invalid_ram{0, 0U, 0U, saturnis::bus::BusKind::Read, 0x00002000U, 3U, 0U};
+  const saturnis::bus::BusOp invalid_mmio{0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 3U, 0x123456U};
+
+  const auto ram_a = arbiter_a.commit(invalid_ram);
+  const auto mmio_a = arbiter_a.commit(invalid_mmio);
+  const auto ram_b = arbiter_b.commit(invalid_ram);
+  const auto mmio_b = arbiter_b.commit(invalid_mmio);
+
+  check(ram_a.value == 0xBAD0BAD0U && mmio_a.value == 0xBAD0BAD0U &&
+            ram_b.value == 0xBAD0BAD0U && mmio_b.value == 0xBAD0BAD0U,
+        "invalid bus-op size should return deterministic BAD0BAD0 sentinel for RAM/MMIO paths");
+
+  const auto ja = trace_a.to_jsonl();
+  const auto jb = trace_b.to_jsonl();
+  check(ja == jb,
+        "invalid-size bus-op faults should emit byte-identical traces across repeated runs");
+  check(ja.find("\"reason\":\"INVALID_BUS_OP\"") != std::string::npos,
+        "invalid-size bus-op faults should emit explicit INVALID_BUS_OP marker");
+  check(ja.find("\"detail\":318775296") != std::string::npos,
+        "invalid-size bus-op faults should include encoded size-validation class in deterministic detail payload");
 #endif
 }
 
@@ -4063,6 +4207,62 @@ void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
         "synthetic RTE return path must be explicitly trace-labeled");
 }
 
+void test_scripted_cpu_store_buffer_stress_retires_boundedly() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::vector<saturnis::cpu::ScriptOp> ops;
+  for (std::uint32_t i = 0; i < 64U; ++i) {
+    ops.push_back({saturnis::cpu::ScriptOpKind::Write, 0x00002000U, 4U, 0x10000000U + i, 0U});
+    if ((i % 8U) == 0U) {
+      ops.push_back({saturnis::cpu::ScriptOpKind::Read, 0x00002000U, 4U, 0U, 0U});
+    }
+  }
+
+  saturnis::cpu::ScriptedCPU cpu0(0, ops);
+  while (!cpu0.done()) {
+    const auto pending = cpu0.produce();
+    if (!pending.has_value()) {
+      continue;
+    }
+    const auto response = arbiter.commit(pending->op);
+    cpu0.apply_response(pending->script_index, response, pending->op.producer_token, &trace);
+  }
+
+  check(cpu0.store_buffer_size() == 0U,
+        "scripted CPU store-buffer stress should retire deterministically to bounded empty state");
+  check(cpu0.last_read().has_value() && *cpu0.last_read() == 0x10000038U,
+        "scripted CPU stress read forwarding should deterministically observe latest committed same-address write");
+}
+
+void test_sh2_synthetic_exception_nested_entry_guard_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0009U); // NOP
+  mem.write(0x0002U, 2U, 0x002BU); // RTE
+  mem.write(0x0040U, 2U, 0x0009U); // vector 4 handler NOP
+  mem.write(0x0080U, 2U, 0x0009U); // vector 8 handler NOP
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.request_exception_vector(4U);
+  core.step(arbiter, trace, 0U);
+  core.request_exception_vector(8U);
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
+        "nested synthetic exception flow should emit deterministic exception-entry markers");
+  check(core.pc() != 0U,
+        "nested synthetic exception flow should continue with deterministic non-zero PC progression");
+}
+
 void test_sh2_synthetic_rte_without_context_faults_loudly() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4310,7 +4510,10 @@ int main() {
   test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically();
   test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs();
   test_vdp1_source_event_status_register_is_read_only_and_lane_stable();
+  test_vdp1_command_status_lane_reads_are_deterministic();
+  test_vdp1_command_completion_ack_clear_is_stable_across_runs();
   test_vdp1_source_event_command_completion_path_is_deterministic();
+  test_vdp1_source_event_counter_wrap_policy_is_deterministic();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
@@ -4361,6 +4564,7 @@ int main() {
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_illegal_opcode_faults_deterministically_without_silent_progress();
+  test_enqueue_contract_fault_is_deterministic_under_interleaved_batch_contention();
   test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic();
   test_sh2_add_immediate_wraps_without_signed_overflow_ub();
   test_bus_arbiter_invalid_unaligned_long_access_is_deterministic();
@@ -4378,7 +4582,9 @@ int main() {
   test_bus_arbiter_enqueue_contract_violation_faults_deterministically();
   test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id();
   test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
+  test_scripted_cpu_store_buffer_stress_retires_boundedly();
   test_sh2_synthetic_exception_entry_and_rte_roundtrip();
+  test_sh2_synthetic_exception_nested_entry_guard_is_deterministic();
   test_sh2_synthetic_rte_without_context_faults_loudly();
   test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();

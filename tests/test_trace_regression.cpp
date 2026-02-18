@@ -288,6 +288,51 @@ int main() {
     }
   }
 
+  const auto vdp1_stress_cpu1_single = emu.run_vdp1_source_event_stress_trace_cpu1_owner();
+  const auto vdp1_stress_cpu1_mt = emu.run_vdp1_source_event_stress_trace_cpu1_owner_multithread();
+  if (vdp1_stress_cpu1_single.empty() || vdp1_stress_cpu1_mt.empty() || vdp1_stress_cpu1_single != vdp1_stress_cpu1_mt) {
+    std::cerr << "VDP1 source-event stress (cpu1-owner) single-thread and multithread traces diverged\n";
+    return 1;
+  }
+
+  const auto completion_line_cpu0 = first_line_containing(vdp1_stress_single, R"("kind":"MMIO_WRITE","phys":97517728)");
+  const auto completion_line_cpu1 = first_line_containing(vdp1_stress_cpu1_single, R"("kind":"MMIO_WRITE","phys":97517728)");
+  if (completion_line_cpu0.find(R"("src":"MMIO")") == std::string::npos ||
+      completion_line_cpu0.find(R"("owner":"CPU")") == std::string::npos ||
+      completion_line_cpu0.find(R"("tag":"CPU")") == std::string::npos ||
+      completion_line_cpu1.find(R"("src":"MMIO")") == std::string::npos ||
+      completion_line_cpu1.find(R"("owner":"CPU")") == std::string::npos ||
+      completion_line_cpu1.find(R"("tag":"CPU")") == std::string::npos) {
+    std::cerr << "VDP1 command completion trace lines missing deterministic src/owner/tag metadata\n";
+    return 1;
+  }
+
+  std::string alternating_baseline;
+  for (int run = 0; run < 12; ++run) {
+    const auto alternating_mt = (run & 1) == 0 ? emu.run_vdp1_source_event_stress_trace_multithread()
+                                                : emu.run_vdp1_source_event_stress_trace_cpu1_owner_multithread();
+    if (run == 0) {
+      alternating_baseline = alternating_mt;
+      continue;
+    }
+    if ((run & 1) == 0 && alternating_mt != vdp1_stress_mt_baseline) {
+      std::cerr << "VDP1 alternating ownership cpu0-owner trace drifted on run " << run << '\n';
+      return 1;
+    }
+    if ((run & 1) == 1 && alternating_mt != vdp1_stress_cpu1_mt) {
+      std::cerr << "VDP1 alternating ownership cpu1-owner trace drifted on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  if (vdp1_stress_single.find(R"("reason":")") != std::string::npos ||
+      vdp1_stress_mt_baseline.find(R"("reason":")") != std::string::npos ||
+      vdp1_stress_cpu1_single.find(R"("reason":")") != std::string::npos ||
+      vdp1_stress_cpu1_mt.find(R"("reason":")") != std::string::npos) {
+    std::cerr << "VDP1 stress traces should remain fault-free under deterministic halt-on-fault policy expectations\n";
+    return 1;
+  }
+
   // Tier A (hard determinism): byte-for-byte trace identity checks across runs and ST/MT modes.
 
   if (!trace_contains_checkpoint(single_a, R"(TRACE {"version":1})")) {
@@ -440,6 +485,16 @@ int main() {
     const auto mt_trace = emu.run_dual_demo_trace_multithread();
     if (first_n_commit_prefixes(mt_trace, 28U) != baseline_prefixes_28) {
       std::cerr << "dual-demo first 28 commit prefixes changed on multithread run " << run << '\n';
+      return 1;
+    }
+  }
+
+
+  const auto baseline_prefixes_32 = first_n_commit_prefixes(single_a, 32U);
+  for (int run = 0; run < 5; ++run) {
+    const auto mt_trace = emu.run_dual_demo_trace_multithread();
+    if (first_n_commit_prefixes(mt_trace, 32U) != baseline_prefixes_32) {
+      std::cerr << "dual-demo first 32 commit prefixes changed on multithread run " << run << "\n";
       return 1;
     }
   }

@@ -25,6 +25,8 @@ public:
   [[nodiscard]] std::string run_contention_stress_trace_multithread();
   [[nodiscard]] std::string run_vdp1_source_event_stress_trace();
   [[nodiscard]] std::string run_vdp1_source_event_stress_trace_multithread();
+  [[nodiscard]] std::string run_vdp1_source_event_stress_trace_cpu1_owner();
+  [[nodiscard]] std::string run_vdp1_source_event_stress_trace_cpu1_owner_multithread();
   [[nodiscard]] std::string run_bios_trace(const std::vector<std::uint8_t> &bios_image, std::uint64_t max_steps = 20000);
 
 private:

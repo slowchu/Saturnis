@@ -4,6 +4,14 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-18 completion review (new 16-task batch closeout)
+- Completed the 16-task batch with focused deterministic coverage additions around VDP1 command-status lane semantics, command-completion/SCU-ack behavior, alternating ownership stress parity (CPU0-owner and CPU1-owner fixtures), enqueue-contract regression hardening, and counter-wrap policy assertions.
+- Added/extended deterministic trace checks for command-completion metadata (`src`/`owner`/`tag`) and first-32 commit-prefix stability under repeated multithread runs.
+- Added targeted robustness tests for store-buffer bounded retirement stress and encoded INVALID_BUS_OP detail-class payload checks.
+- Residual risks after this closeout pass:
+  1. VDP1 command/completion behavior remains intentionally synthetic and not cycle/hardware-accurate.
+  2. TinyCache mismatch parity in true producer-threaded execution still relies on existing deterministic coordinator behavior and should be revisited when broader cache producer paths are added.
+
 ### 2026-02-18 focused follow-up review (VDP1 command/completion vertical slice)
 - Performed a focused review on VDP1 source-event scaffolding, trace regression parity, and deterministic single-thread/multithread stress behavior.
 - Completed the remaining VDP1 TODOs by introducing a minimal command/completion-producing path and pinning status/IST timing tuples across ST/MT stress fixtures.
