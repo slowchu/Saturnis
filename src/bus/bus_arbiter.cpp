@@ -11,6 +11,12 @@ namespace saturnis::bus {
   return size == 1U || size == 2U || size == 4U;
 }
 
+enum class BusOpValidationError : std::uint8_t {
+  None = 0,
+  InvalidSize = 1,
+  InvalidAlignment = 2,
+};
+
 [[nodiscard]] bool is_aligned(std::uint32_t addr, std::uint8_t size) {
   if (size == 1U) {
     return true;
@@ -18,19 +24,22 @@ namespace saturnis::bus {
   return (addr % static_cast<std::uint32_t>(size)) == 0U;
 }
 
-[[nodiscard]] bool is_valid_bus_op(const BusOp &op) {
+[[nodiscard]] BusOpValidationError validate_bus_op(const BusOp &op) {
   if (op.kind == BusKind::Barrier) {
-    return true;
+    return BusOpValidationError::None;
   }
   if (!valid_bus_size(op.size)) {
-    return false;
+    return BusOpValidationError::InvalidSize;
   }
 
   // Keep current SH-2 RAM subset behavior (which includes existing unaligned RAM tests) while
   // hardening externalized/observable bus operations.
   const bool require_alignment = op.kind == BusKind::MmioRead || op.kind == BusKind::MmioWrite ||
                                  op.kind == BusKind::IFetch || mem::is_mmio(op.phys_addr);
-  return !require_alignment || is_aligned(op.phys_addr, op.size);
+  if (require_alignment && !is_aligned(op.phys_addr, op.size)) {
+    return BusOpValidationError::InvalidAlignment;
+  }
+  return BusOpValidationError::None;
 }
 
 
@@ -112,12 +121,14 @@ bool BusArbiter::validate_enqueue_contract(const BusOp &op) {
   return true;
 }
 BusResponse BusArbiter::execute_commit(const BusOp &op, bool had_tie) {
-  if (!is_valid_bus_op(op)) {
+  const auto validation_error = validate_bus_op(op);
+  if (validation_error != BusOpValidationError::None) {
 #ifndef NDEBUG
     assert(false && "invalid BusOp: size must be 1/2/4 and address must satisfy size alignment");
 #endif
     const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
-    return fault_response(op, start, "INVALID_BUS_OP",
+    const std::uint32_t encoded_error = static_cast<std::uint32_t>(validation_error) << 28U;
+    return fault_response(op, start, "INVALID_BUS_OP", encoded_error |
                           static_cast<std::uint32_t>((op.phys_addr & 0xFFFFU) | (static_cast<std::uint32_t>(op.size) << 24U)));
   }
 

@@ -3567,6 +3567,44 @@ void test_bus_arbiter_invalid_unaligned_long_access_is_deterministic() {
 #endif
 }
 
+void test_bus_arbiter_invalid_size_access_is_deterministic() {
+#ifndef NDEBUG
+  // In debug builds invalid BusOps are fail-fast assertions by design.
+  return;
+#else
+  saturnis::core::TraceLog trace_a;
+  saturnis::mem::CommittedMemory mem_a;
+  saturnis::dev::DeviceHub dev_a;
+  saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+  saturnis::core::TraceLog trace_b;
+  saturnis::mem::CommittedMemory mem_b;
+  saturnis::dev::DeviceHub dev_b;
+  saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+
+  const saturnis::bus::BusOp invalid_ram{0, 0U, 0U, saturnis::bus::BusKind::Read, 0x00002000U, 3U, 0U};
+  const saturnis::bus::BusOp invalid_mmio{0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 3U, 0x123456U};
+
+  const auto ram_a = arbiter_a.commit(invalid_ram);
+  const auto mmio_a = arbiter_a.commit(invalid_mmio);
+  const auto ram_b = arbiter_b.commit(invalid_ram);
+  const auto mmio_b = arbiter_b.commit(invalid_mmio);
+
+  check(ram_a.value == 0xBAD0BAD0U && mmio_a.value == 0xBAD0BAD0U &&
+            ram_b.value == 0xBAD0BAD0U && mmio_b.value == 0xBAD0BAD0U,
+        "invalid bus-op size should return deterministic BAD0BAD0 sentinel for RAM/MMIO paths");
+
+  const auto ja = trace_a.to_jsonl();
+  const auto jb = trace_b.to_jsonl();
+  check(ja == jb,
+        "invalid-size bus-op faults should emit byte-identical traces across repeated runs");
+  check(ja.find("\"reason\":\"INVALID_BUS_OP\"") != std::string::npos,
+        "invalid-size bus-op faults should emit explicit INVALID_BUS_OP marker");
+  check(ja.find("\"detail\":318775296") != std::string::npos,
+        "invalid-size bus-op faults should include encoded size-validation class in deterministic detail payload");
+#endif
+}
+
 void test_sh2_mov_register_copies_source_to_destination() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4171,6 +4209,7 @@ int main() {
   test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic();
   test_sh2_add_immediate_wraps_without_signed_overflow_ub();
   test_bus_arbiter_invalid_unaligned_long_access_is_deterministic();
+  test_bus_arbiter_invalid_size_access_is_deterministic();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
   test_sh2_ifetch_cache_runahead();
