@@ -8,6 +8,16 @@ namespace {
 constexpr std::uint32_t kTraceVersion = 1U;
 }
 
+void TraceLog::set_halt_on_fault(bool enabled) {
+  halt_on_fault_ = enabled;
+  if (!enabled) {
+    should_halt_ = false;
+  }
+}
+
+bool TraceLog::halt_on_fault() const { return halt_on_fault_; }
+
+bool TraceLog::should_halt() const { return should_halt_; }
 
 void TraceLog::add_commit(const CommitEvent &event) {
   std::ostringstream ss;
@@ -47,6 +57,9 @@ void TraceLog::add_fault(const FaultEvent &fault) {
      << ",\"pc\":" << fault.pc << ",\"detail\":" << fault.detail
      << ",\"reason\":\"" << fault.reason << "\"}";
   lines_.push_back(ss.str());
+  if (halt_on_fault_) {
+    should_halt_ = true;
+  }
 }
 
 std::string TraceLog::to_jsonl() const {

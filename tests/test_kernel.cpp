@@ -202,7 +202,7 @@ void test_commit_horizon_correctness() {
   const auto blocked_try = arbiter.commit_batch({blocked});
   check(blocked_try.empty(), "arbiter must gate commits beyond commit horizon");
 
-  const saturnis::bus::BusOp near_now{1, 3U, 1, saturnis::bus::BusKind::Write, 0x7004U, 4, 0x22U};
+  const saturnis::bus::BusOp near_now{0, 3U, 1, saturnis::bus::BusKind::Write, 0x7004U, 4, 0x22U};
   const auto near_commit = arbiter.commit_batch({near_now});
   check(near_commit.size() == 1U, "committable op below horizon should make progress");
 
@@ -3642,6 +3642,149 @@ void test_p0_mmio_big_endian_lane_mapping_via_arbiter() {
   check(value.value == 0x12000034U, "MMIO sub-byte writes should map into big-endian 32-bit lanes");
 }
 
+
+
+std::string run_policy_a_same_producer_tie_trace(bool reversed_arrival) {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::LatencyModel latency{};
+  latency.ram_read = 100U;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace, nullptr, latency);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::Read, 0x00000000U, 4U, 0U});
+
+  const saturnis::bus::BusOp early_ram{0, 10U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U};
+  const saturnis::bus::BusOp later_mmio{0, 11U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4U, 0x1U};
+
+  if (reversed_arrival) {
+    (void)arbiter.commit_batch({later_mmio, early_ram});
+  } else {
+    (void)arbiter.commit_batch({early_ram, later_mmio});
+  }
+  return trace.to_jsonl();
+}
+
+void test_policy_a_same_producer_start_time_tie_preserves_program_order_and_mode_parity() {
+  const auto single_mode_trace = run_policy_a_same_producer_tie_trace(false);
+  const auto multithread_arrival_trace = run_policy_a_same_producer_tie_trace(true);
+
+  check(single_mode_trace.find("\"reason\":\"NON_MONOTONIC_REQ_TIME\"") == std::string::npos,
+        "Policy A must prevent same-producer start-time ties from generating NON_MONOTONIC_REQ_TIME faults");
+  check(multithread_arrival_trace.find("\"reason\":\"NON_MONOTONIC_REQ_TIME\"") == std::string::npos,
+        "Policy A must prevent same-producer start-time ties from faulting under multithread-style arrival order");
+
+  const auto early_commit = single_mode_trace.find("\"kind\":\"READ\",\"phys\":4096");
+  const auto later_commit = single_mode_trace.find("\"kind\":\"MMIO_WRITE\",\"phys\":100532384");
+  check(early_commit != std::string::npos && later_commit != std::string::npos && early_commit < later_commit,
+        "earlier RAM request must commit before later MMIO request for same producer when start_time ties");
+}
+
+void test_trace_halt_on_fault_stops_deterministically_at_first_fault() {
+#ifndef NDEBUG
+  return;
+#else
+  saturnis::core::TraceLog trace;
+  trace.set_halt_on_fault(true);
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp invalid{0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05FE00A2U, 4U, 0U};
+  const saturnis::bus::BusOp would_be_next{0, 1U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U};
+  const auto committed = arbiter.commit_batch({invalid, would_be_next});
+
+  check(trace.should_halt(), "halt-on-fault mode must latch deterministic stop state after first fault");
+  check(committed.size() == 1U, "halt-on-fault mode must stop batch commit at first fault boundary");
+
+  const auto json = trace.to_jsonl();
+  check(json.find(""reason":"INVALID_BUS_OP"") != std::string::npos,
+        "halt-on-fault mode must retain deterministic INVALID_BUS_OP fault marker");
+  check(json.find(""phys":4096") == std::string::npos,
+        "halt-on-fault mode must prevent post-fault operations from entering the commit trace");
+#endif
+}
+
+void test_halt_on_fault_mode_can_enforce_fault_free_regressions() {
+  saturnis::core::TraceLog trace;
+  trace.set_halt_on_fault(true);
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto committed = arbiter.commit_batch({
+      {0, 0U, 0U, saturnis::bus::BusKind::Write, 0x00002000U, 4U, 0x11223344U},
+      {0, 1U, 1U, saturnis::bus::BusKind::Read, 0x00002000U, 4U, 0U},
+  });
+
+  check(!trace.should_halt(), "fault-free regression path should not trip halt-on-fault latch");
+  check(committed.size() == 2U && committed[1].response.value == 0x11223344U,
+        "fault-free regression path should complete normally under halt-on-fault mode");
+}
+
+void test_p0_ram_lane_microtest_longword_to_byte_offsets() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::Write, 0x00001000U, 4U, 0x11223344U});
+
+  const auto b0 = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 1U, 0U});
+  const auto b1 = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::Read, 0x00001001U, 1U, 0U});
+  const auto b2 = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::Read, 0x00001002U, 1U, 0U});
+  const auto b3 = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::Read, 0x00001003U, 1U, 0U});
+
+  check(b0.value == 0x11U && b1.value == 0x22U && b2.value == 0x33U && b3.value == 0x44U,
+        "RAM longword lane mapping must read back bytes as big-endian offsets 0..3 => 11,22,33,44");
+}
+
+void test_p0_mmio_lane_microtest_byte_halfword_and_lane_isolation() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05FE0020U, 4U, 0x11223344U});
+
+  const auto b0 = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 1U, 0U});
+  const auto b1 = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05FE0021U, 1U, 0U});
+  const auto b2 = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05FE0022U, 1U, 0U});
+  const auto b3 = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05FE0023U, 1U, 0U});
+  const auto h0 = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 2U, 0U});
+  const auto h1 = arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioRead, 0x05FE0022U, 2U, 0U});
+
+  check(b0.value == 0x11U && b1.value == 0x22U && b2.value == 0x33U && b3.value == 0x44U,
+        "MMIO lane mapping must read big-endian byte lanes at offsets 0..3");
+  check(h0.value == 0x1122U && h1.value == 0x3344U,
+        "MMIO lane mapping must read big-endian halfword lanes at offsets 0 and 2");
+
+  (void)arbiter.commit({0, 7U, 7U, saturnis::bus::BusKind::MmioWrite, 0x05FE0021U, 1U, 0xAAU});
+  const auto combined = arbiter.commit({0, 8U, 8U, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 4U, 0U});
+  check(combined.value == 0x11AA3344U,
+        "MMIO byte write to offset +1 must only update its lane in the 32-bit register image");
+}
+
+void test_bus_arbiter_enqueue_contract_violation_faults_deterministically() {
+#ifndef NDEBUG
+  return;
+#else
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit_batch({
+      {0, 10U, 0U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U},
+      {0, 9U, 1U, saturnis::bus::BusKind::Read, 0x00001004U, 4U, 0U},
+  });
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ENQUEUE_NON_MONOTONIC_REQ_TIME\"") != std::string::npos,
+        "arbiter enqueue-time producer contract violation must emit deterministic ENQUEUE_NON_MONOTONIC_REQ_TIME fault");
+#endif
+}
+
 void test_p0_sh2_imm8_sign_extension_semantics() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3902,6 +4045,12 @@ int main() {
   test_sh2_ifetch_cache_runahead();
   test_p0_committed_memory_big_endian_pack_unpack();
   test_p0_mmio_big_endian_lane_mapping_via_arbiter();
+  test_policy_a_same_producer_start_time_tie_preserves_program_order_and_mode_parity();
+  test_trace_halt_on_fault_stops_deterministically_at_first_fault();
+  test_halt_on_fault_mode_can_enforce_fault_free_regressions();
+  test_p0_ram_lane_microtest_longword_to_byte_offsets();
+  test_p0_mmio_lane_microtest_byte_halfword_and_lane_isolation();
+  test_bus_arbiter_enqueue_contract_violation_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();
