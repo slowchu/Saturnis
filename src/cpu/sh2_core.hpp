@@ -48,6 +48,7 @@ private:
     std::uint32_t dst_reg = 0;
     std::optional<std::uint32_t> post_inc_reg;
     std::uint8_t post_inc_size = 0;
+    std::uint32_t post_inc_base_before = 0;
   };
 
   int cpu_id_;
