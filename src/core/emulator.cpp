@@ -241,6 +241,31 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
   t1.join();
 }
 
+
+std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> contention_stress_scripts() {
+  std::vector<cpu::ScriptOp> cpu0_ops;
+  std::vector<cpu::ScriptOp> cpu1_ops;
+  cpu0_ops.reserve(128U);
+  cpu1_ops.reserve(128U);
+
+  for (std::uint32_t i = 0; i < 32U; ++i) {
+    const std::uint32_t ram_addr = 0x00002000U + ((i % 4U) * 4U);
+    const std::uint32_t mmio_addr = 0x05FE00ACU + ((i % 2U) * 4U);
+
+    cpu0_ops.push_back({cpu::ScriptOpKind::Write, ram_addr, 4U, 0x10000000U + i, 0U});
+    cpu0_ops.push_back({cpu::ScriptOpKind::Read, ram_addr, 4U, 0U, 0U});
+    cpu0_ops.push_back({cpu::ScriptOpKind::Write, mmio_addr, 4U, 0x00000001U << (i % 8U), 0U});
+    cpu0_ops.push_back({cpu::ScriptOpKind::Barrier, 0U, 0U, 0U, 0U});
+
+    cpu1_ops.push_back({cpu::ScriptOpKind::Read, ram_addr, 4U, 0U, 0U});
+    cpu1_ops.push_back({cpu::ScriptOpKind::Write, ram_addr, 4U, 0x20000000U + i, 0U});
+    cpu1_ops.push_back({cpu::ScriptOpKind::Read, mmio_addr, 4U, 0U, 0U});
+    cpu1_ops.push_back({cpu::ScriptOpKind::Barrier, 0U, 0U, 0U, 0U});
+  }
+
+  return {cpu0_ops, cpu1_ops};
+}
+
 std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> dual_demo_scripts() {
   std::vector<cpu::ScriptOp> cpu0_ops{{cpu::ScriptOpKind::Write, 0x00001000U, 4, 0xDEADBEEFU, 0},
                                       {cpu::ScriptOpKind::Compute, 0, 0, 0, 3},
@@ -276,6 +301,35 @@ std::string Emulator::run_dual_demo_trace_multithread() {
   bus::BusArbiter arbiter(mem, dev, trace);
 
   const auto [cpu0_ops, cpu1_ops] = dual_demo_scripts();
+  cpu::ScriptedCPU cpu0(0, cpu0_ops);
+  cpu::ScriptedCPU cpu1(1, cpu1_ops);
+  run_scripted_pair_multithread(cpu0, cpu1, arbiter, trace);
+
+  return trace.to_jsonl();
+}
+
+
+std::string Emulator::run_contention_stress_trace() {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = contention_stress_scripts();
+  cpu::ScriptedCPU cpu0(0, cpu0_ops);
+  cpu::ScriptedCPU cpu1(1, cpu1_ops);
+  run_scripted_pair(cpu0, cpu1, arbiter, trace);
+
+  return trace.to_jsonl();
+}
+
+std::string Emulator::run_contention_stress_trace_multithread() {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = contention_stress_scripts();
   cpu::ScriptedCPU cpu0(0, cpu0_ops);
   cpu::ScriptedCPU cpu1(1, cpu1_ops);
   run_scripted_pair_multithread(cpu0, cpu1, arbiter, trace);
