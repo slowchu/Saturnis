@@ -1,290 +1,337 @@
-# Saturnis — Codex Task Batch: SH-2 ISA Completeness (Priority Tier 1, Rev 2)
+# Saturnis — Codex Task Batch: SH-2 ISA Completeness (Priority Tier 1, Rev 3)
 
-**Objective:** Extend the SH-2 interpreter with the opcode groups most likely to block real
-BIOS execution. All tasks must be deterministic, test-backed, and leave the existing test suite
-green. Focus is on breadth (unblocking new code paths) not depth (more permutations of covered
-behavior).
+**Objective:** Extend the SH-2 interpreter with the opcode groups most likely to block real BIOS execution.
+All tasks must be deterministic, test-backed, and keep the existing test suite green. Focus on breadth
+(unblocking new code paths) not depth (exploring every permutation of already-covered behavior).
+
+**Global constraints (apply to all tasks):**
+- No silent NOP fallback for unknown opcodes. Unsupported opcode must produce a deterministic ILLEGAL_OP fault marker.
+- Preserve ST/MT trace parity invariants.
+- New bus-visible behavior must flow through the BusArbiter (blocking ops for now).
+- Every task must add at least one deterministic regression test.
 
 ---
 
-## PC-Relative Addressing Base Rule (applies to Tasks 1, 2, and 16)
-
+## PC / Branch Addressing Convention (applies broadly)
 > **In Saturnis, `pc_` in `execute_instruction()` is the address of the current 16-bit opcode.**
-> PC-relative addressing uses `pc_ + 4` as the base address for effective address calculation.
-> This matches the SH-2 manual's description: "the PC points to the starting address of the
-> second instruction after the current instruction."
-> Without this rule, PC-relative loads produce off-by-4 addresses that manifest as
-> apparently-random BIOS failures.
+> - The “PC-relative base” for `@(disp,PC)` forms is `pc_ + 4`.
+> - Branch targets for disp-based branches are computed from `pc_ + 4` plus signed disp scaling.
+> - Sequential fall-through after executing an instruction at `pc_` is `pc_ + 2`.
+
+If this convention changes, update the task formulas and tests accordingly.
 
 ---
 
 ## Task 1 — Implement MOV.L @(disp,PC),Rn (PC-relative longword load)
 
-Add `MOV.L @(disp,PC),Rn` (encoding `0xDndd`). Effective address:
-`((pc_ + 4) & ~3) + (disp * 4)` — note the longword-alignment mask on the base.
-Emit a blocking bus `Read` op (4 bytes) through the arbiter. On response, write the 32-bit
-result to Rn (no sign extension for longword). Advance PC by 2.
-Add a deterministic regression: a scripted CPU program places a known 32-bit constant in
-memory at a PC-relative offset, loads it with `MOV.L @(disp,PC),Rn`, and asserts the register
-value and PC advance in the commit trace. Test both aligned and the alignment-mask boundary.
+Add `MOV.L @(disp,PC),Rn` (encoding `0xDndd`).
+Effective address:
+`((pc_ + 4) & ~3) + (disp * 4)` (note longword base alignment).
+
+Emit a blocking bus `Read` op (4 bytes) through the arbiter.
+On response, write the 32-bit result to Rn (no sign extension). Advance PC by 2.
+
+**Regression:**
+- Place a known 32-bit constant at a PC-relative offset and load it.
+- Assert register value, committed Read op address, and PC advance.
+- Include a case that crosses the `& ~3` alignment boundary.
 
 ---
 
 ## Task 2 — Implement MOV.W @(disp,PC),Rn (PC-relative word load)
 
-Add `MOV.W @(disp,PC),Rn` (encoding `0x9ndd`). Effective address:
-`(pc_ + 4) + (disp * 2)` — no alignment mask for word form.
-Sign-extend the 16-bit result to 32 bits before writing to Rn. Emit a blocking bus `Read` op
-(2 bytes). Advance PC by 2.
-Add a deterministic regression covering: a positive constant (no sign extension fires), a
-negative constant (sign extension fires), and two different displacements, all asserting correct
-register values in CPU snapshots.
+Add `MOV.W @(disp,PC),Rn` (encoding `0x9ndd`).
+Effective address:
+`(pc_ + 4) + (disp * 2)` (no extra alignment mask).
+
+Emit a blocking bus `Read` op (2 bytes).
+Sign-extend the 16-bit result to 32 bits before writing to Rn. Advance PC by 2.
+
+**Regression:**
+- One positive word (no sign-ext), one negative word (sign-ext fires).
+- Two displacements.
+- Assert register values and PC.
 
 ---
 
 ## Task 3 — Implement MOVA @(disp,PC),R0 (PC-relative address materialization)
 
-Add `MOVA @(disp,PC),R0` (encoding `0xC7dd`). This instruction does NOT access memory —
-it computes an address and loads it into R0. Effective address:
-`((pc_ + 4) & ~3) + (disp * 4)` — same longword-aligned base as `MOV.L @(disp,PC)`.
+Add `MOVA @(disp,PC),R0` (encoding `0xC7dd`).
+This does NOT read memory; it computes an address into R0:
+`((pc_ + 4) & ~3) + (disp * 4)`.
+
 No bus op. Advance PC by 2.
-Add a deterministic regression: compute a known base address using MOVA, then use the result
-register to perform a MOV.L load, asserting both the address in R0 and the loaded value.
-(MOVA is used constantly in position-independent SH-2 code for address tables and jump vectors.)
+
+**Regression:**
+- Use MOVA to compute an address, then use that address in a subsequent MOV.L @Rm,Rn load.
+- Assert R0 equals the expected address and the load reads the expected value.
 
 ---
 
-## Task 4 — Add VBR register; fix STC VBR,Rn and LDC Rm,VBR encodings
+## Task 4 — Add VBR register; implement STC VBR,Rn and LDC Rm,VBR
 
-Add `vbr_` (32-bit) to `SH2Core`, initialized to 0x00000000 on `reset()`.
+Add `vbr_` (32-bit) to `SH2Core`, init to 0 on reset.
 
-Implement with correct encodings per the SH-2 manual:
-- `STC VBR,Rn` = `0000nnnn00100010` = `0x0n22` — copies VBR to Rn (no bus op)
-- `LDC Rm,VBR` = `0100mmmm00101110` = `0x4m2E` — copies Rm to VBR (no bus op)
+Implement:
+- `STC VBR,Rn` = `0000nnnn00100010` = `0x0n22` (no bus op)
+- `LDC Rm,VBR` = `0100mmmm00101110` = `0x4m2E` (no bus op)
 
-Note: `0x0n2A` is `STS PR,Rn`, not `STC VBR,Rn` — do not confuse these.
-
-Add a deterministic regression: load a known value into VBR via `LDC`, read it back via `STC`,
-assert the round-trip value in the CPU snapshot. Also assert VBR is independent of all
-general-purpose registers.
+**Regression:**
+- Load VBR via LDC, read back via STC, assert round-trip.
+- Confirm VBR is independent of GPRs by setting unrelated registers and verifying VBR unchanged.
 
 ---
 
 ## Task 5 — Add GBR register; implement STC GBR,Rn and LDC Rm,GBR
 
-Add `gbr_` (32-bit) to `SH2Core`, initialized to 0x00000000 on `reset()`.
+Add `gbr_` (32-bit) to `SH2Core`, init to 0 on reset.
 
-Implement with correct encodings:
-- `STC GBR,Rn` = `0000nnnn00010010` = `0x0n12` — copies GBR to Rn (no bus op)
-- `LDC Rm,GBR` = `0100mmmm00011110` = `0x4m1E` — copies Rm to GBR (no bus op)
+Implement:
+- `STC GBR,Rn` = `0000nnnn00010010` = `0x0n12` (no bus op)
+- `LDC Rm,GBR` = `0100mmmm00011110` = `0x4m1E` (no bus op)
 
-Add a deterministic regression: verify LDC/STC round-trip for GBR, and verify GBR and VBR
-are independently addressable (load distinct values into each, read back both, assert no
-cross-contamination).
-
----
-
-## Task 6 — Implement pre-decrement stack operations: MOV.L/W/B Rn,@-Rm
-
-Add the three pre-decrement write forms:
-- `MOV.L Rn,@-Rm` (`0x2nmF`) — pre-decrement Rm by 4, write 32-bit Rn to new address
-- `MOV.W Rn,@-Rm` (`0x2nm5`) — pre-decrement Rm by 2, write low 16 bits of Rn
-- `MOV.B Rn,@-Rm` (`0x2nm4`) — pre-decrement Rm by 1, write low 8 bits of Rn
-
-Pre-decrement Rm before emitting the bus `Write` op (consistent with SH-2 semantics: address
-update happens before the write). Mask the write value to 16 or 8 bits for word/byte forms.
-
-Add a deterministic regression: a scripted program pushes three values of different widths
-onto a RAM stack area, then reads them back, asserting committed memory contents and the final
-SP value in the trace.
+**Regression:**
+- LDC/STC round-trip for GBR.
+- Verify GBR and VBR are independent: set distinct values; read both back; assert no cross-contamination.
 
 ---
 
-## Task 7 — Implement SUB Rm,Rn and SUBC / SUBV (if needed for BIOS)
+## Task 6 — Implement pre-decrement stores: MOV.L/W/B Rm,@-Rn
 
-Add:
-- `SUB Rm,Rn` = `0010nnnnmmmm1000` = `0x2nm8` — subtract Rm from Rn, result to Rn (no bus op)
-- `SUBC Rm,Rn` = `0011nnnnmmmm1010` = `0x3nmA` — subtract with borrow (T-flag in, T-flag out)
-- `SUBV Rm,Rn` = `0011nnnnmmmm1011` = `0x3nmB` — subtract with overflow detection into T
+Add the three pre-decrement write forms (note operand roles):
+- `MOV.B Rm,@-Rn` = `0010nnnnmmmm0100` = `0x2nm4` (Rn -= 1; store low 8 bits of Rm)
+- `MOV.W Rm,@-Rn` = `0010nnnnmmmm0101` = `0x2nm5` (Rn -= 2; store low 16 bits of Rm)
+- `MOV.L Rm,@-Rn` = `0010nnnnmmmm0110` = `0x2nm6` (Rn -= 4; store 32-bit Rm)
 
-Add a deterministic regression covering: basic subtract, underflow/wrap, SUBC carry chain
-across two operations, and SUBV overflow detection, all with CPU snapshot assertions.
+Pre-decrement Rn **before** emitting the bus `Write` op. Mask value to 8/16 bits for byte/word.
+
+**Regression:**
+- Use R15 as stack pointer.
+- Push byte/word/long values with the three forms.
+- Pop them back using existing post-increment loads (`MOV.* @Rm+,Rn` with m=15).
+- Assert committed memory contents and final R15.
+
+(Include an edge-case regression where `m == n` is NOT used here—pre-decrement uses different semantics than post-inc load special-casing.)
 
 ---
 
-## Task 8 — Implement AND, OR, XOR, NOT with correct encodings
+## Task 7 — Implement SUB Rm,Rn and SUBC / SUBV
 
-Add the register-register logical forms with correct SH-2 manual encodings:
+Implement:
+- `SUB Rm,Rn`  = `0010nnnnmmmm1000` = `0x2nm8`
+- `SUBC Rm,Rn` = `0011nnnnmmmm1010` = `0x3nmA` (borrow in/out via T)
+- `SUBV Rm,Rn` = `0011nnnnmmmm1011` = `0x3nmB` (overflow sets T)
+
+No bus ops.
+
+**Regression:**
+- Basic subtract.
+- Underflow/wrap check.
+- SUBC two-step borrow chain (T propagation).
+- SUBV overflow boundary cases.
+
+---
+
+## Task 8 — Implement AND, OR, XOR, NOT (register-register)
+
+Implement:
 - `AND Rm,Rn` = `0010nnnnmmmm1001` = `0x2nm9`
 - `XOR Rm,Rn` = `0010nnnnmmmm1010` = `0x2nmA`
-- `OR Rm,Rn`  = `0010nnnnmmmm1011` = `0x2nmB`
+- `OR  Rm,Rn` = `0010nnnnmmmm1011` = `0x2nmB`
 - `NOT Rm,Rn` = `0110nnnnmmmm0111` = `0x6nm7`
 
-Note: `0x2nmA` is XOR (not AND), and `0x6nm7` is NOT (not `0x6nmB`).
+No bus ops.
 
-None emit bus ops. Add a deterministic regression covering all four operations with known
-inputs, including: zero result, all-bits-set result, NOT of zero, NOT of all-ones, all with
-CPU snapshot assertions.
+**Regression:**
+- Known inputs for each op (zero result, all-ones result, NOT of zero, etc.).
 
 ---
 
-## Task 9 — Implement AND/OR/XOR immediate forms operating on R0
+## Task 9 — Implement immediate logical ops on R0 + GBR-relative byte RMW
 
-Add the 8-bit immediate logical ops (zero-extend immediate to 32 bits):
+Immediate-on-R0 forms (zero-extend imm8 to 32-bit):
 - `AND #imm,R0` = `0xC9ii`
 - `XOR #imm,R0` = `0xCAii`
-- `OR #imm,R0`  = `0xCBii`
+- `OR  #imm,R0` = `0xCBii`
 
-Also add the GBR-relative byte logical forms (commonly used for bit manipulation in BIOS):
-- `AND.B #imm,@(R0,GBR)` = `0xCCii` — read-modify-write byte at GBR+R0
+GBR-relative byte read-modify-write forms (requires Task 5 / GBR):
+- `AND.B #imm,@(R0,GBR)` = `0xCCii`
 - `XOR.B #imm,@(R0,GBR)` = `0xCEii`
 - `OR.B  #imm,@(R0,GBR)` = `0xCFii`
 
-The GBR-relative forms require Task 5 (GBR). They emit a bus `Read` op followed by a bus
-`Write` op for the modified byte. Add a deterministic regression for all immediate forms,
-including a GBR-relative read-modify-write that asserts both the bus commit sequence and the
-final memory value.
+For the `.B @(R0,GBR)` forms:
+- Compute EA = GBR + R0 (byte address).
+- Emit bus Read(1), compute new byte, emit bus Write(1).
+
+**Regression:**
+- R0 immediate ops: assert R0 result.
+- GBR-relative RMW: assert commit sequence (Read then Write) and final byte value in memory.
 
 ---
 
 ## Task 10 — Implement conditional branches: BT, BF, BT/S, BF/S
 
-Add all four conditional branch forms:
-- `BT  disp8` = `0x89dd` — branch if T=1, no delay slot; target = `pc_ + 4 + (disp * 2)`
-- `BF  disp8` = `0x8Bdd` — branch if T=0, no delay slot
-- `BT/S disp8` = `0x8Ddd` — branch if T=1, with delay slot
-- `BF/S disp8` = `0x8Fdd` — branch if T=0, with delay slot
+Implement:
+- `BT  disp8`  = `0x89dd` (branch if T=1, no delay slot)
+- `BF  disp8`  = `0x8Bdd` (branch if T=0, no delay slot)
+- `BT/S disp8` = `0x8Ddd` (branch if T=1, with delay slot)
+- `BF/S disp8` = `0x8Fdd` (branch if T=0, with delay slot)
 
-For not-taken branches, PC advances by 2 (no delay slot for BT/BF; for BT/S and BF/S, execute
-the delay slot and then advance PC by 2 rather than branching). Use the same delay-slot
-mechanics as the existing BRA implementation.
+Target address for taken branches:
+`target = (pc_ + 4) + (signext(disp8) * 2)`
 
-Add deterministic regressions for:
-1. BT taken and not-taken (using CMP/EQ to set T)
-2. BF taken and not-taken
-3. BT/S taken — confirm delay-slot instruction executes before branch target
-4. BF/S not-taken — confirm delay-slot instruction executes before fall-through
+PC behavior:
+- BT/BF (no /S): if taken -> PC = target; else -> PC = pc_ + 2.
+- BT/S, BF/S: always execute the delay-slot instruction at `pc_ + 2`.
+  - If taken -> after executing slot, set PC = target.
+  - If not taken -> after executing slot, fall through to PC = pc_ + 4.
 
----
+Use the same delay-slot mechanism as BRA/JSR/RTS.
 
-## Task 11 — Implement CMP variants needed for conditional branch tests
-
-The existing `CMP/EQ` forms are present. Add the remaining CMP forms needed by BIOS:
-- `CMP/HS Rm,Rn` = `0x3nm2` — T=1 if Rn >= Rm (unsigned)
-- `CMP/GE Rm,Rn` = `0x3nm3` — T=1 if Rn >= Rm (signed)
-- `CMP/HI Rm,Rn` = `0x3nm6` — T=1 if Rn > Rm (unsigned)
-- `CMP/GT Rm,Rn` = `0x3nm7` — T=1 if Rn > Rm (signed)
-- `CMP/PL Rn`    = `0x4n15` — T=1 if Rn > 0 (signed)
-- `CMP/PZ Rn`    = `0x4n11` — T=1 if Rn >= 0 (signed)
-- `CMP/STR Rm,Rn`= `0x2nmC` — T=1 if any byte of Rn equals corresponding byte of Rm
-
-Add a deterministic regression covering each variant, including boundary cases (equal values
-for GT vs GE, zero for PL vs PZ, byte-match for STR).
+**Regression:**
+- BT taken / not-taken (use CMP/EQ to drive T).
+- BF taken / not-taken.
+- BT/S taken: confirm slot executes before branch takes effect.
+- BF/S not-taken: confirm slot executes and then fall-through occurs.
 
 ---
 
-## Task 12 — Implement TRAPA #imm (software interrupt / syscall)
+## Task 11 — Implement additional CMP variants commonly used in firmware
 
-Add `TRAPA #imm` (encoding `0xC3ii`). Stack layout per the SH-2 manual:
-1. `R15 -= 4; write(SR, @R15)` — push SR first
-2. `R15 -= 4; write(PC - 2, @R15)` — push return PC (address of the TRAPA instruction itself,
-   i.e., `pc_` before the +2 advance; verify against your PC bookkeeping convention)
-3. `PC = read(VBR + (imm * 4)) + 4` — fetch handler from VBR table, bias by +4
+Add:
+- `CMP/HS Rm,Rn` = `0x3nm2` (unsigned Rn >= Rm)
+- `CMP/GE Rm,Rn` = `0x3nm3` (signed   Rn >= Rm)
+- `CMP/HI Rm,Rn` = `0x3nm6` (unsigned Rn >  Rm)
+- `CMP/GT Rm,Rn` = `0x3nm7` (signed   Rn >  Rm)
+- `CMP/PL Rn`    = `0x4n15` (signed Rn > 0)
+- `CMP/PZ Rn`    = `0x4n11` (signed Rn >= 0)
+- `CMP/STR Rm,Rn`= `0x2nmC` (byte-wise compare: T=1 if ANY corresponding byte matches)
 
-Note: the saved PC value is the address of the TRAPA instruction so that RTE (which restores
-PC from stack and adds the standard +2 advance) returns correctly to the instruction after
-TRAPA. Verify this against Saturnis's PC bookkeeping before implementing.
+No bus ops.
 
-TRAPA requires Tasks 4 (VBR) and 6 (pre-decrement push) as prerequisites.
-
-Emit bus writes for the two stack pushes and a bus read for the vector fetch, all through the
-arbiter. Emit a `TRAPA` trace label with the imm value and handler address.
-
-Add a deterministic regression: a scripted program executes TRAPA, the vector table directs it
-to a handler stub, the handler executes RTE, and the trace asserts correct stack commit
-ordering, handler PC, and return to post-TRAPA address.
+**Regression:**
+- Boundary cases: equal vs GT/GE, zero vs PL/PZ, STR byte-match positive and negative examples.
 
 ---
 
-## Task 13 — Implement real exception entry and RTE using VBR and stack
+## Task 12 — Implement TRAPA #imm (software interrupt)
 
-Upgrade `request_exception_vector(v)` from the synthetic scaffold to real SH-2 semantics:
-1. `R15 -= 4; write(SR, @R15)` — push SR
-2. `R15 -= 4; write(PC, @R15)` — push current PC (return address)
-3. `PC = read(VBR + (v * 4))` — fetch handler address; set I-bits in SR to mask level
+Add `TRAPA #imm` (encoding `0xC3ii`).
 
-Upgrade `RTE` (`0x002B`) from synthetic scaffold to real stack-based restore:
-1. `PC = read(@R15); R15 += 4` — pop PC
-2. `SR = read(@R15); R15 += 4` — pop SR
-3. Execute delay slot before applying the restored PC
+TRAPA exception entry (stack-based, requires Task 4 VBR + Task 6 pre-decrement):
+1. Push SR: `R15 -= 4; write32(SR, @R15)`
+2. Push return PC: `R15 -= 4; write32(pc_ + 2, @R15)` (return to instruction after TRAPA)
+3. Fetch handler address: `handler = read32(VBR + (imm * 4))`
+4. Set PC to handler (no implicit +4 bias)
+5. (If you model SR interrupt mask changes for exceptions, apply consistently here; if not, leave TODO but deterministic.)
 
-Emit `EXCEPTION_ENTRY` and `EXCEPTION_RETURN` trace labels (distinct from the old
-`SYNTHETIC_EXCEPTION_ENTRY` / `SYNTHETIC_RTE` labels, which should remain recognized for
-backward compatibility with existing tests but not generated by new code paths).
+Emit bus writes for the pushes and a bus read for the vector fetch.
 
-Add a deterministic regression: trigger an exception via `request_exception_vector`, confirm
-the stack commit sequence (SR push then PC push), confirm handler PC is fetched from VBR
-table, execute RTE, and assert PC and SR are restored to pre-exception values.
+**Regression:**
+- Build a tiny vector table in memory.
+- Execute TRAPA; confirm stack writes occur in-order and PC becomes handler.
+- Handler executes RTE; confirm return PC resumes at post-TRAPA instruction.
 
 ---
 
-## Task 14 — Implement @(disp,Rn) displacement addressing for loads and stores
+## Task 13 — Implement real exception entry + real RTE using VBR + stack
 
-Add the register+displacement addressing forms:
-- `MOV.L @(disp,Rn),Rm` = `0x5nmF` — 4-bit disp scaled by 4; EA = Rn + (disp * 4)
-- `MOV.L Rm,@(disp,Rn)` = `0x1nmF` — 4-bit disp scaled by 4; EA = Rn + (disp * 4)
-- `MOV.W @(disp,Rn),R0` = `0x85nd` — 4-bit disp scaled by 2; dest always R0; sign-extend
-- `MOV.B @(disp,Rn),R0` = `0x84nd` — 4-bit disp unscaled; dest always R0; sign-extend
-- `MOV.W R0,@(disp,Rn)` = `0x81nd` — 4-bit disp scaled by 2; source always R0
-- `MOV.B R0,@(disp,Rn)` = `0x80nd` — 4-bit disp unscaled; source always R0
+Upgrade `request_exception_vector(v)` from synthetic to stack-based exception entry.
+Define the contract: exceptions are taken at an instruction boundary, so the “next instruction PC” is `pc_`.
 
-Each emits a blocking bus op through the arbiter. Add a deterministic regression covering read
-and write forms at disp=0 and disp>0, sign extension on the word and byte read forms (both
-positive and negative values), and a round-trip write+read at displacement.
+Exception entry:
+1. `R15 -= 4; write32(SR, @R15)`
+2. `R15 -= 4; write32(pc_, @R15)`  (return to the next instruction)
+3. `pc_ = read32(VBR + (v * 4))`
+4. (If modeling SR.I mask level: update SR deterministically; otherwise leave TODO)
+
+Upgrade `RTE` (`0x002B`) to real restore with delay slot:
+1. Pop PC: `new_pc = read32(@R15); R15 += 4`
+2. Pop SR: `new_sr = read32(@R15); R15 += 4`
+3. Execute the delay-slot instruction at `pc_ + 2` (per SH-2 RTE delay-slot behavior)
+4. After slot, commit `pc_ = new_pc`, `sr_ = new_sr`
+
+Trace:
+- Emit distinct `EXCEPTION_ENTRY` and `EXCEPTION_RETURN` markers.
+- Keep old synthetic markers recognized by tests, but new code paths must not generate them.
+
+**Regression:**
+- Trigger a test exception via `request_exception_vector`.
+- Assert stack commit order (SR then PC), handler fetch via VBR.
+- Execute RTE and assert restored PC/SR.
 
 ---
 
-## Task 15 — Implement MUL.L and add MACH/MACL registers
+## Task 14 — Implement @(disp,Rm) displacement addressing (loads + stores)
 
-Add `mach_` and `macl_` (32-bit each) to `SH2Core`, initialized to 0 on `reset()`.
+Implement the 4-bit displacement forms.
 
-Implement with correct SH-2 manual semantics:
+Longword forms (disp4 scaled by 4):
+- `MOV.L @(disp,Rm),Rn` = `0101nnnnmmmmdddd` = `0x5nmd`
+  EA = Rm + (disp * 4); Read32 -> Rn
+- `MOV.L Rm,@(disp,Rn)` = `0001nnnnmmmmdddd` = `0x1nmd`
+  EA = Rn + (disp * 4); Write32 from Rm
+
+R0-only byte/word forms:
+- `MOV.W @(disp,Rm),R0` = `0x85md` (disp4 scaled by 2; sign-extend)
+- `MOV.B @(disp,Rm),R0` = `0x84md` (disp4 unscaled; sign-extend)
+- `MOV.W R0,@(disp,Rn)` = `0x81nd` (disp4 scaled by 2)
+- `MOV.B R0,@(disp,Rn)` = `0x80nd` (disp4 unscaled)
+
+Each emits a blocking bus op through the arbiter (Read or Write).
+Sign-extend byte/word loads.
+
+**Regression:**
+- Test disp=0 and disp>0.
+- Test sign extension for byte/word loads (positive and negative).
+- Round-trip write then read at displacement.
+
+---
+
+## Task 15 — Implement MUL.L and add MACH/MACL registers + transfers
+
+Add `mach_` and `macl_` (32-bit) to `SH2Core`, init to 0 on reset.
+
+Implement:
 - `MUL.L Rm,Rn` = `0000nnnnmmmm0111` = `0x0nm7`
-  Operation: `Rn × Rm → MACL` (32×32 signed multiply, **32-bit result only, stored in MACL**)
-  MACH is NOT written by MUL.L.
+  Operation: signed 32×32 multiply; **store low 32 bits into MACL only**.
+  MACH is not modified by MUL.L.
 
-Also implement register-transfer instructions:
-- `STS MACL,Rn` = `0x0n1A` — copy MACL to Rn
-- `STS MACH,Rn` = `0x000A` (verify: `0x0n0A`) — copy MACH to Rn
-- `LDS Rm,MACL` = `0x4m1A` — copy Rm to MACL
-- `LDS Rm,MACH` = `0x4m0A` — copy Rm to MACH
+Also implement:
+- `STS MACL,Rn` = `0000nnnn00011010` = `0x0n1A`
+- `STS MACH,Rn` = `0000nnnn00001010` = `0x0n0A`
+- `LDS Rm,MACL` = `0100mmmm00011010` = `0x4m1A`
+- `LDS Rm,MACH` = `0100mmmm00001010` = `0x4m0A`
 
-Note: for 64-bit multiply results, those are `DMULS.L` / `DMULU.L` — separate instructions,
-not in this task.
+Model MUL.L as 2 ticks of local time (vertical-slice convention).
 
-Model MUL.L as 2 ticks of local time per the vertical-slice convention.
-
-Add a deterministic regression: multiply two known 32-bit values, read MACL via STS, assert
-the low-32-bit product. Include a case that confirms MACH is not clobbered.
+**Regression:**
+- Multiply two known values; verify MACL matches expected low-32 result via STS.
+- Include a check that MACH is unchanged by MUL.L.
 
 ---
 
-## Task 16 — Refresh docs, run full regression, and establish BIOS forward-progress baseline
+## Task 16 — Docs refresh + full regression + BIOS forward-progress baseline (local-only)
 
-1. Update `docs/architecture.md` to document: VBR/GBR/MACH/MACL registers, PC-relative
-   addressing base rule, real exception entry/RTE semantics, expanded addressing modes, and
-   the pre-decrement addressing forms.
+1. Update `docs/architecture.md` to document:
+   - VBR/GBR/MACH/MACL registers
+   - PC-relative base rule and branch target formulas
+   - Real exception entry + real RTE semantics
+   - Newly supported addressing modes (`@(disp,PC)`, MOVA, pre-decrement, `@(disp,Rm)`)
 
-2. Update `docs/todo.md` to mark Tasks 1–15 complete and populate a new next-batch section
-   covering: `BSR` (branch-to-subroutine), `JMP @Rm`, `@(R0,Rn)` indexed addressing,
-   `DMULS.L`/`DMULU.L`, `MULS.W`/`MULU.W`, `DIV0U`/`DIV1`, `EXTS.B`/`EXTS.W`/`EXTU.B`/
-   `EXTU.W`, `@(disp,GBR)` addressing, `SHLL2`/`SHLL8`/`SHLL16` (fast shifts), and `NEG`.
+2. Update `docs/todo.md`:
+   - Mark Tasks 1–15 complete.
+   - Add a “Next batch candidates” list (do not implement in this batch):
+     `BSR`, `JMP @Rm`, `@(R0,Rn)` indexed, `@(disp,GBR)`, `EXTS/EXTU`, `NEG`,
+     `SHLL2/8/16`, `DMULS/DMULU`, `MULS/MULU`, `DIV0U/DIV1`.
 
-3. Run the full test suite and confirm all existing determinism invariants (ST/MT trace parity,
-   commit-prefix stability, SCU/BIOS fixture stability) remain green.
+3. Run full test suite; confirm determinism invariants remain green.
 
-4. Run BIOS bring-up mode (`--bios /path/to/bios.bin --headless --trace bios_progress.jsonl`)
-   and record: (a) how many instructions execute before the first `ILLEGAL_OP` fault, (b) the
-   opcode of that first fault. Commit this instruction count as a numeric regression baseline
-   fixture so future batches can track BIOS forward progress quantitatively. This baseline
-   replaces qualitative "BIOS bring-up is partial" status with a measurable number.
+4. **Local-only BIOS progress metric (not CI):**
+   - Run: `--bios /path/to/bios.bin --headless --trace bios_progress.jsonl`
+   - Record:
+     (a) instruction count executed before first ILLEGAL_OP fault
+     (b) opcode + PC at first fault
+   - Store the count/opcode/pc as a local baseline artifact (e.g., docs note or ignored file),
+     so devs can track progress without requiring BIOS in CI.
+
