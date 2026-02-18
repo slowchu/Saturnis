@@ -4,6 +4,15 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-18 focused review (post-SMPC/VDP1 scaffold)
+- Performed a focused pass over bus arbitration, SH-2 execute/load paths, device MMIO scaffolds, trace regressions, and TODO hygiene.
+- Confirmed deterministic invariants still hold under current test matrix (single-thread and multithread trace parity loops remain stable in CI loop).
+- Identified highest-value follow-up risks for immediate backlog:
+  1. SH-2 mixed-width BRA/RTS overwrite TODO guards still encode current modeled behavior instead of architectural target-side overwrite behavior.
+  2. `BusArbiter` does not currently validate unsupported bus op sizes in a centralized way (size assumptions are implicit in call sites).
+  3. `run_scripted_pair_multithread` remains yield-based busy-wait coordination (correct but higher host overhead and harder to reason about under stress).
+  4. VDP1->SCU handoff remains a synthetic bridge register scaffold rather than source-accurate interrupt production.
+
 ### Latest rolling batch updates
 - Performed another focused code-review pass after SMPC + VDP1/SCU updates; current residual risks: SH-2 mixed-width BRA/RTS target-side overwrite coverage still has explicit TODO-backed modeled-value guards, and broader non-synthetic VDP1 interrupt-source modeling remains pending.
 - Added first VDP1->SCU interrupt handoff scaffold behavior: deterministic bridge register toggling a SCU pending source bit with focused set/clear/masked-visibility assertions.
