@@ -205,7 +205,7 @@
 
 ## Next tasks (repopulated)
 
-1. [ ] Replace SH-2 mixed-width BRA/RTS overwrite TODO-guard expectations with architectural target-side overwrite semantics and focused regressions.
+1. [x] Replace SH-2 mixed-width BRA/RTS overwrite TODO-guard expectations with architectural target-side overwrite semantics and focused regressions.
 2. [ ] Add centralized BusOp size validation in `BusArbiter`/MMIO path and regression checks for invalid-size rejection semantics.
 3. [ ] Add deterministic stress regression for `run_scripted_pair_multithread` progress/response liveness under extended contention windows.
 4. [ ] Refactor multithread scripted-pair coordination away from pure busy-wait yield loops toward deterministic bounded waiting.

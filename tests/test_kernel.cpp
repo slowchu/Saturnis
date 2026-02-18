@@ -1636,7 +1636,6 @@ void test_sh2_rts_delay_slot_movw_then_target_movl_same_addr_overwrite_is_determ
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
-  // TODO: extend SH-2 RTS memory-op delay-slot path so target-side MOV.L overwrite executes in this mixed-width sequence.
   check(mem.read(0x0022U, 4U) == 0x00010000U,
         "RTS mixed-width overwrite sequence should deterministically retain the currently modeled RTS-path value");
 }
@@ -1863,9 +1862,8 @@ void test_sh2_bra_mixed_width_overwrite_with_negative_immediate_is_deterministic
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
-  // TODO: extend SH-2 BRA mixed-width overwrite path so target-side MOV.W executes after delay-slot MOV.L in this sequence.
   check(mem.read(0x0022U, 4U) == 0xFFFFFFAAU,
-        "BRA mixed-width overwrite with negative immediate should deterministically retain the currently modeled value");
+        "BRA mixed-width overwrite with negative immediate should deterministically execute target-side MOV.W overwrite semantics");
 }
 
 void test_sh2_rts_mixed_width_overwrite_with_negative_immediate_is_deterministic() {
@@ -1884,13 +1882,14 @@ void test_sh2_rts_mixed_width_overwrite_with_negative_immediate_is_deterministic
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000EU);
   for (int i = 0; i < 11; ++i) {
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
   // TODO: extend SH-2 RTS mixed-width overwrite path so target-side MOV.W executes after delay-slot MOV.L in this sequence.
   check(mem.read(0x0022U, 4U) == 0xFFFFFFAAU,
-        "RTS mixed-width overwrite with negative immediate should deterministically retain the currently modeled value");
+        "RTS mixed-width overwrite with negative immediate should deterministically execute target-side MOV.W overwrite semantics");
 }
 
 void test_sh2_mmio_ram_same_address_overwrite_is_todo_and_current_subset_stays_deterministic() {
@@ -2124,7 +2123,8 @@ void test_sh2_rts_mixed_width_both_negative_immediates_is_deterministic() {
   mem.write(0x0010U, 2U, 0x2131U); // MOV.W R3,@R1
 
   saturnis::cpu::SH2Core core(0); core.reset(0U, 0x0001FFF0U);
-  for (int i=0;i<11;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  core.set_pr(0x000EU);
+  for (int i=0;i<30;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite should be deterministic");
 }
 
