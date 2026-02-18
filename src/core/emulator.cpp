@@ -12,6 +12,7 @@
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -25,6 +26,26 @@ struct ScriptResponse {
   std::size_t script_index = 0;
   std::uint64_t producer_token = 0;
   bus::BusResponse response{};
+};
+
+class SignalHub {
+public:
+  void notify() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++epoch_;
+    cv_.notify_all();
+  }
+
+  void wait_for_change(std::uint64_t &seen_epoch) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait(lock, [this, seen_epoch] { return epoch_ != seen_epoch; });
+    seen_epoch = epoch_;
+  }
+
+private:
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::uint64_t epoch_ = 0;
 };
 
 template <typename T> class Mailbox {
@@ -118,23 +139,26 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
 
   std::atomic<bool> done0{false};
   std::atomic<bool> done1{false};
+  SignalHub signal;
 
-  auto producer = [&trace](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
+  auto producer = [&trace, &signal](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
                      Mailbox<core::Tick> &progress, std::atomic<bool> &done) {
     std::optional<cpu::PendingBusOp> waiting;
-    std::uint32_t idle_spins = 0U;
+    std::uint64_t seen_epoch = 0U;
     while (true) {
       if (!waiting && !cpu.done()) {
         waiting = cpu.produce();
         if (waiting) {
           req.push(*waiting);
           progress.push(waiting->op.req_time + 1);
+          signal.notify();
         }
       }
 
       if (!waiting && cpu.done()) {
         progress.push(cpu.local_time());
         done.store(true);
+        signal.notify();
         return;
       }
 
@@ -143,14 +167,11 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
         cpu.apply_response(response.script_index, response.response, response.producer_token, nullptr);
         progress.push(cpu.local_time());
         waiting.reset();
+        signal.notify();
         continue;
       }
 
-      static constexpr std::uint32_t kProducerYieldInterval = 32U;
-      ++idle_spins;
-      if ((idle_spins % kProducerYieldInterval) == 0U) {
-        std::this_thread::yield();
-      }
+      signal.wait_for_change(seen_epoch);
       (void)cpu_id;
     }
   };
@@ -160,29 +181,33 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
 
   std::optional<cpu::PendingBusOp> p0;
   std::optional<cpu::PendingBusOp> p1;
-  std::uint32_t wait_spins = 0U;
-  std::uint32_t loop_spins = 0U;
+  std::uint64_t seen_epoch = 0U;
 
   while (true) {
+    bool progressed = false;
     if (!p0) {
       cpu::PendingBusOp msg;
       if (req0.try_pop(msg)) {
         p0 = msg;
+        progressed = true;
       }
     }
     if (!p1) {
       cpu::PendingBusOp msg;
       if (req1.try_pop(msg)) {
         p1 = msg;
+        progressed = true;
       }
     }
 
     core::Tick prog = 0;
     while (progress0.try_pop(prog)) {
       arbiter.update_progress(0, prog);
+      progressed = true;
     }
     while (progress1.try_pop(prog)) {
       arbiter.update_progress(1, prog);
+      progressed = true;
     }
 
     std::vector<bus::BusOp> pending_ops;
@@ -202,27 +227,25 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       pending_token.push_back(p1->op.producer_token);
     }
 
-    if ((p0 && !p1 && !done1.load()) || (p1 && !p0 && !done0.load())) {
-      static constexpr std::uint32_t kCoordinatorYieldInterval = 16U;
-      ++wait_spins;
-      if ((wait_spins % kCoordinatorYieldInterval) == 0U) {
-        std::this_thread::yield();
-      }
-      continue;
-    }
+    const bool waiting_for_peer = (p0 && !p1 && !done1.load()) || (p1 && !p0 && !done0.load());
+    const bool no_pending = !p0 && !p1;
 
     if (!pending_ops.empty()) {
       const auto committed = arbiter.commit_batch(pending_ops);
       for (const auto &result : committed) {
         const int cpu = pending_cpu[result.input_index];
         const auto script_index = pending_script[result.input_index];
-      if (cpu == 0) {
+        if (cpu == 0) {
           resp0.push(ScriptResponse{script_index, pending_token[result.input_index], result.response});
           p0.reset();
         } else {
           resp1.push(ScriptResponse{script_index, pending_token[result.input_index], result.response});
           p1.reset();
         }
+        progressed = true;
+      }
+      if (!committed.empty()) {
+        signal.notify();
       }
     }
 
@@ -230,10 +253,8 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       break;
     }
 
-    static constexpr std::uint32_t kLoopYieldInterval = 8U;
-    ++loop_spins;
-    if ((loop_spins % kLoopYieldInterval) == 0U) {
-      std::this_thread::yield();
+    if (!progressed && (waiting_for_peer || no_pending)) {
+      signal.wait_for_change(seen_epoch);
     }
   }
 

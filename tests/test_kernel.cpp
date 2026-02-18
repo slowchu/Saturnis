@@ -21,6 +21,23 @@ void check(bool cond, const std::string &msg) {
   }
 }
 
+std::string first_line_containing(const std::string &haystack, const std::string &needle) {
+  std::size_t line_start = 0;
+  while (line_start < haystack.size()) {
+    const std::size_t line_end = haystack.find('\n', line_start);
+    const std::size_t end = (line_end == std::string::npos) ? haystack.size() : line_end;
+    const auto line = haystack.substr(line_start, end - line_start);
+    if (line.find(needle) != std::string::npos) {
+      return line;
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    line_start = line_end + 1;
+  }
+  return {};
+}
+
 void run_pair(saturnis::cpu::ScriptedCPU &cpu0, saturnis::cpu::ScriptedCPU &cpu1, saturnis::bus::BusArbiter &arbiter) {
   std::optional<saturnis::cpu::PendingBusOp> p0;
   std::optional<saturnis::cpu::PendingBusOp> p1;
@@ -810,6 +827,78 @@ void test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deter
   const auto masked_ist = arbiter.commit({0, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
   check((masked_ist.value & 0x00000020U) == 0U,
         "VDP1/SCU handoff scaffold should respect IMS masking for deterministic pending-bit visibility");
+}
+
+std::string run_vdp1_source_event_handoff_trace() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  (void)arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+  (void)arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  return trace.to_jsonl();
+}
+
+void test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial_status = arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((initial_status.value & 0xFFU) == 0U, "VDP1 source-event status should start with deterministic zero event counter");
+
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  const auto status_after_event = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((status_after_event.value & 0xFFU) == 1U,
+        "VDP1 source-event status should deterministically increment event counter when event trigger is written");
+  check((status_after_event.value & 0x100U) != 0U,
+        "VDP1 source-event status should expose asserted deterministic IRQ level bit");
+
+  const auto asserted_ist = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  check((asserted_ist.value & 0x00000020U) != 0U,
+        "VDP1 source-event trigger should assert deterministic SCU source pending bit");
+
+  (void)arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+  const auto cleared_ist = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  check((cleared_ist.value & 0x00000020U) == 0U,
+        "VDP1 source-event pending bit should clear deterministically through SCU IST clear register");
+}
+
+void test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs() {
+  std::string baseline;
+  std::string baseline_trigger_line;
+  std::string baseline_read_line;
+
+  for (int run = 0; run < 6; ++run) {
+    const auto trace = run_vdp1_source_event_handoff_trace();
+    const auto trigger_line = first_line_containing(trace, "\"kind\":\"MMIO_WRITE\",\"phys\":97517712");
+    const auto read_line = first_line_containing(trace, "\"kind\":\"MMIO_READ\",\"phys\":100532388");
+
+    check(!trigger_line.empty(), "VDP1 source-event handoff trace should include trigger MMIO_WRITE commit line");
+    check(!read_line.empty(), "VDP1 source-event handoff trace should include SCU IST MMIO_READ commit line");
+    check(trigger_line.find("\"src\":\"MMIO\"") != std::string::npos &&
+              trigger_line.find("\"owner\":\"CPU\"") != std::string::npos &&
+              trigger_line.find("\"tag\":\"CPU\"") != std::string::npos,
+          "VDP1 source-event trigger commit should carry deterministic src/owner/tag trace fields");
+
+    if (run == 0) {
+      baseline = trace;
+      baseline_trigger_line = trigger_line;
+      baseline_read_line = read_line;
+      continue;
+    }
+
+    check(trace == baseline,
+          "VDP1 source-event handoff trace should remain byte-identical across repeated deterministic runs");
+    check(trigger_line == baseline_trigger_line,
+          "VDP1 source-event trigger commit timing tuple should remain stable across repeated runs");
+    check(read_line == baseline_read_line,
+          "VDP1 source-event IST read commit timing tuple should remain stable across repeated runs");
+  }
 }
 
 void test_vdp2_tvmd_register_masks_to_low_16_bits() {
@@ -4156,6 +4245,8 @@ int main() {
   test_smpc_command_write_updates_deterministic_command_and_result_registers();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically();
+  test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically();
+  test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();

@@ -4,6 +4,16 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-18 focused follow-up review (multithread bounded waiting + VDP1 source event path)
+- Performed another focused pass over scripted multithread coordination, VDP1/SCU interrupt scaffolding, bus validation details, and deterministic trace regressions.
+- Completed previously open high-value follow-ups:
+  1. Replaced pure yield-based hot-loop behavior in `run_scripted_pair_multithread` with deterministic bounded waiting via an explicit signal hub (`condition_variable` wake-on-progress model).
+  2. Expanded VDP1->SCU handoff from bridge-only toggling to a first source-driven event trigger path with deterministic event counter/status visibility.
+  3. Added repeated-run trace-level assertions for VDP1 handoff commits, pinning `src`/`owner`/`tag` fields and stable timing-line tuples.
+- Current top residual risks after this pass:
+  1. Scripted multithread coordination still relies on host thread scheduling for wake timing (behavior remains deterministic under current arbitration rules/tests, but throughput profile is host-dependent).
+  2. VDP1 interrupt-source model remains synthetic (event trigger scaffold), not yet mapped to real rendering/command completion sources.
+
 ### 2026-02-18 focused review (post-SMPC/VDP1 scaffold)
 - Performed a focused pass over bus arbitration, SH-2 execute/load paths, device MMIO scaffolds, trace regressions, and TODO hygiene.
 - Confirmed deterministic invariants still hold under current test matrix (single-thread and multithread trace parity loops remain stable in CI loop).
