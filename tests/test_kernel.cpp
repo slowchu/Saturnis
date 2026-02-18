@@ -2257,6 +2257,7 @@ void test_sh2_rts_both_negative_mixed_width_with_followup_target_arithmetic_is_d
   mem.write(0x0012U,2U,0xE3FFU); // MOV #-1,R3
   mem.write(0x0014U,2U,0x2131U); // MOV.W R3,@R1
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<13;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==1U, "RTS follow-up arithmetic should execute deterministically at target path");
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite with follow-up arithmetic should be deterministic");
@@ -2486,6 +2487,7 @@ void test_sh2_rts_both_negative_mixed_width_with_dual_target_arithmetic_is_deter
   mem.write(0x0014U,2U,0xE3FFU);
   mem.write(0x0016U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<14;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==2U, "RTS dual target arithmetic should execute deterministically");
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite with dual arithmetic should be deterministic");
@@ -2727,6 +2729,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_register_copy_before_store
   mem.write(0x0012U,2U,0xE355U);
   mem.write(0x0014U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<14;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(mem.read(0x0022U,2U)==0x0055U, "RTS target-side register copy before store should be deterministic");
 }
@@ -2966,6 +2969,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_mov_and_add_before_store_i
   mem.write(0x0014U,2U,0xE355U);
   mem.write(0x0016U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<15;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==1U, "RTS target-side MOV+ADD should execute deterministically");
   check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD before store should be deterministic");
@@ -3110,6 +3114,45 @@ void test_commit_horizon_four_alternating_reversals_on_both_cpus_before_converge
   arbiter.update_progress(0,3U); arbiter.update_progress(1,3U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase6 no regression");
   arbiter.update_progress(0,60U); arbiter.update_progress(1,60U); (void)arbiter.commit_pending(pending);
   check(pending.empty(), "quad-reversal phase7 should converge deterministically");
+}
+
+
+void test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address() {
+  constexpr std::uint32_t kAddr = 0x05FE0028U;
+  constexpr std::uint32_t kCpuValue = 0x00012345U;
+  constexpr std::uint32_t kDmaValue = 0x00034567U;
+
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    saturnis::bus::BusOp dma_write{0, 2U, 1, saturnis::bus::BusKind::MmioWrite, kAddr, 4, kDmaValue};
+    dma_write.cpu_id = -1;
+    dma_write.producer = saturnis::bus::BusProducer::Dma;
+
+    std::vector<saturnis::bus::BusOp> pending{{0, 2U, 0, saturnis::bus::BusKind::MmioWrite, kAddr, 4, kCpuValue},
+                                              dma_write,
+                                              {0, 3U, 2, saturnis::bus::BusKind::MmioRead, kAddr, 4, 0U}};
+
+    arbiter.update_progress(0, 10U);
+    arbiter.update_progress(1, 10U);
+    const auto committed = arbiter.commit_pending(pending);
+
+    check(pending.empty(), "CPU/DMA contention sequence should fully drain once horizon opens");
+    check(committed.size() == 3U, "CPU/DMA contention sequence should commit all queued MMIO operations");
+    check(committed[0].op.cpu_id == -1, "DMA should win equal-time MMIO contention by deterministic priority");
+    check(committed[1].op.cpu_id == 0, "CPU MMIO op should still commit immediately after DMA winner");
+    check(committed[2].response.value == kCpuValue,
+          "CPU MMIO write should deterministically become visible after DMA-first contention ordering");
+
+    const auto json = trace.to_jsonl();
+    check(json.find(R"("cpu":-1,"kind":"MMIO_WRITE","phys":100532264)") != std::string::npos,
+          "CPU/DMA fairness regression trace should include the DMA MMIO write checkpoint");
+    check(json.find(R"("cpu":0,"kind":"MMIO_WRITE","phys":100532264)") != std::string::npos,
+          "CPU/DMA fairness regression trace should include the CPU MMIO write checkpoint");
+  }
 }
 
 void test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically() {
@@ -3273,6 +3316,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_i
   mem.write(0x0016U,2U,0xE355U);
   mem.write(0x0018U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<17;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==2U, "RTS target-side MOV+ADD+ADD should execute deterministically");
   check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD+ADD before store should be deterministic");
@@ -3501,6 +3545,7 @@ int main() {
   test_sh2_same_addr_overwrite_with_six_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
+  test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
