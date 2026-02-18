@@ -32,6 +32,7 @@ public:
   [[nodiscard]] std::uint32_t sr() const;
   [[nodiscard]] std::uint32_t pr() const;
   void set_pr(std::uint32_t value);
+  void request_exception_vector(std::uint32_t vector);
 
 
 private:
@@ -64,6 +65,7 @@ private:
   std::optional<std::uint32_t> pending_exception_vector_;
   std::uint32_t exception_return_pc_ = 0;
   std::uint32_t exception_return_sr_ = 0;
+  bool has_exception_return_context_ = false;
   mem::TinyCache icache_{16, 64};
 };
 

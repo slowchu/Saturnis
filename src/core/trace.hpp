@@ -39,6 +39,9 @@ struct FaultEvent {
 
 class TraceLog {
 public:
+  void set_halt_on_fault(bool enabled);
+  [[nodiscard]] bool halt_on_fault() const;
+  [[nodiscard]] bool should_halt() const;
   void add_commit(const CommitEvent &event);
   void add_state(const CpuSnapshot &state);
   void add_fault(const FaultEvent &fault);
@@ -46,6 +49,8 @@ public:
   void write_jsonl(std::ostream &os) const;
 
 private:
+  bool halt_on_fault_ = false;
+  bool should_halt_ = false;
   std::vector<std::string> lines_;
 };
 
