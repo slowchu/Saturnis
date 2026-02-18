@@ -23,6 +23,7 @@ namespace {
 
 struct ScriptResponse {
   std::size_t script_index = 0;
+  std::uint64_t producer_token = 0;
   bus::BusResponse response{};
 };
 
@@ -48,7 +49,7 @@ private:
   std::deque<T> queue_;
 };
 
-void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
+void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter, core::TraceLog &trace) {
   std::optional<cpu::PendingBusOp> p0;
   std::optional<cpu::PendingBusOp> p1;
 
@@ -70,15 +71,18 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
     std::vector<bus::BusOp> pending_ops;
     std::vector<int> pending_cpu;
     std::vector<std::size_t> pending_script;
+    std::vector<std::uint64_t> pending_token;
     if (p0) {
       pending_ops.push_back(p0->op);
       pending_cpu.push_back(0);
       pending_script.push_back(p0->script_index);
+      pending_token.push_back(p0->op.producer_token);
     }
     if (p1) {
       pending_ops.push_back(p1->op);
       pending_cpu.push_back(1);
       pending_script.push_back(p1->script_index);
+      pending_token.push_back(p1->op.producer_token);
     }
 
     if (pending_ops.empty()) {
@@ -89,18 +93,19 @@ void run_scripted_pair(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusA
     for (const auto &result : committed) {
       const int cpu = pending_cpu[result.input_index];
       const auto script_index = pending_script[result.input_index];
+      const auto token = pending_token[result.input_index];
       if (cpu == 0) {
-        cpu0.apply_response(script_index, result.response);
+        cpu0.apply_response(script_index, result.response, token, &trace);
         p0.reset();
       } else {
-        cpu1.apply_response(script_index, result.response);
+        cpu1.apply_response(script_index, result.response, token, &trace);
         p1.reset();
       }
     }
   }
 }
 
-void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter) {
+void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu1, bus::BusArbiter &arbiter, core::TraceLog &trace) {
   arbiter.update_progress(0, 0U);
   arbiter.update_progress(1, 0U);
 
@@ -114,7 +119,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
   std::atomic<bool> done0{false};
   std::atomic<bool> done1{false};
 
-  auto producer = [](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
+  auto producer = [&trace](int cpu_id, cpu::ScriptedCPU &cpu, Mailbox<cpu::PendingBusOp> &req, Mailbox<ScriptResponse> &resp,
                      Mailbox<core::Tick> &progress, std::atomic<bool> &done) {
     std::optional<cpu::PendingBusOp> waiting;
     std::uint32_t idle_spins = 0U;
@@ -135,7 +140,7 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
 
       ScriptResponse response;
       if (resp.try_pop(response)) {
-        cpu.apply_response(response.script_index, response.response);
+        cpu.apply_response(response.script_index, response.response, response.producer_token, nullptr);
         progress.push(cpu.local_time());
         waiting.reset();
         continue;
@@ -183,15 +188,18 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
     std::vector<bus::BusOp> pending_ops;
     std::vector<int> pending_cpu;
     std::vector<std::size_t> pending_script;
+    std::vector<std::uint64_t> pending_token;
     if (p0) {
       pending_ops.push_back(p0->op);
       pending_cpu.push_back(0);
       pending_script.push_back(p0->script_index);
+      pending_token.push_back(p0->op.producer_token);
     }
     if (p1) {
       pending_ops.push_back(p1->op);
       pending_cpu.push_back(1);
       pending_script.push_back(p1->script_index);
+      pending_token.push_back(p1->op.producer_token);
     }
 
     if ((p0 && !p1 && !done1.load()) || (p1 && !p0 && !done0.load())) {
@@ -208,11 +216,11 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
       for (const auto &result : committed) {
         const int cpu = pending_cpu[result.input_index];
         const auto script_index = pending_script[result.input_index];
-        if (cpu == 0) {
-          resp0.push(ScriptResponse{script_index, result.response});
+      if (cpu == 0) {
+          resp0.push(ScriptResponse{script_index, pending_token[result.input_index], result.response});
           p0.reset();
         } else {
-          resp1.push(ScriptResponse{script_index, result.response});
+          resp1.push(ScriptResponse{script_index, pending_token[result.input_index], result.response});
           p1.reset();
         }
       }
@@ -256,7 +264,7 @@ std::string Emulator::run_dual_demo_trace() {
   const auto [cpu0_ops, cpu1_ops] = dual_demo_scripts();
   cpu::ScriptedCPU cpu0(0, cpu0_ops);
   cpu::ScriptedCPU cpu1(1, cpu1_ops);
-  run_scripted_pair(cpu0, cpu1, arbiter);
+  run_scripted_pair(cpu0, cpu1, arbiter, trace);
 
   return trace.to_jsonl();
 }
@@ -270,7 +278,7 @@ std::string Emulator::run_dual_demo_trace_multithread() {
   const auto [cpu0_ops, cpu1_ops] = dual_demo_scripts();
   cpu::ScriptedCPU cpu0(0, cpu0_ops);
   cpu::ScriptedCPU cpu1(1, cpu1_ops);
-  run_scripted_pair_multithread(cpu0, cpu1, arbiter);
+  run_scripted_pair_multithread(cpu0, cpu1, arbiter, trace);
 
   return trace.to_jsonl();
 }

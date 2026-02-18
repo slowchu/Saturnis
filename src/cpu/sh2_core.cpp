@@ -18,6 +18,19 @@ constexpr std::uint32_t kSrTBit = 0x00000001U;
                 : u32_sub(a, static_cast<std::uint32_t>(-static_cast<std::int64_t>(b)));
 }
 
+[[nodiscard]] constexpr std::int32_t signext12(std::uint32_t x) {
+  const std::uint32_t v = x & 0x0FFFU;
+  if ((v & 0x0800U) != 0U) {
+    return static_cast<std::int32_t>(v | 0xFFFFF000U);
+  }
+  return static_cast<std::int32_t>(v);
+}
+
+[[nodiscard]] constexpr std::uint32_t u32_add_i64(std::uint32_t a, std::int64_t b) {
+  return b >= 0 ? u32_add(a, static_cast<std::uint32_t>(b))
+                : u32_sub(a, static_cast<std::uint32_t>(-b));
+}
+
 [[nodiscard]] constexpr std::int32_t signext8(std::uint32_t x) {
   return static_cast<std::int32_t>(static_cast<std::int8_t>(x & 0xFFU));
 }
@@ -81,6 +94,7 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   pending_exception_vector_.reset();
   exception_return_pc_ = 0;
   exception_return_sr_ = 0;
+  has_exception_return_context_ = false;
 }
 
 void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bool from_bus_commit) {
@@ -162,13 +176,8 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
     const std::uint32_t branch_pc = pc_;
-    std::int32_t disp = static_cast<std::int32_t>(instr & 0x0FFFU);
-    if ((disp & 0x800) != 0) {
-      disp |= ~0xFFF;
-    }
-    const std::int32_t byte_offset = disp * 2;
-    const std::int64_t target = static_cast<std::int64_t>(branch_pc) + 4 + static_cast<std::int64_t>(byte_offset);
-    next_branch_target = static_cast<std::uint32_t>(target);
+    const std::int64_t byte_offset = static_cast<std::int64_t>(signext12(instr)) * 2LL;
+    next_branch_target = u32_add_i64(u32_add(branch_pc, 4U), byte_offset);
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x400BU) {
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
@@ -178,6 +187,16 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   } else if (instr == 0x000BU) {
     next_branch_target = pr_;
     pc_ += 2U;
+  } else if (instr == 0x002BU) {
+    if (!has_exception_return_context_) {
+      trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, 0U, "SYNTHETIC_RTE_WITHOUT_CONTEXT"});
+      pc_ += 2U;
+    } else {
+      trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, exception_return_pc_, "SYNTHETIC_RTE"});
+      sr_ = exception_return_sr_;
+      pc_ = exception_return_pc_;
+      has_exception_return_context_ = false;
+    }
   } else {
     trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, static_cast<std::uint32_t>(instr), "ILLEGAL_OP"});
     pc_ += 2U;
@@ -203,6 +222,7 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
 
 
   if (pending_exception_vector_.has_value()) {
+    trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, *pending_exception_vector_, "SYNTHETIC_EXCEPTION_ENTRY"});
     const std::uint32_t vector_phys = mem::to_phys(static_cast<std::uint32_t>(*pending_exception_vector_) * 4U);
     pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ExceptionVectorRead, vector_phys, 4U, 0U, 0U, std::nullopt, 0U, 0U};
     pending_exception_vector_.reset();
@@ -307,9 +327,14 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     const auto pending = *pending_mem_op_;
     pending_mem_op_.reset();
     if (pending.kind == PendingMemOp::Kind::ExceptionVectorRead) {
-      exception_return_pc_ = pc_;
+      exception_return_pc_ = u32_add(pc_, 2U);
       exception_return_sr_ = sr_;
+      has_exception_return_context_ = true;
       pc_ = response.value;
+      t_ += 1;
+      ++executed_;
+      trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
+      return;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
@@ -338,7 +363,13 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
   }
 
   if (!response.line_data.empty()) {
-    icache_.fill_line(response.line_base, response.line_data);
+    const std::uint32_t phys = mem::to_phys(pc_);
+    const std::uint32_t expected_line_base = phys / static_cast<std::uint32_t>(icache_.line_size());
+    if (response.line_base != expected_line_base || response.line_data.size() != icache_.line_size()) {
+      trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, phys, "CACHE_FILL_MISMATCH"});
+    } else {
+      icache_.fill_line(response.line_base, response.line_data);
+    }
   }
   const std::uint16_t instr = static_cast<std::uint16_t>(response.value & 0xFFFFU);
   execute_instruction(instr, trace, true);
@@ -354,6 +385,8 @@ void SH2Core::set_t_flag(bool value) {
     sr_ &= ~kSrTBit;
   }
 }
+
+void SH2Core::request_exception_vector(std::uint32_t vector) { pending_exception_vector_ = vector; }
 
 void SH2Core::step(bus::BusArbiter &arbiter, core::TraceLog &trace, std::uint64_t seq) {
   const auto produced = produce_until_bus(seq, trace, 1);
