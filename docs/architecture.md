@@ -39,11 +39,15 @@ Arbiter order is not host thread submission order.
 Selection uses deterministic keys:
 
 1. Minimal computed `start_time`
-2. Priority class (`DMA > CPU-MMIO > CPU-RAM` in default policy)
-3. Round-robin tie-break for equal-priority CPU-vs-CPU ties using `last_grant_cpu`
-4. Final stable tie-break: `(cpu_id, sequence)`
+2. For ties from the same producer slot, preserve producer order (`req_time`, then `sequence`)
+3. Priority class (`DMA > CPU-MMIO > CPU-RAM` in default policy) for cross-producer ties
+4. Round-robin tie-break for equal-priority CPU-vs-CPU ties using `last_grant_cpu`
+5. Final stable tie-break: `(cpu_id, sequence)`
 
 This guarantees identical traces even when producers submit in different host orders.
+
+When synthetic exception scaffolding is exercised in this vertical slice, entry/return is trace-labeled as
+`SYNTHETIC_EXCEPTION_ENTRY` and `SYNTHETIC_RTE` to avoid conflating bring-up behavior with full SH-2-accurate exception stack semantics.
 
 ## Commit safety with progress watermarks
 

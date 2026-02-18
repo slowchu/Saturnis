@@ -90,33 +90,42 @@ core::Tick BusArbiter::contention_extra(const BusOp &op, bool had_tie) const {
   return extra;
 }
 
+
+
+BusResponse BusArbiter::fault_response(const BusOp &op, core::Tick start, const char *reason, std::uint32_t detail) {
+  trace_.add_fault(core::FaultEvent{start, op.cpu_id, 0U, detail, reason});
+  constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
+  trace_.add_commit(core::CommitEvent{start, start, op, 0U, kInvalidBusOpValue, false});
+  return BusResponse{kInvalidBusOpValue, 0U, start, start, 0U, {}};
+}
+
+bool BusArbiter::validate_enqueue_contract(const BusOp &op) {
+  const auto slot = producer_slot(op);
+  if (producer_enqueued_seen_[slot] && op.req_time < producer_last_enqueued_req_time_[slot]) {
+    const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
+    (void)fault_response(op, start, "ENQUEUE_NON_MONOTONIC_REQ_TIME",
+                         static_cast<std::uint32_t>(op.req_time & 0xFFFFFFFFU));
+    return false;
+  }
+  producer_enqueued_seen_[slot] = true;
+  producer_last_enqueued_req_time_[slot] = op.req_time;
+  return true;
+}
 BusResponse BusArbiter::execute_commit(const BusOp &op, bool had_tie) {
   if (!is_valid_bus_op(op)) {
 #ifndef NDEBUG
     assert(false && "invalid BusOp: size must be 1/2/4 and address must satisfy size alignment");
 #endif
     const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
-    trace_.add_fault(core::FaultEvent{start, op.cpu_id, 0U,
-                                      static_cast<std::uint32_t>((op.phys_addr & 0xFFFFU) | (static_cast<std::uint32_t>(op.size) << 24U)),
-                                      "INVALID_BUS_OP"});
-    const core::Tick finish = start;
-    const core::Tick stall = finish - op.req_time;
-    constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
-    trace_.add_commit(core::CommitEvent{start, finish, op, stall, kInvalidBusOpValue, false});
-    return BusResponse{kInvalidBusOpValue, stall, start, finish, 0U, {}};
+    return fault_response(op, start, "INVALID_BUS_OP",
+                          static_cast<std::uint32_t>((op.phys_addr & 0xFFFFU) | (static_cast<std::uint32_t>(op.size) << 24U)));
   }
 
   const auto slot = producer_slot(op);
   if (producer_seen_[slot] && op.req_time < producer_last_req_time_[slot]) {
-#ifndef NDEBUG
-    assert(false && "producer req_time must be monotonic");
-#endif
     const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
-    trace_.add_fault(core::FaultEvent{start, op.cpu_id, 0U, static_cast<std::uint32_t>(op.req_time & 0xFFFFFFFFU),
-                                      "NON_MONOTONIC_REQ_TIME"});
-    constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
-    trace_.add_commit(core::CommitEvent{start, start, op, 0U, kInvalidBusOpValue, false});
-    return BusResponse{kInvalidBusOpValue, 0U, start, start, 0U, {}};
+    return fault_response(op, start, "NON_MONOTONIC_REQ_TIME",
+                          static_cast<std::uint32_t>(op.req_time & 0xFFFFFFFFU));
   }
   producer_seen_[slot] = true;
   producer_last_req_time_[slot] = op.req_time;
@@ -196,8 +205,6 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
   for (std::size_t idx : committable) {
     const auto &candidate = pending[idx].op;
     const core::Tick start = std::max(candidate.req_time, bus_free_time_);
-    const auto cprio = policy_->priority_of(candidate);
-    const auto bprio = policy_->priority_of(pending[best].op);
 
     if (start < best_start) {
       best = idx;
@@ -208,6 +215,18 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
       continue;
     }
 
+    const auto &cur = pending[best].op;
+    if (producer_slot(candidate) == producer_slot(cur)) {
+      if (candidate.sequence < cur.sequence) {
+        best = idx;
+      } else if (candidate.sequence == cur.sequence && candidate.req_time < cur.req_time) {
+        best = idx;
+      }
+      continue;
+    }
+
+    const auto cprio = policy_->priority_of(candidate);
+    const auto bprio = policy_->priority_of(cur);
     if (cprio > bprio) {
       best = idx;
       continue;
@@ -216,7 +235,6 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
       continue;
     }
 
-    const auto &cur = pending[best].op;
     if (is_cpu(candidate.cpu_id) && is_cpu(cur.cpu_id) && candidate.cpu_id != cur.cpu_id) {
       const int preferred = (last_grant_cpu_ == 0) ? 1 : 0;
       if (candidate.cpu_id == preferred) {
@@ -239,24 +257,52 @@ std::size_t BusArbiter::pick_next(const std::vector<CommitResult> &pending, cons
   return best;
 }
 
-BusResponse BusArbiter::commit(const BusOp &op) { return execute_commit(op, false); }
+BusResponse BusArbiter::commit(const BusOp &op) {
+  if (trace_.should_halt()) {
+    constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
+    return BusResponse{kInvalidBusOpValue, 0U, bus_free_time_, bus_free_time_, 0U, {}};
+  }
+  if (!validate_enqueue_contract(op)) {
+    return BusResponse{0xBAD0BAD0U, 0U, bus_free_time_, bus_free_time_, 0U, {}};
+  }
+  return execute_commit(op, false);
+}
 
 BusResponse BusArbiter::commit_dma(BusOp op) {
   op.cpu_id = -1;
   op.producer = BusProducer::Dma;
+  if (trace_.should_halt()) {
+    constexpr std::uint32_t kInvalidBusOpValue = 0xBAD0BAD0U;
+    return BusResponse{kInvalidBusOpValue, 0U, bus_free_time_, bus_free_time_, 0U, {}};
+  }
+  if (!validate_enqueue_contract(op)) {
+    return BusResponse{0xBAD0BAD0U, 0U, bus_free_time_, bus_free_time_, 0U, {}};
+  }
   return execute_commit(op, false);
 }
 
 std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops) {
+  producer_enqueued_seen_.fill(false);
+  producer_last_enqueued_req_time_.fill(0U);
+
   std::vector<CommitResult> pending;
   pending.reserve(ops.size());
   for (std::size_t i = 0; i < ops.size(); ++i) {
+    if (trace_.should_halt()) {
+      break;
+    }
+    if (!validate_enqueue_contract(ops[i])) {
+      continue;
+    }
     pending.push_back(CommitResult{i, ops[i], {}});
   }
   std::vector<CommitResult> committed;
   committed.reserve(ops.size());
 
   while (!pending.empty()) {
+    if (trace_.should_halt()) {
+      break;
+    }
     std::vector<std::size_t> committable;
     committable.reserve(pending.size());
     const core::Tick horizon = commit_horizon();
@@ -290,6 +336,9 @@ std::vector<CommitResult> BusArbiter::commit_batch(const std::vector<BusOp> &ops
     chosen.response = execute_commit(chosen.op, had_tie);
     committed.push_back(chosen);
     pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(next_idx));
+    if (trace_.should_halt()) {
+      break;
+    }
   }
 
   return committed;
