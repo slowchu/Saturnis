@@ -206,9 +206,36 @@
 ## Next tasks (repopulated)
 
 1. [x] Replace SH-2 mixed-width BRA/RTS overwrite TODO-guard expectations with architectural target-side overwrite semantics and focused regressions.
-2. [ ] Add centralized BusOp size validation in `BusArbiter`/MMIO path and regression checks for invalid-size rejection semantics.
-3. [ ] Add deterministic stress regression for `run_scripted_pair_multithread` progress/response liveness under extended contention windows.
-4. [ ] Refactor multithread scripted-pair coordination away from pure busy-wait yield loops toward deterministic bounded waiting.
-5. [ ] Expand VDP1->SCU interrupt scaffold from bridge register to first source-driven event path while preserving IMS/IST determinism assertions.
-6. [ ] Add trace-level assertions for VDP1->SCU handoff commits (`src`, `owner`, `tag`, timing tuple) under repeated runs.
-7. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+2. [x] Add centralized BusOp size validation in `BusArbiter`/MMIO path and regression checks for invalid-size rejection semantics.
+3. [x] Add deterministic stress regression for `run_scripted_pair_multithread` progress/response liveness under extended contention windows.
+4. [x] Refactor multithread scripted-pair coordination away from pure busy-wait yield loops toward deterministic bounded waiting.
+5. [x] Expand VDP1->SCU interrupt scaffold from bridge register to first source-driven event path while preserving IMS/IST determinism assertions.
+6. [x] Add trace-level assertions for VDP1->SCU handoff commits (`src`, `owner`, `tag`, timing tuple) under repeated runs.
+7. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+
+## Next tasks (repopulated again, completed)
+
+1. [x] Add deterministic VDP1 source-event status read-only/lane semantics regression coverage.
+2. [x] Add trace-regression-level repeated-run stability checks for VDP1 source-event handoff commits.
+3. [x] Connect VDP1 source-event trigger scaffold to first command/completion-producing path while preserving deterministic trace parity.
+4. [x] Extend trace regression to pin VDP1 source-event status/IST timing tuples across single-thread/multithread scripted stress fixtures.
+5. [x] Run another focused code-review pass and refresh docs with residual risks/TODOs.
+
+## Next tasks (new 16-task batch)
+
+1. [ ] Add deterministic regression for VDP1 command-status lane reads (byte + halfword) and verify packed busy/completion/command fields.
+2. [ ] Add deterministic regression for VDP1 command completion clear/ack behavior via SCU IST clear sequences across repeated runs.
+3. [ ] Extend VDP1 command-completion stress fixture with alternating CPU ownership and assert ST/MT trace parity.
+4. [ ] Add deterministic trace assertions for VDP1 command completion commits carrying stable `src`/`owner`/`tag` metadata under repeated runs.
+5. [ ] Add focused regression for enqueue-contract faults in multithread scripted stress under deliberate same-producer req_time inversion.
+6. [ ] Add deterministic parity checks for halt-on-fault stop boundaries across ST/MT contention stress fixtures.
+7. [ ] Expand BusArbiter invalid-size/invalid-alignment fault payload tests to pin encoded detail-class fields.
+8. [ ] Add scripted CPU store-buffer stress test with repeated same-address writes + intermittent reads to pin bounded retire behavior.
+9. [ ] Add deterministic TinyCache mismatch injection coverage in multithread mode ensuring fail-loud fault + parity with single-thread behavior.
+10. [ ] Add SH-2 synthetic exception nested-entry guard test to pin deterministic trace markers and return ordering.
+11. [ ] Expand SH-2 synthetic RTE coverage with altered SR masks to verify deterministic restore semantics.
+12. [ ] Add deterministic BIOS trace assertion for selected MMIO_READ timing tuples involving SCU IST/IMS interactions.
+13. [ ] Add deterministic dual-demo trace-prefix stability check for first 32 commit lines across repeated multithread runs.
+14. [ ] Add deterministic regression for VDP1 event counter saturation/wrap policy (document chosen behavior and enforce with tests).
+15. [ ] Refresh architecture/docs to describe VDP1 command/completion path assumptions and known hardware-accuracy gaps.
+16. [ ] Run another full-project code-review pass and refresh docs with newly discovered risks/TODOs.

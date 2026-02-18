@@ -21,6 +21,23 @@ void check(bool cond, const std::string &msg) {
   }
 }
 
+std::string first_line_containing(const std::string &haystack, const std::string &needle) {
+  std::size_t line_start = 0;
+  while (line_start < haystack.size()) {
+    const std::size_t line_end = haystack.find('\n', line_start);
+    const std::size_t end = (line_end == std::string::npos) ? haystack.size() : line_end;
+    const auto line = haystack.substr(line_start, end - line_start);
+    if (line.find(needle) != std::string::npos) {
+      return line;
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    line_start = line_end + 1;
+  }
+  return {};
+}
+
 void run_pair(saturnis::cpu::ScriptedCPU &cpu0, saturnis::cpu::ScriptedCPU &cpu1, saturnis::bus::BusArbiter &arbiter) {
   std::optional<saturnis::cpu::PendingBusOp> p0;
   std::optional<saturnis::cpu::PendingBusOp> p1;
@@ -106,7 +123,7 @@ void test_tiny_cache_uses_big_endian_multibyte_layout() {
 void test_store_buffer_retains_entries_beyond_previous_capacity() {
   saturnis::mem::StoreBuffer sb;
   for (std::uint32_t i = 0; i < 20U; ++i) {
-    sb.push({0x4000U + i * 4U, 4U, 0x90000000U + i});
+    sb.push({static_cast<std::uint64_t>(i + 1U), 0x4000U + i * 4U, 4U, 0x90000000U + i});
   }
 
   const auto first = sb.forward(0x4000U, 4U);
@@ -202,7 +219,7 @@ void test_commit_horizon_correctness() {
   const auto blocked_try = arbiter.commit_batch({blocked});
   check(blocked_try.empty(), "arbiter must gate commits beyond commit horizon");
 
-  const saturnis::bus::BusOp near_now{1, 3U, 1, saturnis::bus::BusKind::Write, 0x7004U, 4, 0x22U};
+  const saturnis::bus::BusOp near_now{0, 3U, 1, saturnis::bus::BusKind::Write, 0x7004U, 4, 0x22U};
   const auto near_commit = arbiter.commit_batch({near_now});
   check(near_commit.size() == 1U, "committable op below horizon should make progress");
 
@@ -810,6 +827,140 @@ void test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deter
   const auto masked_ist = arbiter.commit({0, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
   check((masked_ist.value & 0x00000020U) == 0U,
         "VDP1/SCU handoff scaffold should respect IMS masking for deterministic pending-bit visibility");
+}
+
+std::string run_vdp1_source_event_handoff_trace() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  (void)arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+  (void)arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  return trace.to_jsonl();
+}
+
+void test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial_status = arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((initial_status.value & 0xFFU) == 0U, "VDP1 source-event status should start with deterministic zero event counter");
+
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  const auto status_after_event = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((status_after_event.value & 0xFFU) == 1U,
+        "VDP1 source-event status should deterministically increment event counter when event trigger is written");
+  check((status_after_event.value & 0x100U) != 0U,
+        "VDP1 source-event status should expose asserted deterministic IRQ level bit");
+
+  const auto asserted_ist = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  check((asserted_ist.value & 0x00000020U) != 0U,
+        "VDP1 source-event trigger should assert deterministic SCU source pending bit");
+
+  (void)arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+  const auto cleared_ist = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  check((cleared_ist.value & 0x00000020U) == 0U,
+        "VDP1 source-event pending bit should clear deterministically through SCU IST clear register");
+}
+
+void test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs() {
+  std::string baseline;
+  std::string baseline_trigger_line;
+  std::string baseline_read_line;
+
+  for (int run = 0; run < 6; ++run) {
+    const auto trace = run_vdp1_source_event_handoff_trace();
+    const auto trigger_line = first_line_containing(trace, "\"kind\":\"MMIO_WRITE\",\"phys\":97517712");
+    const auto read_line = first_line_containing(trace, "\"kind\":\"MMIO_READ\",\"phys\":100532388");
+
+    check(!trigger_line.empty(), "VDP1 source-event handoff trace should include trigger MMIO_WRITE commit line");
+    check(!read_line.empty(), "VDP1 source-event handoff trace should include SCU IST MMIO_READ commit line");
+    check(trigger_line.find("\"src\":\"MMIO\"") != std::string::npos &&
+              trigger_line.find("\"owner\":\"CPU\"") != std::string::npos &&
+              trigger_line.find("\"tag\":\"CPU\"") != std::string::npos,
+          "VDP1 source-event trigger commit should carry deterministic src/owner/tag trace fields");
+
+    if (run == 0) {
+      baseline = trace;
+      baseline_trigger_line = trigger_line;
+      baseline_read_line = read_line;
+      continue;
+    }
+
+    check(trace == baseline,
+          "VDP1 source-event handoff trace should remain byte-identical across repeated deterministic runs");
+    check(trigger_line == baseline_trigger_line,
+          "VDP1 source-event trigger commit timing tuple should remain stable across repeated runs");
+    check(read_line == baseline_read_line,
+          "VDP1 source-event IST read commit timing tuple should remain stable across repeated runs");
+  }
+}
+
+void test_vdp1_source_event_command_completion_path_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00098U, 4U, 0x34U});
+  const auto busy_status = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check((busy_status.value & 0x1U) != 0U,
+        "VDP1 command status should set deterministic busy bit after command submission");
+  check(((busy_status.value >> 16U) & 0xFFU) == 0x34U,
+        "VDP1 command status should expose deterministically latched command byte");
+
+  (void)arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05D000A0U, 4U, 0x1U});
+  const auto done_status = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05D0009CU, 4U, 0U});
+  check((done_status.value & 0x1U) == 0U,
+        "VDP1 command status should clear deterministic busy bit after completion pulse");
+  check(((done_status.value >> 8U) & 0xFFU) == 1U,
+        "VDP1 command status should increment deterministic completion counter");
+
+  const auto event_status = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((event_status.value & 0x1FFU) == 0x101U,
+        "VDP1 command completion should deterministically produce source-event status counter/IRQ bits");
+
+  const auto asserted_ist = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  check((asserted_ist.value & 0x00000020U) != 0U,
+        "VDP1 command completion should assert deterministic SCU source pending bit");
+
+  (void)arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioWrite, 0x05D000A0U, 4U, 0x1U});
+  const auto status_after_extra_complete = arbiter.commit({0, 7U, 7U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check(status_after_extra_complete.value == event_status.value,
+        "VDP1 completion pulse without pending command should leave deterministic status unchanged");
+}
+
+void test_vdp1_source_event_status_register_is_read_only_and_lane_stable() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial = arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check(initial.value == 0U,
+        "VDP1 source-event status should deterministically reset to zero before any trigger events");
+
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  const auto after_trigger = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((after_trigger.value & 0xFFU) == 1U && (after_trigger.value & 0x100U) != 0U,
+        "VDP1 source-event status should expose deterministic event counter and IRQ-level bits after trigger");
+
+  (void)arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioWrite, 0x05D00094U, 4U, 0xFFFFFFFFU});
+  const auto after_illegal_write = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check(after_illegal_write.value == after_trigger.value,
+        "VDP1 source-event status should remain read-only under deterministic write attempts");
+
+  const auto upper_half = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 2U, 0U});
+  const auto lower_half = arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioRead, 0x05D00096U, 2U, 0U});
+  check(upper_half.value == 0U,
+        "VDP1 source-event status high halfword should remain deterministic zero in current scaffold");
+  check(lower_half.value == 0x0101U,
+        "VDP1 source-event status low halfword should deterministically pack IRQ-level and event-counter bits");
 }
 
 void test_vdp2_tvmd_register_masks_to_low_16_bits() {
@@ -3567,6 +3718,44 @@ void test_bus_arbiter_invalid_unaligned_long_access_is_deterministic() {
 #endif
 }
 
+void test_bus_arbiter_invalid_size_access_is_deterministic() {
+#ifndef NDEBUG
+  // In debug builds invalid BusOps are fail-fast assertions by design.
+  return;
+#else
+  saturnis::core::TraceLog trace_a;
+  saturnis::mem::CommittedMemory mem_a;
+  saturnis::dev::DeviceHub dev_a;
+  saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+  saturnis::core::TraceLog trace_b;
+  saturnis::mem::CommittedMemory mem_b;
+  saturnis::dev::DeviceHub dev_b;
+  saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+
+  const saturnis::bus::BusOp invalid_ram{0, 0U, 0U, saturnis::bus::BusKind::Read, 0x00002000U, 3U, 0U};
+  const saturnis::bus::BusOp invalid_mmio{0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 3U, 0x123456U};
+
+  const auto ram_a = arbiter_a.commit(invalid_ram);
+  const auto mmio_a = arbiter_a.commit(invalid_mmio);
+  const auto ram_b = arbiter_b.commit(invalid_ram);
+  const auto mmio_b = arbiter_b.commit(invalid_mmio);
+
+  check(ram_a.value == 0xBAD0BAD0U && mmio_a.value == 0xBAD0BAD0U &&
+            ram_b.value == 0xBAD0BAD0U && mmio_b.value == 0xBAD0BAD0U,
+        "invalid bus-op size should return deterministic BAD0BAD0 sentinel for RAM/MMIO paths");
+
+  const auto ja = trace_a.to_jsonl();
+  const auto jb = trace_b.to_jsonl();
+  check(ja == jb,
+        "invalid-size bus-op faults should emit byte-identical traces across repeated runs");
+  check(ja.find("\"reason\":\"INVALID_BUS_OP\"") != std::string::npos,
+        "invalid-size bus-op faults should emit explicit INVALID_BUS_OP marker");
+  check(ja.find("\"detail\":318775296") != std::string::npos,
+        "invalid-size bus-op faults should include encoded size-validation class in deterministic detail payload");
+#endif
+}
+
 void test_sh2_mov_register_copies_source_to_destination() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -3640,6 +3829,280 @@ void test_p0_mmio_big_endian_lane_mapping_via_arbiter() {
   const auto value = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 4, 0U});
 
   check(value.value == 0x12000034U, "MMIO sub-byte writes should map into big-endian 32-bit lanes");
+}
+
+
+
+std::string run_policy_a_same_producer_tie_trace(bool reversed_arrival) {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::LatencyModel latency{};
+  latency.ram_read = 100U;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace, nullptr, latency);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::Read, 0x00000000U, 4U, 0U});
+
+  const saturnis::bus::BusOp early_ram{0, 10U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U};
+  const saturnis::bus::BusOp later_mmio{0, 11U, 2U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4U, 0x1U};
+
+  if (reversed_arrival) {
+    (void)arbiter.commit_batch({later_mmio, early_ram});
+  } else {
+    (void)arbiter.commit_batch({early_ram, later_mmio});
+  }
+  return trace.to_jsonl();
+}
+
+void test_policy_a_same_producer_start_time_tie_preserves_program_order_and_mode_parity() {
+  const auto single_mode_trace = run_policy_a_same_producer_tie_trace(false);
+  const auto multithread_arrival_trace = run_policy_a_same_producer_tie_trace(true);
+
+  check(single_mode_trace.find("\"reason\":\"NON_MONOTONIC_REQ_TIME\"") == std::string::npos,
+        "Policy A must prevent same-producer start-time ties from generating NON_MONOTONIC_REQ_TIME faults");
+  check(multithread_arrival_trace.find("\"reason\":\"NON_MONOTONIC_REQ_TIME\"") == std::string::npos,
+        "Policy A must prevent same-producer start-time ties from faulting under multithread-style arrival order");
+
+  const auto early_commit = single_mode_trace.find("\"kind\":\"READ\",\"phys\":4096");
+  const auto later_commit = single_mode_trace.find("\"kind\":\"MMIO_WRITE\",\"phys\":100532384");
+  check(early_commit != std::string::npos && later_commit != std::string::npos && early_commit < later_commit,
+        "earlier RAM request must commit before later MMIO request for same producer when start_time ties");
+}
+
+void test_trace_halt_on_fault_stops_deterministically_at_first_fault() {
+#ifndef NDEBUG
+  return;
+#else
+  saturnis::core::TraceLog trace;
+  trace.set_halt_on_fault(true);
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp invalid{0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05FE00A2U, 4U, 0U};
+  const saturnis::bus::BusOp would_be_next{0, 1U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U};
+  const auto committed = arbiter.commit_batch({invalid, would_be_next});
+
+  check(trace.should_halt(), "halt-on-fault mode must latch deterministic stop state after first fault");
+  check(committed.size() == 1U, "halt-on-fault mode must stop batch commit at first fault boundary");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"INVALID_BUS_OP\"") != std::string::npos,
+        "halt-on-fault mode must retain deterministic INVALID_BUS_OP fault marker");
+  check(json.find("\"phys\":4096") == std::string::npos,
+        "halt-on-fault mode must prevent post-fault operations from entering the commit trace");
+#endif
+}
+
+void test_halt_on_fault_mode_can_enforce_fault_free_regressions() {
+  saturnis::core::TraceLog trace;
+  trace.set_halt_on_fault(true);
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto committed = arbiter.commit_batch({
+      {0, 0U, 0U, saturnis::bus::BusKind::Write, 0x00002000U, 4U, 0x11223344U},
+      {0, 1U, 1U, saturnis::bus::BusKind::Read, 0x00002000U, 4U, 0U},
+  });
+
+  check(!trace.should_halt(), "fault-free regression path should not trip halt-on-fault latch");
+  check(committed.size() == 2U && committed[1].response.value == 0x11223344U,
+        "fault-free regression path should complete normally under halt-on-fault mode");
+}
+
+void test_p0_ram_lane_microtest_longword_to_byte_offsets() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::Write, 0x00001000U, 4U, 0x11223344U});
+
+  const auto b0 = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::Read, 0x00001000U, 1U, 0U});
+  const auto b1 = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::Read, 0x00001001U, 1U, 0U});
+  const auto b2 = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::Read, 0x00001002U, 1U, 0U});
+  const auto b3 = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::Read, 0x00001003U, 1U, 0U});
+
+  check(b0.value == 0x11U && b1.value == 0x22U && b2.value == 0x33U && b3.value == 0x44U,
+        "RAM longword lane mapping must read back bytes as big-endian offsets 0..3 => 11,22,33,44");
+}
+
+void test_p0_mmio_lane_microtest_byte_halfword_and_lane_isolation() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05FE0020U, 4U, 0x11223344U});
+
+  const auto b0 = arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 1U, 0U});
+  const auto b1 = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05FE0021U, 1U, 0U});
+  const auto b2 = arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioRead, 0x05FE0022U, 1U, 0U});
+  const auto b3 = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05FE0023U, 1U, 0U});
+  const auto h0 = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 2U, 0U});
+  const auto h1 = arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioRead, 0x05FE0022U, 2U, 0U});
+
+  check(b0.value == 0x11U && b1.value == 0x22U && b2.value == 0x33U && b3.value == 0x44U,
+        "MMIO lane mapping must read big-endian byte lanes at offsets 0..3");
+  check(h0.value == 0x1122U && h1.value == 0x3344U,
+        "MMIO lane mapping must read big-endian halfword lanes at offsets 0 and 2");
+
+  (void)arbiter.commit({0, 7U, 7U, saturnis::bus::BusKind::MmioWrite, 0x05FE0021U, 1U, 0xAAU});
+  const auto combined = arbiter.commit({0, 8U, 8U, saturnis::bus::BusKind::MmioRead, 0x05FE0020U, 4U, 0U});
+  check(combined.value == 0x11AA3344U,
+        "MMIO byte write to offset +1 must only update its lane in the 32-bit register image");
+}
+
+void test_bus_arbiter_enqueue_contract_violation_faults_deterministically() {
+#ifndef NDEBUG
+  return;
+#else
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit_batch({
+      {0, 10U, 0U, saturnis::bus::BusKind::Read, 0x00001000U, 4U, 0U},
+      {0, 9U, 1U, saturnis::bus::BusKind::Read, 0x00001004U, 4U, 0U},
+  });
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ENQUEUE_NON_MONOTONIC_REQ_TIME\"") != std::string::npos,
+        "arbiter enqueue-time producer contract violation must emit deterministic ENQUEUE_NON_MONOTONIC_REQ_TIME fault");
+#endif
+}
+
+void test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  saturnis::cpu::ScriptedCPU cpu(0, {
+    {saturnis::cpu::ScriptOpKind::Write, 0x00002000U, 4U, 0xAAAAAAAAU, 0U},
+    {saturnis::cpu::ScriptOpKind::Write, 0x00002000U, 4U, 0xBBBBBBBBU, 0U},
+    {saturnis::cpu::ScriptOpKind::Read,  0x00002000U, 4U, 0U,          0U},
+  });
+
+  const auto p0 = cpu.produce();
+  const auto p1 = cpu.produce();
+  const auto p2 = cpu.produce();
+  check(p0.has_value() && p1.has_value(), "scripted CPU should emit two pending store bus ops");
+  check(!p2.has_value(), "latest store should forward into following read without bus request");
+  check(cpu.last_read().has_value() && *cpu.last_read() == 0xBBBBBBBBU,
+        "store buffer forwarding must pick newest same-address store value");
+  check(cpu.store_buffer_size() == 2U, "store buffer should contain both in-flight stores before retire");
+
+  const auto c0 = arbiter.commit_batch({p0->op});
+  check(c0.size() == 1U, "first store op should commit");
+  cpu.apply_response(p0->script_index, c0[0].response, p0->op.producer_token, &trace);
+  check(cpu.store_buffer_size() == 1U, "retire-by-store-id should remove only first committed store entry");
+
+  const auto c1 = arbiter.commit_batch({p1->op});
+  check(c1.size() == 1U, "second store op should commit");
+  cpu.apply_response(p1->script_index, c1[0].response, p1->op.producer_token, &trace);
+  check(cpu.store_buffer_size() == 0U, "retire-by-store-id should drain store buffer once all stores commit");
+}
+
+void test_scripted_cpu_cache_fill_mismatch_faults_deterministically() {
+  saturnis::core::TraceLog trace;
+  trace.set_halt_on_fault(true);
+  saturnis::cpu::ScriptedCPU cpu(0, {
+    {saturnis::cpu::ScriptOpKind::Read, 0x00001000U, 4U, 0U, 0U},
+    {saturnis::cpu::ScriptOpKind::Read, 0x00001000U, 4U, 0U, 0U},
+  });
+
+  const auto first = cpu.produce();
+  check(first.has_value(), "first read should miss cache and issue bus request");
+
+  saturnis::bus::BusResponse bad{};
+  bad.value = 0x11223344U;
+  bad.line_base = first->op.phys_addr / static_cast<std::uint32_t>(16U) + 1U;
+  bad.line_data.assign(16U, 0U);
+  cpu.apply_response(first->script_index, bad, first->op.producer_token, &trace);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"CACHE_FILL_MISMATCH\"") != std::string::npos,
+        "cache fill mismatch must emit deterministic CACHE_FILL_MISMATCH fault");
+  check(trace.should_halt(), "halt-on-fault mode must latch on cache-fill mismatch");
+
+  const auto second = cpu.produce();
+  check(second.has_value() && second->op.kind == saturnis::bus::BusKind::Read,
+        "mismatched fill must not silently populate cache; subsequent read should still require bus op");
+}
+
+void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0002U, 2U, 0x0009U); // NOP at exception return target
+  mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler 0x40
+  mem.write(0x0040U, 2U, 0x002BU); // RTE
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.request_exception_vector(4U);
+
+  core.step(arbiter, trace, 0U);
+  check(core.pc() == 0x0040U, "synthetic exception entry should vector to handler address");
+
+  core.step(arbiter, trace, 1U);
+  check(core.pc() == 0x0002U, "synthetic RTE should restore deterministic exception return PC");
+
+  core.step(arbiter, trace, 2U);
+  check(core.pc() == 0x0004U, "execution should continue deterministically after synthetic RTE return");
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
+        "synthetic exception entry must be explicitly trace-labeled");
+  check(json.find("\"reason\":\"SYNTHETIC_RTE\"") != std::string::npos,
+        "synthetic RTE return path must be explicitly trace-labeled");
+}
+
+void test_sh2_synthetic_rte_without_context_faults_loudly() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x002BU); // RTE without prior synthetic exception entry
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+
+  check(core.pc() == 0x0002U,
+        "RTE without synthetic exception context should fail loud and advance deterministically");
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"SYNTHETIC_RTE_WITHOUT_CONTEXT\"") != std::string::npos,
+        "RTE without synthetic exception context should emit explicit deterministic fault marker");
+}
+
+void test_sh2_ifetch_cache_fill_mismatch_faults_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  saturnis::bus::BusResponse bad{};
+  bad.value = 0x0009U; // NOP
+  bad.stall = 0U;
+  bad.line_base = 1U;
+  bad.line_data.assign(8U, 0U); // wrong size for icache line
+  core.apply_ifetch_and_step(bad, trace);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"CACHE_FILL_MISMATCH\"") != std::string::npos,
+        "IFETCH cache-fill mismatch should emit deterministic CACHE_FILL_MISMATCH fault");
+  check(core.pc() == 0x0002U,
+        "IFETCH cache-fill mismatch should still retire response instruction deterministically");
 }
 
 void test_p0_sh2_imm8_sign_extension_semantics() {
@@ -3844,6 +4307,10 @@ int main() {
   test_smpc_command_write_updates_deterministic_command_and_result_registers();
   test_smpc_status_register_is_read_only_and_ready();
   test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically();
+  test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically();
+  test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs();
+  test_vdp1_source_event_status_register_is_read_only_and_lane_stable();
+  test_vdp1_source_event_command_completion_path_is_deterministic();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
@@ -3897,11 +4364,23 @@ int main() {
   test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic();
   test_sh2_add_immediate_wraps_without_signed_overflow_ub();
   test_bus_arbiter_invalid_unaligned_long_access_is_deterministic();
+  test_bus_arbiter_invalid_size_access_is_deterministic();
   test_sh2_add_register_updates_destination();
   test_sh2_mov_register_copies_source_to_destination();
   test_sh2_ifetch_cache_runahead();
   test_p0_committed_memory_big_endian_pack_unpack();
   test_p0_mmio_big_endian_lane_mapping_via_arbiter();
+  test_policy_a_same_producer_start_time_tie_preserves_program_order_and_mode_parity();
+  test_trace_halt_on_fault_stops_deterministically_at_first_fault();
+  test_halt_on_fault_mode_can_enforce_fault_free_regressions();
+  test_p0_ram_lane_microtest_longword_to_byte_offsets();
+  test_p0_mmio_lane_microtest_byte_halfword_and_lane_isolation();
+  test_bus_arbiter_enqueue_contract_violation_faults_deterministically();
+  test_scripted_cpu_store_buffer_forwards_latest_and_retires_by_store_id();
+  test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
+  test_sh2_synthetic_exception_entry_and_rte_roundtrip();
+  test_sh2_synthetic_rte_without_context_faults_loudly();
+  test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();

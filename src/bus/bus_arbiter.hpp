@@ -71,6 +71,8 @@ private:
   [[nodiscard]] core::Tick contention_extra(const BusOp &op, bool had_tie) const;
   [[nodiscard]] bool has_safe_horizon() const;
   [[nodiscard]] std::size_t pick_next(const std::vector<CommitResult> &pending, const std::vector<std::size_t> &committable) const;
+  [[nodiscard]] BusResponse fault_response(const BusOp &op, core::Tick start, const char *reason, std::uint32_t detail);
+  [[nodiscard]] bool validate_enqueue_contract(const BusOp &op);
   [[nodiscard]] BusResponse execute_commit(const BusOp &op, bool had_tie);
 
   mem::CommittedMemory &memory_;
@@ -91,6 +93,8 @@ private:
                                               std::numeric_limits<core::Tick>::max()}};
   std::array<core::Tick, 3> producer_last_req_time_{{0U, 0U, 0U}};
   std::array<bool, 3> producer_seen_{{false, false, false}};
+  std::array<core::Tick, 3> producer_last_enqueued_req_time_{{0U, 0U, 0U}};
+  std::array<bool, 3> producer_enqueued_seen_{{false, false, false}};
 };
 
 } // namespace saturnis::bus

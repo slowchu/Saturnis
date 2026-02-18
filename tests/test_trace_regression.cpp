@@ -98,6 +98,29 @@ std::string commit_kind_sequence(const std::string &trace) {
   return out;
 }
 
+
+
+std::string commit_prefix_window(const std::string &trace, std::size_t n) {
+  std::string out;
+  std::size_t line_start = 0;
+  std::size_t seen = 0;
+  while (line_start < trace.size() && seen < n) {
+    const std::size_t line_end = trace.find('\n', line_start);
+    const std::size_t end = (line_end == std::string::npos) ? trace.size() : line_end;
+    const auto line = trace.substr(line_start, end - line_start);
+    if (line.rfind("COMMIT ", 0) == 0) {
+      out += line;
+      out.push_back('\n');
+      ++seen;
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    line_start = line_end + 1;
+  }
+  return out;
+}
+
 std::string first_n_commit_prefixes(const std::string &trace, std::size_t n) {
   std::string out;
   std::size_t line_start = 0;
@@ -117,6 +140,21 @@ std::string first_n_commit_prefixes(const std::string &trace, std::size_t n) {
     line_start = line_end + 1;
   }
   return out;
+}
+
+std::string run_vdp1_source_event_trace() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  (void)arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+  (void)arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioWrite, 0x05FE00A8U, 4U, 0x00000020U});
+  (void)arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4U, 0U});
+
+  return trace.to_jsonl();
 }
 
 } // namespace
@@ -158,6 +196,94 @@ int main() {
     }
     if (stressed_mt != single_a) {
       std::cerr << "multithread liveness stress trace parity mismatch on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const auto stress_single = emu.run_contention_stress_trace();
+  if (stress_single.empty()) {
+    std::cerr << "contention stress single-thread trace is empty\n";
+    return 1;
+  }
+
+  const auto stress_mt_baseline = emu.run_contention_stress_trace_multithread();
+  if (stress_mt_baseline != stress_single) {
+    std::cerr << "contention stress single-thread and multithread traces diverged\n";
+    return 1;
+  }
+
+  const auto stress_prefix = commit_prefix_window(stress_single, 64U);
+  for (int run = 0; run < 80; ++run) {
+    const auto stress_mt = emu.run_contention_stress_trace_multithread();
+    if (stress_mt != stress_mt_baseline) {
+      std::cerr << "contention stress multithread trace mismatch on run " << run << '\n';
+      return 1;
+    }
+    if (commit_prefix_window(stress_mt, 64U) != stress_prefix) {
+      std::cerr << "contention stress multithread commit-prefix window drifted on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  std::string vdp1_baseline;
+  for (int run = 0; run < 8; ++run) {
+    const auto vdp1_trace = run_vdp1_source_event_trace();
+    if (run == 0) {
+      vdp1_baseline = vdp1_trace;
+      continue;
+    }
+    if (vdp1_trace != vdp1_baseline) {
+      std::cerr << "VDP1 source-event trace mismatch on run " << run << '\n';
+      return 1;
+    }
+  }
+
+  const auto vdp1_trigger_line = first_line_containing(vdp1_baseline, R"("kind":"MMIO_WRITE","phys":97517712)");
+  const auto vdp1_status_line = first_line_containing(vdp1_baseline, R"("kind":"MMIO_READ","phys":97517716)");
+  const auto vdp1_ist_line = first_line_containing(vdp1_baseline, R"("kind":"MMIO_READ","phys":100532388)");
+  if (vdp1_trigger_line.empty() || vdp1_status_line.empty() || vdp1_ist_line.empty()) {
+    std::cerr << "VDP1 source-event trace missing expected MMIO commit lines\n";
+    return 1;
+  }
+  if (vdp1_trigger_line.find(R"("src":"MMIO")") == std::string::npos ||
+      vdp1_trigger_line.find(R"("owner":"CPU")") == std::string::npos ||
+      vdp1_trigger_line.find(R"("tag":"CPU")") == std::string::npos) {
+    std::cerr << "VDP1 source-event trigger trace line missing deterministic src/owner/tag fields\n";
+    return 1;
+  }
+
+  const auto vdp1_stress_single = emu.run_vdp1_source_event_stress_trace();
+  if (vdp1_stress_single.empty()) {
+    std::cerr << "VDP1 source-event stress single-thread trace is empty\n";
+    return 1;
+  }
+
+  const auto vdp1_stress_mt_baseline = emu.run_vdp1_source_event_stress_trace_multithread();
+  if (vdp1_stress_mt_baseline != vdp1_stress_single) {
+    std::cerr << "VDP1 source-event stress single-thread and multithread traces diverged\n";
+    return 1;
+  }
+
+  const auto vdp1_stress_status_line =
+      nth_line_containing(vdp1_stress_single, R"("kind":"MMIO_READ","phys":97517716)", 2U);
+  const auto vdp1_stress_ist_line =
+      nth_line_containing(vdp1_stress_single, R"("kind":"MMIO_READ","phys":100532388)", 2U);
+  if (vdp1_stress_status_line.empty() || vdp1_stress_ist_line.empty()) {
+    std::cerr << "VDP1 source-event stress trace missing status/IST timing tuple lines\n";
+    return 1;
+  }
+
+  for (int run = 0; run < 32; ++run) {
+    const auto vdp1_stress_mt = emu.run_vdp1_source_event_stress_trace_multithread();
+    if (vdp1_stress_mt != vdp1_stress_mt_baseline) {
+      std::cerr << "VDP1 source-event stress multithread trace mismatch on run " << run << '\n';
+      return 1;
+    }
+
+    const auto status_line_mt = nth_line_containing(vdp1_stress_mt, R"("kind":"MMIO_READ","phys":97517716)", 2U);
+    const auto ist_line_mt = nth_line_containing(vdp1_stress_mt, R"("kind":"MMIO_READ","phys":100532388)", 2U);
+    if (status_line_mt != vdp1_stress_status_line || ist_line_mt != vdp1_stress_ist_line) {
+      std::cerr << "VDP1 source-event stress status/IST timing tuple drifted on run " << run << '\n';
       return 1;
     }
   }

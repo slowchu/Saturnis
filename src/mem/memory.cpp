@@ -28,6 +28,19 @@ std::optional<std::uint32_t> StoreBuffer::forward(std::uint32_t phys, std::uint8
   return std::nullopt;
 }
 
+bool StoreBuffer::retire(std::uint64_t store_id) {
+  const auto it = std::find_if(entries_.begin(), entries_.end(), [store_id](const StoreEntry &entry) {
+    return entry.store_id == store_id;
+  });
+  if (it == entries_.end()) {
+    return false;
+  }
+  entries_.erase(it);
+  return true;
+}
+
+std::size_t StoreBuffer::size() const { return entries_.size(); }
+
 TinyCache::TinyCache(std::size_t line_size, std::size_t line_count)
     : line_size_(line_size), lines_(line_count) {
   for (auto &line : lines_) {
@@ -74,7 +87,9 @@ void TinyCache::write(std::uint32_t phys, std::uint8_t size, std::uint32_t value
 }
 
 void TinyCache::fill_line(std::uint32_t line_base, const std::vector<std::uint8_t> &line_data) {
-  assert(line_data.size() == line_size_);
+  if (line_data.size() != line_size_) {
+    return;
+  }
   const std::size_t index = static_cast<std::size_t>(line_base % lines_.size());
   auto &line = lines_[index];
   line.valid = true;
