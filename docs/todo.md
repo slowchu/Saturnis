@@ -189,16 +189,26 @@
 
 ## Next tasks
 
-1. [ ] Convert DMA TODO scaffold into first executable DMA-produced bus-op path test once minimal DMA submit API exists.
-2. [ ] Add deterministic trace assertions for first DMA-produced `src:"DMA"` MMIO commit timing/value tuple.
-3. [ ] Introduce a minimal bus-level owner/tag field for future DMA/SCU arbitration provenance in traces.
-4. [ ] Expand BIOS fixture to include one deterministic MMIO write/read pair routed through the future DMA path.
-5. [ ] Add focused regression for commit-horizon fairness when CPU and DMA producers contend on same MMIO address.
-6. [ ] Add first SMPC command write/read vertical-slice behavior beyond status-ready defaults.
-7. [ ] Add VDP1/SCU interrupt handoff scaffold with deterministic pending-bit assertions.
-8. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+1. [x] Convert DMA TODO scaffold into first executable DMA-produced bus-op path test once minimal DMA submit API exists.
+2. [x] Add deterministic trace assertions for first DMA-produced `src:"DMA"` MMIO commit timing/value tuple.
+3. [x] Introduce a minimal bus-level owner/tag field for future DMA/SCU arbitration provenance in traces.
+4. [x] Expand BIOS fixture to include one deterministic MMIO write/read pair routed through the future DMA path.
+5. [x] Add focused regression for commit-horizon fairness when CPU and DMA producers contend on same MMIO address.
+6. [x] Add first SMPC command write/read vertical-slice behavior beyond status-ready defaults.
+7. [x] Add VDP1/SCU interrupt handoff scaffold with deterministic pending-bit assertions.
+8. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
 
 ## Notes
 
 - Keep all device semantics deterministic and test-backed.
 - Prefer focused register-level behavior over broad partially-modeled subsystems.
+
+## Next tasks (repopulated)
+
+1. [x] Replace SH-2 mixed-width BRA/RTS overwrite TODO-guard expectations with architectural target-side overwrite semantics and focused regressions.
+2. [ ] Add centralized BusOp size validation in `BusArbiter`/MMIO path and regression checks for invalid-size rejection semantics.
+3. [ ] Add deterministic stress regression for `run_scripted_pair_multithread` progress/response liveness under extended contention windows.
+4. [ ] Refactor multithread scripted-pair coordination away from pure busy-wait yield loops toward deterministic bounded waiting.
+5. [ ] Expand VDP1->SCU interrupt scaffold from bridge register to first source-driven event path while preserving IMS/IST determinism assertions.
+6. [ ] Add trace-level assertions for VDP1->SCU handoff commits (`src`, `owner`, `tag`, timing tuple) under repeated runs.
+7. [ ] Run another code-review pass and refresh docs with newly discovered risks/TODOs.

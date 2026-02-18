@@ -24,6 +24,9 @@ private:
   std::unordered_map<std::uint32_t, std::uint32_t> mmio_regs_;
   std::uint32_t scu_interrupt_pending_ = 0U;
   std::uint32_t scu_interrupt_source_pending_ = 0U;
+  std::uint32_t smpc_last_command_ = 0U;
+  std::uint32_t smpc_command_result_ = 0U;
+  std::uint32_t vdp1_irq_level_ = 0U;
 };
 
 } // namespace saturnis::dev

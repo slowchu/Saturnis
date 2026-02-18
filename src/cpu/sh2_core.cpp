@@ -74,10 +74,6 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   std::optional<std::uint32_t> next_branch_target;
   auto write_reg = [this](std::uint32_t n, std::uint32_t value) {
     r_[n] = value;
-    if (n == 15U) {
-      // TODO: Remove PR mirroring once LDS/STS and real call/return paths are implemented.
-      pr_ = value;
-    }
   };
   if (instr == 0x0009U) {
     pc_ += 2U;
@@ -298,21 +294,12 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       pc_ = response.value;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
       r_[pending.dst_reg] = response.value;
-      if (pending.dst_reg == 15U) {
-        pr_ = r_[pending.dst_reg];
-      }
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
-      if (pending.dst_reg == 15U) {
-        pr_ = r_[pending.dst_reg];
-      }
     } else if (pending.kind == PendingMemOp::Kind::ReadByte) {
       const std::uint8_t byte = static_cast<std::uint8_t>(response.value & 0xFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(byte)));
-      if (pending.dst_reg == 15U) {
-        pr_ = r_[pending.dst_reg];
-      }
     }
 
     if (pending_branch_target_.has_value()) {
@@ -355,16 +342,6 @@ void SH2Core::step(bus::BusArbiter &arbiter, core::TraceLog &trace, std::uint64_
   apply_ifetch_and_step(resp, trace);
 }
 
-
-bool SH2Core::t_flag() const { return (sr_ & kSrTBit) != 0U; }
-
-void SH2Core::set_t_flag(bool value) {
-  if (value) {
-    sr_ |= kSrTBit;
-  } else {
-    sr_ &= ~kSrTBit;
-  }
-}
 
 std::uint32_t SH2Core::pc() const { return pc_; }
 
