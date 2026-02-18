@@ -26,12 +26,14 @@ std::optional<PendingBusOp> ScriptedCPU::produce() {
     const bool uncached = mem::is_uncached_alias(ins.vaddr) || mem::is_mmio(phys);
 
     if (ins.kind == ScriptOpKind::Write) {
-      store_buffer_.push(mem::StoreEntry{phys, ins.size, ins.value});
+      const auto store_id = next_store_id_++;
+      store_buffer_.push(mem::StoreEntry{store_id, phys, ins.size, ins.value});
       if (!uncached) {
         cache_.write(phys, ins.size, ins.value);
       }
       bus::BusKind kind = mem::is_mmio(phys) ? bus::BusKind::MmioWrite : bus::BusKind::Write;
       bus::BusOp op{cpu_id_, local_time_, sequence_++, kind, phys, ins.size, ins.value};
+      op.producer_token = store_id;
       return PendingBusOp{op, pc_++};
     }
 
@@ -60,14 +62,27 @@ std::optional<PendingBusOp> ScriptedCPU::produce() {
   return std::nullopt;
 }
 
-void ScriptedCPU::apply_response(std::size_t script_index, const bus::BusResponse &response) {
+void ScriptedCPU::apply_response(std::size_t script_index, const bus::BusResponse &response, std::uint64_t producer_token,
+                                 core::TraceLog *trace) {
   local_time_ += response.stall;
   const auto &ins = script_[script_index];
   const std::uint32_t phys = mem::to_phys(ins.vaddr);
+  if (ins.kind == ScriptOpKind::Write) {
+    (void)store_buffer_.retire(producer_token);
+    return;
+  }
+
   if (ins.kind == ScriptOpKind::Read) {
     last_read_ = response.value;
     if (!(mem::is_uncached_alias(ins.vaddr) || mem::is_mmio(phys))) {
       if (!response.line_data.empty()) {
+        const auto expected_line_base = phys / static_cast<std::uint32_t>(cache_.line_size());
+        if (response.line_base != expected_line_base || response.line_data.size() != cache_.line_size()) {
+          if (trace != nullptr) {
+            trace->add_fault(core::FaultEvent{local_time_, cpu_id_, 0U, phys, "CACHE_FILL_MISMATCH"});
+          }
+          return;
+        }
         cache_.fill_line(response.line_base, response.line_data);
       } else {
         const auto line_size = static_cast<std::uint32_t>(cache_.line_size());
@@ -80,5 +95,7 @@ void ScriptedCPU::apply_response(std::size_t script_index, const bus::BusRespons
 }
 
 std::optional<std::uint32_t> ScriptedCPU::last_read() const { return last_read_; }
+
+std::size_t ScriptedCPU::store_buffer_size() const { return store_buffer_.size(); }
 
 } // namespace saturnis::cpu
