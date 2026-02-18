@@ -20,7 +20,6 @@ public:
 
 private:
   std::deque<StoreEntry> entries_;
-  static constexpr std::size_t kMaxEntries = 16;
 };
 
 struct CacheLine {
