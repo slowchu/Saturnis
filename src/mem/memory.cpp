@@ -5,6 +5,16 @@
 
 namespace saturnis::mem {
 
+namespace {
+
+[[nodiscard]] bool access_in_range(std::size_t storage_size, std::uint32_t phys, std::size_t size) {
+  const auto start = static_cast<std::uint64_t>(phys);
+  const auto end = start + static_cast<std::uint64_t>(size);
+  return end <= static_cast<std::uint64_t>(storage_size);
+}
+
+} // namespace
+
 void StoreBuffer::push(StoreEntry entry) {
   entries_.push_back(entry);
 }
@@ -74,6 +84,9 @@ void TinyCache::fill_line(std::uint32_t line_base, const std::vector<std::uint8_
 CommittedMemory::CommittedMemory(std::size_t size_bytes) : bytes_(size_bytes, 0U) {}
 
 std::uint32_t CommittedMemory::read(std::uint32_t phys, std::uint8_t size) const {
+  if (!access_in_range(bytes_.size(), phys, size)) {
+    return 0U;
+  }
   std::uint32_t out = 0;
   for (std::size_t i = 0; i < size; ++i) {
     out = (out << 8U) |
@@ -83,6 +96,9 @@ std::uint32_t CommittedMemory::read(std::uint32_t phys, std::uint8_t size) const
 }
 
 void CommittedMemory::write(std::uint32_t phys, std::uint8_t size, std::uint32_t value) {
+  if (!access_in_range(bytes_.size(), phys, size)) {
+    return;
+  }
   for (std::size_t i = 0; i < size; ++i) {
     const std::size_t shift = 8U * (static_cast<std::size_t>(size) - 1U - i);
     bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()] = static_cast<std::uint8_t>((value >> shift) & 0xFFU);
@@ -91,8 +107,11 @@ void CommittedMemory::write(std::uint32_t phys, std::uint8_t size, std::uint32_t
 
 std::vector<std::uint8_t> CommittedMemory::read_block(std::uint32_t phys, std::size_t size) const {
   std::vector<std::uint8_t> out(size, 0U);
+  if (!access_in_range(bytes_.size(), phys, size)) {
+    return out;
+  }
   for (std::size_t i = 0; i < size; ++i) {
-    out[i] = bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()];
+    out[i] = bytes_[phys + static_cast<std::uint32_t>(i)];
   }
   return out;
 }
