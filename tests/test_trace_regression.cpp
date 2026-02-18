@@ -401,15 +401,18 @@ int main() {
 
   std::uint32_t dma_baseline_value = 0U;
   std::string dma_baseline_trace;
+  std::string dma_first_commit_baseline;
+  constexpr std::uint32_t kDmaScuSourceAddr = 0x05FE00ACU;
+  constexpr std::uint32_t kDmaWriteValue = 0x00000031U;
   for (int run = 0; run < 5; ++run) {
     saturnis::core::TraceLog dma_trace;
     saturnis::mem::CommittedMemory dma_mem;
     saturnis::dev::DeviceHub dma_dev;
     saturnis::bus::BusArbiter dma_arbiter(dma_mem, dma_dev, dma_trace);
 
-    (void)dma_arbiter.commit_dma({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000031U});
+    (void)dma_arbiter.commit_dma({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, kDmaScuSourceAddr, 4, kDmaWriteValue});
     const auto dma_read_back =
-        dma_arbiter.commit_dma({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
+        dma_arbiter.commit_dma({0, 1U, 1, saturnis::bus::BusKind::MmioRead, kDmaScuSourceAddr, 4, 0U});
     const auto dma_json = dma_trace.to_jsonl();
 
     if (dma_json.find(R"("src":"DMA")") == std::string::npos) {
@@ -417,10 +420,27 @@ int main() {
       return 1;
     }
 
+    const auto dma_first_commit = first_line_containing(dma_json, R"("src":"DMA")");
+    const auto expected_first_tuple = std::string{R"("t_start":0,"t_end":10,"stall":10,"cpu":-1,"kind":"MMIO_WRITE","phys":)"} +
+                                      std::to_string(kDmaScuSourceAddr) +
+                                      std::string{R"(,"size":4,"val":)"} + std::to_string(kDmaWriteValue) +
+                                      std::string{R"(,"src":"DMA")"};
+    if (dma_first_commit.find(expected_first_tuple) == std::string::npos) {
+      std::cerr << "DMA first commit timing/value tuple mismatch on run " << run << '\n';
+      return 1;
+    }
+
+    if (dma_first_commit.find(R"("owner":"DMA","tag":"DMA")") == std::string::npos) {
+      std::cerr << "DMA first commit missing deterministic owner/tag provenance fields on run " << run << '\n';
+      return 1;
+    }
+
     if (run == 0) {
       dma_baseline_value = dma_read_back.value;
       dma_baseline_trace = dma_json;
-    } else if (dma_read_back.value != dma_baseline_value || dma_json != dma_baseline_trace) {
+      dma_first_commit_baseline = dma_first_commit;
+    } else if (dma_read_back.value != dma_baseline_value || dma_json != dma_baseline_trace ||
+               dma_first_commit != dma_first_commit_baseline) {
       std::cerr << "DMA bus-op path changed deterministic readback/trace baseline on run " << run << '\n';
       return 1;
     }

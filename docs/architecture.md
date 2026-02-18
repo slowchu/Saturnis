@@ -64,6 +64,7 @@ Commit trace lines record timing explicitly:
 - `t_start`
 - `t_end`
 - `stall`
+- producer provenance fields (`src`, `owner`, `tag`)
 - CPU/op/address/value metadata
 
 This makes bus occupancy and WAIT behavior directly inspectable in regression traces.
