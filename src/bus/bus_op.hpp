@@ -24,6 +24,10 @@ struct BusOp {
   BusProducer producer = BusProducer::Auto;
 };
 
+inline bool is_supported_transfer_size(std::uint8_t size) {
+  return size == 1U || size == 2U || size == 4U;
+}
+
 inline std::string_view kind_name(BusKind kind) {
   switch (kind) {
   case BusKind::IFetch:
@@ -40,6 +44,20 @@ inline std::string_view kind_name(BusKind kind) {
     return "BARRIER";
   }
   return "UNKNOWN";
+}
+
+inline std::string_view owner_name(const BusOp &op) {
+  if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
+    return "DMA";
+  }
+  return "CPU";
+}
+
+inline std::string_view provenance_tag(const BusOp &op) {
+  if (op.producer == BusProducer::Dma || (op.producer == BusProducer::Auto && op.cpu_id < 0)) {
+    return "DMA";
+  }
+  return "CPU";
 }
 
 inline std::string_view source_name(const BusOp &op) {

@@ -15,9 +15,13 @@ constexpr std::uint32_t kScuDma0SrcAddr = 0x05FE0020U;
 constexpr std::uint32_t kScuDma0SizeAddr = 0x05FE0028U;
 constexpr std::uint32_t kScuDma0CtrlAddr = 0x05FE002CU;
 constexpr std::uint32_t kSmpcStatusAddr = 0x05D00080U;
+constexpr std::uint32_t kSmpcCommandAddr = 0x05D00084U;
+constexpr std::uint32_t kSmpcCommandResultAddr = 0x05D00088U;
 constexpr std::uint32_t kVdp2TvmdAddr = 0x05F80000U;
 constexpr std::uint32_t kVdp2TvstatAddr = 0x05F80004U;
 constexpr std::uint32_t kScspMcierAddr = 0x05C00000U;
+constexpr std::uint32_t kVdp1ScuIrqBridgeAddr = 0x05D0008CU;
+constexpr std::uint32_t kVdp1ScuIrqMask = 0x00000020U;
 
 struct MmioRegisterSpec {
   std::uint32_t reset_value = 0U;
@@ -55,6 +59,12 @@ struct MmioRegisterSpec {
   if (word_addr == kSmpcStatusAddr) {
     return MmioRegisterSpec{0x1U, 0x00000000U};
   }
+  if (word_addr == kSmpcCommandAddr) {
+    return MmioRegisterSpec{0x0U, 0x000000FFU};
+  }
+  if (word_addr == kSmpcCommandResultAddr) {
+    return MmioRegisterSpec{0x0U, 0x00000000U};
+  }
   if (word_addr == kVdp2TvmdAddr) {
     return MmioRegisterSpec{0x00000000U, 0x0000FFFFU};
   }
@@ -64,10 +74,24 @@ struct MmioRegisterSpec {
   if (word_addr == kScspMcierAddr) {
     return MmioRegisterSpec{0x00000000U, 0x000007FFU};
   }
+  if (word_addr == kVdp1ScuIrqBridgeAddr) {
+    return MmioRegisterSpec{0x00000000U, 0x00000001U};
+  }
   return std::nullopt;
 }
 
 [[nodiscard]] std::uint32_t lane_shift(std::uint32_t addr, std::uint8_t size) {
+  if (size == 1U) {
+    return (3U - (addr & 0x3U)) * 8U;
+  }
+  if (size == 2U) {
+    return (2U - (addr & 0x2U)) * 8U;
+  }
+  return 0U;
+}
+
+
+[[nodiscard]] std::uint32_t lane_shift_legacy_le(std::uint32_t addr, std::uint8_t size) {
   if (size == 1U) {
     return (addr & 0x3U) * 8U;
   }
@@ -75,6 +99,10 @@ struct MmioRegisterSpec {
     return (addr & 0x2U) * 8U;
   }
   return 0U;
+}
+
+[[nodiscard]] bool use_legacy_scu_lane_mapping(std::uint32_t word_addr) {
+  return (word_addr >= 0x05FE0000U && word_addr <= 0x05FE00FFU);
 }
 
 [[nodiscard]] std::uint32_t size_mask(std::uint8_t size) {
@@ -115,13 +143,19 @@ std::uint32_t DeviceHub::read(std::uint64_t, int, std::uint32_t addr, std::uint8
     value = (scu_interrupt_pending_ | scu_interrupt_source_pending_) & ~ims;
   } else if (word_addr == kScuIstSourceSetAddr) {
     value = scu_interrupt_source_pending_ & 0x0000FFFFU;
+  } else if (word_addr == kSmpcCommandAddr) {
+    value = smpc_last_command_ & 0xFFU;
+  } else if (word_addr == kSmpcCommandResultAddr) {
+    value = smpc_command_result_;
+  } else if (word_addr == kVdp1ScuIrqBridgeAddr) {
+    value = vdp1_irq_level_ & 0x1U;
   } else {
     const auto spec = register_spec(word_addr);
     const std::uint32_t persisted_value = read_persisted_or_zero(mmio_regs_, word_addr);
     value = materialize_register_value(spec, persisted_value);
   }
 
-  const std::uint32_t shift = lane_shift(addr, size);
+  const std::uint32_t shift = use_legacy_scu_lane_mapping(word_addr) ? lane_shift_legacy_le(addr, size) : lane_shift(addr, size);
   return (value >> shift) & size_mask(size);
 }
 
@@ -131,7 +165,7 @@ void DeviceHub::write(std::uint64_t t, int cpu, std::uint32_t addr, std::uint8_t
   const std::uint32_t word_addr = addr & ~0x3U;
   const auto spec = register_spec(word_addr);
 
-  const std::uint32_t shift = lane_shift(addr, size);
+  const std::uint32_t shift = use_legacy_scu_lane_mapping(word_addr) ? lane_shift_legacy_le(addr, size) : lane_shift(addr, size);
   const std::uint32_t lane_mask = size_mask(size) << shift;
   const std::uint32_t write_bits = (value << shift) & lane_mask;
 
@@ -157,6 +191,24 @@ void DeviceHub::write(std::uint64_t t, int cpu, std::uint32_t addr, std::uint8_t
   if (word_addr == kScuIstSourceClearAddr) {
     const std::uint32_t masked_bits = write_bits & 0x0000FFFFU;
     scu_interrupt_source_pending_ &= ~masked_bits;
+    return;
+  }
+
+
+  if (word_addr == kSmpcCommandAddr) {
+    const std::uint32_t command_byte = write_bits & 0x000000FFU;
+    smpc_last_command_ = command_byte;
+    smpc_command_result_ = 0xA5000000U | command_byte;
+    return;
+  }
+
+  if (word_addr == kVdp1ScuIrqBridgeAddr) {
+    vdp1_irq_level_ = write_bits & 0x1U;
+    if ((vdp1_irq_level_ & 0x1U) != 0U) {
+      scu_interrupt_source_pending_ |= kVdp1ScuIrqMask;
+    } else {
+      scu_interrupt_source_pending_ &= ~kVdp1ScuIrqMask;
+    }
     return;
   }
 

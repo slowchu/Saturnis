@@ -2,6 +2,7 @@
 
 #include "core/trace.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@ public:
   int run(const RunConfig &config);
   [[nodiscard]] std::string run_dual_demo_trace();
   [[nodiscard]] std::string run_dual_demo_trace_multithread();
+  [[nodiscard]] std::string run_contention_stress_trace_multithread(std::size_t rounds = 64);
   [[nodiscard]] std::string run_bios_trace(const std::vector<std::uint8_t> &bios_image, std::uint64_t max_steps = 20000);
 
 private:

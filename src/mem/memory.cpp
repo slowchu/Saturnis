@@ -7,9 +7,6 @@ namespace saturnis::mem {
 
 void StoreBuffer::push(StoreEntry entry) {
   entries_.push_back(entry);
-  if (entries_.size() > kMaxEntries) {
-    entries_.pop_front();
-  }
 }
 
 std::optional<std::uint32_t> StoreBuffer::forward(std::uint32_t phys, std::uint8_t size) const {
@@ -43,7 +40,7 @@ bool TinyCache::read(std::uint32_t phys, std::uint8_t size, std::uint32_t &out) 
   }
   out = 0;
   for (std::size_t i = 0; i < size; ++i) {
-    out |= static_cast<std::uint32_t>(line.bytes[offset + i]) << (8U * i);
+    out = (out << 8U) | static_cast<std::uint32_t>(line.bytes[offset + i]);
   }
   return true;
 }
@@ -60,7 +57,8 @@ void TinyCache::write(std::uint32_t phys, std::uint8_t size, std::uint32_t value
     return;
   }
   for (std::size_t i = 0; i < size; ++i) {
-    line.bytes[offset + i] = static_cast<std::uint8_t>((value >> (8U * i)) & 0xFFU);
+    const std::size_t shift = 8U * (static_cast<std::size_t>(size) - 1U - i);
+    line.bytes[offset + i] = static_cast<std::uint8_t>((value >> shift) & 0xFFU);
   }
 }
 
@@ -78,14 +76,16 @@ CommittedMemory::CommittedMemory(std::size_t size_bytes) : bytes_(size_bytes, 0U
 std::uint32_t CommittedMemory::read(std::uint32_t phys, std::uint8_t size) const {
   std::uint32_t out = 0;
   for (std::size_t i = 0; i < size; ++i) {
-    out |= static_cast<std::uint32_t>(bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()]) << (8U * i);
+    out = (out << 8U) |
+          static_cast<std::uint32_t>(bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()]);
   }
   return out;
 }
 
 void CommittedMemory::write(std::uint32_t phys, std::uint8_t size, std::uint32_t value) {
   for (std::size_t i = 0; i < size; ++i) {
-    bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()] = static_cast<std::uint8_t>((value >> (8U * i)) & 0xFFU);
+    const std::size_t shift = 8U * (static_cast<std::size_t>(size) - 1U - i);
+    bytes_[(phys + static_cast<std::uint32_t>(i)) % bytes_.size()] = static_cast<std::uint8_t>((value >> shift) & 0xFFU);
   }
 }
 

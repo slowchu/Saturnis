@@ -52,6 +52,10 @@ core::Tick BusArbiter::contention_extra(const BusOp &op, bool had_tie) const {
 }
 
 BusResponse BusArbiter::execute_commit(const BusOp &op, bool had_tie) {
+  if (op.kind != BusKind::Barrier && !is_supported_transfer_size(op.size)) {
+    return BusResponse{};
+  }
+
   const core::Tick start = (op.req_time > bus_free_time_) ? op.req_time : bus_free_time_;
   const core::Tick latency = base_latency(op) + contention_extra(op, had_tie);
   const core::Tick finish = start + latency;

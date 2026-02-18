@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace saturnis::core {
@@ -218,6 +219,25 @@ void run_scripted_pair_multithread(cpu::ScriptedCPU &cpu0, cpu::ScriptedCPU &cpu
   t1.join();
 }
 
+
+std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> contention_stress_scripts(std::size_t rounds) {
+  std::vector<cpu::ScriptOp> cpu0_ops;
+  std::vector<cpu::ScriptOp> cpu1_ops;
+  cpu0_ops.reserve(rounds * 2U);
+  cpu1_ops.reserve(rounds * 2U);
+
+  for (std::size_t i = 0; i < rounds; ++i) {
+    const std::uint32_t mask = 1U << (i % 5U);
+    cpu0_ops.push_back({cpu::ScriptOpKind::Write, 0x05FE00ACU, 4, mask, 0});
+    cpu0_ops.push_back({cpu::ScriptOpKind::Compute, 0, 0, 0, 1});
+
+    cpu1_ops.push_back({cpu::ScriptOpKind::Write, 0x05FE00B0U, 4, mask, 0});
+    cpu1_ops.push_back({cpu::ScriptOpKind::Compute, 0, 0, 0, 1});
+  }
+
+  return {std::move(cpu0_ops), std::move(cpu1_ops)};
+}
+
 std::pair<std::vector<cpu::ScriptOp>, std::vector<cpu::ScriptOp>> dual_demo_scripts() {
   std::vector<cpu::ScriptOp> cpu0_ops{{cpu::ScriptOpKind::Write, 0x00001000U, 4, 0xDEADBEEFU, 0},
                                       {cpu::ScriptOpKind::Compute, 0, 0, 0, 3},
@@ -253,6 +273,21 @@ std::string Emulator::run_dual_demo_trace_multithread() {
   bus::BusArbiter arbiter(mem, dev, trace);
 
   const auto [cpu0_ops, cpu1_ops] = dual_demo_scripts();
+  cpu::ScriptedCPU cpu0(0, cpu0_ops);
+  cpu::ScriptedCPU cpu1(1, cpu1_ops);
+  run_scripted_pair_multithread(cpu0, cpu1, arbiter);
+
+  return trace.to_jsonl();
+}
+
+
+std::string Emulator::run_contention_stress_trace_multithread(std::size_t rounds) {
+  TraceLog trace;
+  mem::CommittedMemory mem;
+  dev::DeviceHub dev;
+  bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto [cpu0_ops, cpu1_ops] = contention_stress_scripts(rounds);
   cpu::ScriptedCPU cpu0(0, cpu0_ops);
   cpu::ScriptedCPU cpu1(1, cpu1_ops);
   run_scripted_pair_multithread(cpu0, cpu1, arbiter);
@@ -328,6 +363,11 @@ std::string Emulator::run_bios_trace(const std::vector<std::uint8_t> &bios_image
       }
     }
   }
+
+  // Deterministic DMA probe for BIOS fixture evolution: one MMIO write/read pair
+  // routed through the DMA producer path for stable trace coverage.
+  (void)arbiter.commit_dma({0, 0U, seq++, bus::BusKind::MmioWrite, 0x05FE00ACU, 4, 0x00000031U});
+  (void)arbiter.commit_dma({0, 1U, seq++, bus::BusKind::MmioRead, 0x05FE00ACU, 4, 0U});
 
   return trace.to_jsonl();
 }

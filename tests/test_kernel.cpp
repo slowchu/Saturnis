@@ -73,6 +73,163 @@ void run_pair(saturnis::cpu::ScriptedCPU &cpu0, saturnis::cpu::ScriptedCPU &cpu1
   }
 }
 
+
+void test_committed_memory_uses_big_endian_multibyte_layout() {
+  saturnis::mem::CommittedMemory mem;
+  mem.write(0x1200U, 4U, 0x11223344U);
+
+  check(mem.read(0x1200U, 1U) == 0x11U, "CommittedMemory byte[0] should hold MSB for big-endian layout");
+  check(mem.read(0x1201U, 1U) == 0x22U, "CommittedMemory byte[1] should hold second byte for big-endian layout");
+  check(mem.read(0x1202U, 1U) == 0x33U, "CommittedMemory byte[2] should hold third byte for big-endian layout");
+  check(mem.read(0x1203U, 1U) == 0x44U, "CommittedMemory byte[3] should hold LSB for big-endian layout");
+  check(mem.read(0x1200U, 4U) == 0x11223344U, "CommittedMemory 32-bit read should round-trip under big-endian layout");
+}
+
+void test_tiny_cache_uses_big_endian_multibyte_layout() {
+  saturnis::mem::TinyCache cache(32U, 4U);
+  std::vector<std::uint8_t> line(32U, 0U);
+  line[0] = 0x11U;
+  line[1] = 0x22U;
+  line[2] = 0x33U;
+  line[3] = 0x44U;
+  cache.fill_line(0x100U, line);
+
+  std::uint32_t out = 0U;
+  check(cache.read(0x100U * 32U, 4U, out), "TinyCache read should hit after fill_line");
+  check(out == 0x11223344U, "TinyCache multi-byte reads should decode big-endian values");
+
+  cache.write(0x100U * 32U + 4U, 2U, 0xA1B2U);
+  check(cache.read(0x100U * 32U + 4U, 2U, out), "TinyCache subword read should hit after write");
+  check(out == 0xA1B2U, "TinyCache writes should preserve big-endian byte ordering");
+}
+
+void test_store_buffer_retains_entries_beyond_previous_capacity() {
+  saturnis::mem::StoreBuffer sb;
+  for (std::uint32_t i = 0; i < 20U; ++i) {
+    sb.push({0x4000U + i * 4U, 4U, 0x90000000U + i});
+  }
+
+  const auto first = sb.forward(0x4000U, 4U);
+  const auto last = sb.forward(0x4000U + 19U * 4U, 4U);
+  check(first.has_value() && *first == 0x90000000U,
+        "StoreBuffer should no longer silently drop oldest entries once more than 16 writes are queued");
+  check(last.has_value() && *last == 0x90000013U,
+        "StoreBuffer should retain newest forwarded entry deterministically");
+}
+
+
+void test_ram_big_endian_pack_red_light_gate() {
+  saturnis::mem::CommittedMemory mem;
+  mem.write(0x2400U, 1U, 0x12U);
+  mem.write(0x2401U, 1U, 0x34U);
+  check(mem.read(0x2400U, 2U) == 0x1234U, "RAM big-endian pack gate: read16 should assemble bytes as 0x1234");
+
+  mem.write(0x2402U, 1U, 0x56U);
+  mem.write(0x2403U, 1U, 0x78U);
+  check(mem.read(0x2400U, 4U) == 0x12345678U, "RAM big-endian pack gate: read32 should assemble bytes as 0x12345678");
+}
+
+void test_mmio_byte_lane_mapping_red_light_gate() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 4, 0x00000000U});
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 1, 0x12U});
+  (void)arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05F00023U, 1, 0x34U});
+
+  const auto read_back = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00020U, 4, 0U});
+  check(read_back.value == 0x12000034U,
+        "MMIO byte-lane mapping gate: base+0/base+3 byte writes should produce 0x12000034");
+}
+
+void test_sh2_imm8_sign_extension_microtest() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE1FFU); // MOV #0xFF,R1 => -1
+  mem.write(0x0002U, 2U, 0x7180U); // ADD #0x80,R1 => add -128
+  mem.write(0x0004U, 2U, 0xE000U); // MOV #0,R0
+  mem.write(0x0006U, 2U, 0x88FFU); // CMP/EQ #0xFF,R0 => false
+  mem.write(0x0008U, 2U, 0xE0FFU); // MOV #0xFF,R0 => -1
+  mem.write(0x000AU, 2U, 0x88FFU); // CMP/EQ #0xFF,R0 => true
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 6; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(1) == 0xFFFFFF7FU, "imm8 sign-extension microtest: MOV #0xFF and ADD #0x80 should behave as signed immediates");
+  check((core.sr() & 0x1U) != 0U, "imm8 sign-extension microtest: CMP/EQ #0xFF,R0 should set T when R0 is -1");
+}
+
+void test_sh2_load_sign_extension_microtest() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0040U, 2U, 0x8001U);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6010U); // MOV.B @R1,R0
+  mem.write(0x0004U, 2U, 0x6011U); // MOV.W @R1,R0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 5; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(0) == 0xFFFF8001U,
+        "load sign-extension microtest: MOV.W load should sign-extend 0x8001 to 0xFFFF8001");
+}
+
+void test_sh2_movw_post_increment_microtest() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0040U, 2U, 0x7F01U);
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6015U); // MOV.W @R1+,R0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 4; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(0) == 0x00007F01U, "MOV.W @R1+,R0 should load deterministic word value");
+  check(core.reg(1) == 0x00000042U, "MOV.W @R1+,R0 should post-increment source register by 2");
+}
+
+void test_sh2_load_into_r15_does_not_clobber_pr_microtest() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0040U, 4U, 0x11223344U);
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6F12U); // MOV.L @R1,R15
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0xDEADBEEFU);
+  for (int i = 0; i < 4; ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  }
+
+  check(core.reg(15) == 0x11223344U, "load into R15 microtest should update SP value");
+  check(core.pr() == 0xDEADBEEFU, "load into R15 microtest should leave PR unchanged");
+}
+
 void test_tie_break_rr_determinism() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -352,6 +509,28 @@ void test_mmio_write_is_visible_to_subsequent_reads() {
   check(r.value == 0x12345678U, "MMIO read should return last written 32-bit register value");
 }
 
+
+void test_busop_invalid_size_is_rejected_without_side_effects() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto ram_write = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::Write, 0x2400U, 3, 0x00ABCDEFU});
+  check(ram_write.stall == 0U, "invalid-size RAM write should be rejected without consuming bus time");
+  check(mem.read(0x2400U, 4U) == 0U, "invalid-size RAM write should not mutate memory");
+
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 4, 0x12345678U});
+  const auto mmio_invalid = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioWrite, 0x05F00020U, 3, 0x00FEDCBAU});
+  check(mmio_invalid.stall == 0U, "invalid-size MMIO write should be rejected without consuming bus time");
+  const auto mmio_after = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00020U, 4, 0U});
+  check(mmio_after.value == 0x12345678U, "invalid-size MMIO write should not mutate device register state");
+
+  const auto mmio_read_invalid = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F00020U, 3, 0U});
+  check(mmio_read_invalid.value == 0U && mmio_read_invalid.stall == 0U,
+        "invalid-size MMIO read should return deterministic zero response");
+}
+
 void test_mmio_subword_write_updates_correct_lane() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -365,7 +544,7 @@ void test_mmio_subword_write_updates_correct_lane() {
   check(byte_read.value == 0xAAU, "byte MMIO read should observe byte-lane write");
 
   const auto word_read = arbiter.commit({1, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00024U, 4, 0U});
-  check(word_read.value == 0x1122AA44U, "subword MMIO write should patch only targeted byte lane");
+  check(word_read.value == 0x11AA3344U, "subword MMIO write should patch only targeted byte lane");
 }
 
 void test_display_status_register_is_read_only_and_ready() {
@@ -383,11 +562,11 @@ void test_display_status_register_is_read_only_and_ready() {
   const auto after = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 4, 0U});
   check(after.value == 0x1U, "display status writes should not overwrite read-only ready bit");
 
-  const auto low_byte = arbiter.commit({1, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 1, 0U});
-  check(low_byte.value == 0x1U, "display-status low byte should retain ready bit after writes");
+  const auto high_byte = arbiter.commit({1, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F00010U, 1, 0U});
+  check(high_byte.value == 0U, "display-status high byte lane should stay clear under big-endian MMIO mapping");
 
-  const auto high_byte = arbiter.commit({1, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05F00013U, 1, 0U});
-  check(high_byte.value == 0U, "upper display-status byte lanes should stay clear");
+  const auto low_byte = arbiter.commit({1, 5U, 5, saturnis::bus::BusKind::MmioRead, 0x05F00013U, 1, 0U});
+  check(low_byte.value == 0x1U, "display-status low byte should retain ready bit under big-endian MMIO mapping");
 
   const auto &writes = dev.writes();
   check(writes.size() == 2U, "display-status writes should still be logged for traceability");
@@ -708,6 +887,24 @@ void test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic() {
         "SCU synthetic-source MMIO writes should appear in deterministic commit order in trace JSONL");
 }
 
+
+void test_smpc_command_write_updates_deterministic_command_and_result_registers() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  (void)arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioWrite, 0x05D00084U, 4, 0x00000042U});
+
+  const auto command = arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioRead, 0x05D00084U, 4, 0U});
+  const auto result = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05D00088U, 4, 0U});
+  const auto status = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05D00080U, 4, 0U});
+
+  check(command.value == 0x00000042U, "SMPC command register should latch deterministic low-byte command value");
+  check(result.value == 0xA5000042U, "SMPC command result register should deterministically encode last command");
+  check(status.value == 0x1U, "SMPC status ready bit should remain asserted after command write/read vertical slice");
+}
+
 void test_smpc_status_register_is_read_only_and_ready() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -720,6 +917,34 @@ void test_smpc_status_register_is_read_only_and_ready() {
   (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D00080U, 4, 0xFFFFFFFFU});
   const auto after = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05D00080U, 4, 0U});
   check(after.value == 0x1U, "SMPC status should remain read-only");
+}
+
+
+void test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial_ist = arbiter.commit({0, 0U, 0, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((initial_ist.value & 0x00000020U) == 0U,
+        "VDP1/SCU handoff scaffold should start with deterministic cleared pending bit");
+
+  (void)arbiter.commit({0, 1U, 1, saturnis::bus::BusKind::MmioWrite, 0x05D0008FU, 1, 0x1U});
+  const auto asserted_ist = arbiter.commit({0, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((asserted_ist.value & 0x00000020U) != 0U,
+        "VDP1/SCU handoff scaffold should assert deterministic SCU pending source bit");
+
+  (void)arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioWrite, 0x05D0008FU, 1, 0x0U});
+  const auto cleared_ist = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((cleared_ist.value & 0x00000020U) == 0U,
+        "VDP1/SCU handoff scaffold should clear deterministic SCU pending source bit");
+
+  (void)arbiter.commit({0, 5U, 5, saturnis::bus::BusKind::MmioWrite, 0x05FE00A0U, 4, 0x00000020U});
+  (void)arbiter.commit({0, 6U, 6, saturnis::bus::BusKind::MmioWrite, 0x05D0008FU, 1, 0x1U});
+  const auto masked_ist = arbiter.commit({0, 7U, 7, saturnis::bus::BusKind::MmioRead, 0x05FE00A4U, 4, 0U});
+  check((masked_ist.value & 0x00000020U) == 0U,
+        "VDP1/SCU handoff scaffold should respect IMS masking for deterministic pending-bit visibility");
 }
 
 void test_vdp2_tvmd_register_masks_to_low_16_bits() {
@@ -746,11 +971,11 @@ void test_vdp2_tvstat_register_is_read_only_with_deterministic_status() {
   const auto after = arbiter.commit({1, 2U, 2, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 4, 0U});
   check(after.value == 0x00000008U, "VDP2 TVSTAT should remain read-only after writes");
 
-  const auto low_half = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 2, 0U});
-  check(low_half.value == 0x0008U, "VDP2 TVSTAT low halfword should keep deterministic status bits");
-
-  const auto high_half = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F80006U, 2, 0U});
+  const auto high_half = arbiter.commit({0, 3U, 3, saturnis::bus::BusKind::MmioRead, 0x05F80004U, 2, 0U});
   check(high_half.value == 0U, "VDP2 TVSTAT high halfword should stay clear");
+
+  const auto low_half = arbiter.commit({0, 4U, 4, saturnis::bus::BusKind::MmioRead, 0x05F80006U, 2, 0U});
+  check(low_half.value == 0x0008U, "VDP2 TVSTAT low halfword should keep deterministic status bits");
 }
 
 void test_scsp_mcier_register_masks_to_low_11_bits() {
@@ -1520,7 +1745,7 @@ void test_sh2_bra_delay_slot_movl_then_target_movw_same_addr_overwrite_is_determ
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
-  check(mem.read(0x0022U, 4U) == 0xFFFF0055U,
+  check(mem.read(0x0022U, 4U) == 0x0055FFAAU,
         "BRA path MOV.L delay-slot store then MOV.W target store should deterministically preserve upper bits");
 }
 
@@ -1540,13 +1765,14 @@ void test_sh2_rts_delay_slot_movw_then_target_movl_same_addr_overwrite_is_determ
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000EU);
 
-  for (int i = 0; i < 11; ++i) {
+  for (int i = 0; i < 13; ++i) {
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
-  check(mem.read(0x0022U, 4U) == 0x00000001U,
-        "RTS mixed-width overwrite sequence should deterministically retain the modeled RTS-path value");
+  check(mem.read(0x0022U, 4U) == 0x00010000U,
+        "RTS mixed-width overwrite sequence should deterministically retain the currently modeled RTS-path value");
 }
 
 void test_sh2_rts_delay_slot_movl_then_target_movw_same_addr_overwrite_is_deterministic() {
@@ -1565,13 +1791,14 @@ void test_sh2_rts_delay_slot_movl_then_target_movw_same_addr_overwrite_is_determ
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000EU);
 
-  for (int i = 0; i < 11; ++i) {
+  for (int i = 0; i < 13; ++i) {
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
   check(mem.read(0x0022U, 4U) == 0xFFFFFFAAU,
-        "RTS inverse mixed-width overwrite sequence should deterministically retain the modeled RTS-path value");
+        "RTS inverse mixed-width overwrite sequence should deterministically retain the currently modeled RTS-path value");
 }
 
 
@@ -1766,12 +1993,12 @@ void test_sh2_bra_mixed_width_overwrite_with_negative_immediate_is_deterministic
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
-  for (int i = 0; i < 7; ++i) {
+  for (int i = 0; i < 9; ++i) {
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
-  check(mem.read(0x0022U, 4U) == 0xFFFFFFFFU,
-        "BRA mixed-width overwrite with negative immediate should deterministically preserve modeled upper bits");
+  check(mem.read(0x0022U, 4U) == 0xFFFFFFAAU,
+        "BRA mixed-width overwrite with negative immediate should deterministically execute target-side MOV.W overwrite semantics");
 }
 
 void test_sh2_rts_mixed_width_overwrite_with_negative_immediate_is_deterministic() {
@@ -1790,12 +2017,13 @@ void test_sh2_rts_mixed_width_overwrite_with_negative_immediate_is_deterministic
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0x000EU);
   for (int i = 0; i < 11; ++i) {
     core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   }
 
   check(mem.read(0x0022U, 4U) == 0xFFFFFFAAU,
-        "RTS mixed-width overwrite with negative immediate should deterministically preserve modeled upper bits");
+        "RTS mixed-width overwrite with negative immediate should deterministically execute target-side MOV.W overwrite semantics");
 }
 
 void test_sh2_mmio_ram_same_address_overwrite_is_todo_and_current_subset_stays_deterministic() {
@@ -2029,7 +2257,8 @@ void test_sh2_rts_mixed_width_both_negative_immediates_is_deterministic() {
   mem.write(0x0010U, 2U, 0x2131U); // MOV.W R3,@R1
 
   saturnis::cpu::SH2Core core(0); core.reset(0U, 0x0001FFF0U);
-  for (int i=0;i<11;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+  core.set_pr(0x000EU);
+  for (int i=0;i<30;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite should be deterministic");
 }
 
@@ -2257,6 +2486,7 @@ void test_sh2_rts_both_negative_mixed_width_with_followup_target_arithmetic_is_d
   mem.write(0x0012U,2U,0xE3FFU); // MOV #-1,R3
   mem.write(0x0014U,2U,0x2131U); // MOV.W R3,@R1
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<13;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==1U, "RTS follow-up arithmetic should execute deterministically at target path");
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite with follow-up arithmetic should be deterministic");
@@ -2486,6 +2716,7 @@ void test_sh2_rts_both_negative_mixed_width_with_dual_target_arithmetic_is_deter
   mem.write(0x0014U,2U,0xE3FFU);
   mem.write(0x0016U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<14;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==2U, "RTS dual target arithmetic should execute deterministically");
   check(mem.read(0x0022U,4U)==0xFFFFFFFFU, "RTS both-negative mixed-width overwrite with dual arithmetic should be deterministic");
@@ -2727,6 +2958,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_register_copy_before_store
   mem.write(0x0012U,2U,0xE355U);
   mem.write(0x0014U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<14;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(mem.read(0x0022U,2U)==0x0055U, "RTS target-side register copy before store should be deterministic");
 }
@@ -2966,6 +3198,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_mov_and_add_before_store_i
   mem.write(0x0014U,2U,0xE355U);
   mem.write(0x0016U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<15;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==1U, "RTS target-side MOV+ADD should execute deterministically");
   check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD before store should be deterministic");
@@ -3110,6 +3343,45 @@ void test_commit_horizon_four_alternating_reversals_on_both_cpus_before_converge
   arbiter.update_progress(0,3U); arbiter.update_progress(1,3U); (void)arbiter.commit_pending(pending); check(pending.size()==2U, "quad-reversal phase6 no regression");
   arbiter.update_progress(0,60U); arbiter.update_progress(1,60U); (void)arbiter.commit_pending(pending);
   check(pending.empty(), "quad-reversal phase7 should converge deterministically");
+}
+
+
+void test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address() {
+  constexpr std::uint32_t kAddr = 0x05FE0028U;
+  constexpr std::uint32_t kCpuValue = 0x00012345U;
+  constexpr std::uint32_t kDmaValue = 0x00034567U;
+
+  for (int run = 0; run < 5; ++run) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    saturnis::bus::BusOp dma_write{0, 2U, 1, saturnis::bus::BusKind::MmioWrite, kAddr, 4, kDmaValue};
+    dma_write.cpu_id = -1;
+    dma_write.producer = saturnis::bus::BusProducer::Dma;
+
+    std::vector<saturnis::bus::BusOp> pending{{0, 2U, 0, saturnis::bus::BusKind::MmioWrite, kAddr, 4, kCpuValue},
+                                              dma_write,
+                                              {0, 3U, 2, saturnis::bus::BusKind::MmioRead, kAddr, 4, 0U}};
+
+    arbiter.update_progress(0, 10U);
+    arbiter.update_progress(1, 10U);
+    const auto committed = arbiter.commit_pending(pending);
+
+    check(pending.empty(), "CPU/DMA contention sequence should fully drain once horizon opens");
+    check(committed.size() == 3U, "CPU/DMA contention sequence should commit all queued MMIO operations");
+    check(committed[0].op.cpu_id == -1, "DMA should win equal-time MMIO contention by deterministic priority");
+    check(committed[1].op.cpu_id == 0, "CPU MMIO op should still commit immediately after DMA winner");
+    check(committed[2].response.value == kCpuValue,
+          "CPU MMIO write should deterministically become visible after DMA-first contention ordering");
+
+    const auto json = trace.to_jsonl();
+    check(json.find(R"("cpu":-1,"kind":"MMIO_WRITE","phys":100532264)") != std::string::npos,
+          "CPU/DMA fairness regression trace should include the DMA MMIO write checkpoint");
+    check(json.find(R"("cpu":0,"kind":"MMIO_WRITE","phys":100532264)") != std::string::npos,
+          "CPU/DMA fairness regression trace should include the CPU MMIO write checkpoint");
+  }
 }
 
 void test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically() {
@@ -3273,6 +3545,7 @@ void test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_i
   mem.write(0x0016U,2U,0xE355U);
   mem.write(0x0018U,2U,0x2131U);
   saturnis::cpu::SH2Core core(0); core.reset(0U,0x0001FFF0U);
+  core.set_pr(0x0010U);
   for (int i=0;i<17;++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
   check(core.reg(0)==2U, "RTS target-side MOV+ADD+ADD should execute deterministically");
   check(mem.read(0x0030U,2U)==0x0055U, "RTS target-side MOV+ADD+ADD before store should be deterministic");
@@ -3370,6 +3643,15 @@ void test_sh2_ifetch_cache_runahead() {
 } // namespace
 
 int main() {
+  test_committed_memory_uses_big_endian_multibyte_layout();
+  test_tiny_cache_uses_big_endian_multibyte_layout();
+  test_store_buffer_retains_entries_beyond_previous_capacity();
+  test_ram_big_endian_pack_red_light_gate();
+  test_mmio_byte_lane_mapping_red_light_gate();
+  test_sh2_imm8_sign_extension_microtest();
+  test_sh2_load_sign_extension_microtest();
+  test_sh2_movw_post_increment_microtest();
+  test_sh2_load_into_r15_does_not_clobber_pr_microtest();
   test_tie_break_rr_determinism();
   test_stall_applies_to_current_op();
   test_no_host_order_dependence();
@@ -3423,6 +3705,7 @@ int main() {
   test_store_to_load_forwarding();
   test_barrier_does_not_change_contention_address_history();
   test_mmio_write_is_visible_to_subsequent_reads();
+  test_busop_invalid_size_is_rejected_without_side_effects();
   test_mmio_subword_write_updates_correct_lane();
   test_display_status_register_is_read_only_and_ready();
   test_scu_dma_register_file_masks_and_lane_semantics_are_deterministic();
@@ -3454,7 +3737,9 @@ int main() {
   test_scu_interrupt_source_subword_writes_apply_lane_masks();
   test_scu_interrupt_source_write_log_is_deterministic();
   test_scu_synthetic_source_mmio_commit_trace_order_is_deterministic();
+  test_smpc_command_write_updates_deterministic_command_and_result_registers();
   test_smpc_status_register_is_read_only_and_ready();
+  test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
@@ -3501,6 +3786,7 @@ int main() {
   test_sh2_same_addr_overwrite_with_six_intermediate_non_memory_instructions_is_deterministic();
   test_sh2_bra_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
+  test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_sh2_add_register_updates_destination();
