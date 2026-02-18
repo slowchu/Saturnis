@@ -29,10 +29,19 @@ struct CommitEvent {
   bool cache_hit = false;
 };
 
+struct FaultEvent {
+  Tick t = 0;
+  int cpu = 0;
+  std::uint32_t pc = 0;
+  std::uint32_t detail = 0;
+  std::string reason;
+};
+
 class TraceLog {
 public:
   void add_commit(const CommitEvent &event);
   void add_state(const CpuSnapshot &state);
+  void add_fault(const FaultEvent &fault);
   [[nodiscard]] std::string to_jsonl() const;
   void write_jsonl(std::ostream &os) const;
 

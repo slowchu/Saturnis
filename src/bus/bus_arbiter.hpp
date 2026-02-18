@@ -89,6 +89,8 @@ private:
   bool progress_tracking_enabled_ = false;
   std::array<core::Tick, 2> progress_up_to_{{std::numeric_limits<core::Tick>::max(),
                                               std::numeric_limits<core::Tick>::max()}};
+  std::array<core::Tick, 3> producer_last_req_time_{{0U, 0U, 0U}};
+  std::array<bool, 3> producer_seen_{{false, false, false}};
 };
 
 } // namespace saturnis::bus
