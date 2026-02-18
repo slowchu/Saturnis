@@ -212,3 +212,10 @@
 5. [x] Expand VDP1->SCU interrupt scaffold from bridge register to first source-driven event path while preserving IMS/IST determinism assertions.
 6. [x] Add trace-level assertions for VDP1->SCU handoff commits (`src`, `owner`, `tag`, timing tuple) under repeated runs.
 7. [x] Run another code-review pass and refresh docs with newly discovered risks/TODOs.
+
+## Next tasks (repopulated again)
+
+1. [x] Add deterministic VDP1 source-event status read-only/lane semantics regression coverage.
+2. [x] Add trace-regression-level repeated-run stability checks for VDP1 source-event handoff commits.
+3. [ ] Connect VDP1 source-event trigger scaffold to first command/completion-producing path while preserving deterministic trace parity.
+4. [ ] Extend trace regression to pin VDP1 source-event status/IST timing tuples across single-thread/multithread scripted stress fixtures.

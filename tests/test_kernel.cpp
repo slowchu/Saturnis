@@ -901,6 +901,34 @@ void test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs() {
   }
 }
 
+void test_vdp1_source_event_status_register_is_read_only_and_lane_stable() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const auto initial = arbiter.commit({0, 0U, 0U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check(initial.value == 0U,
+        "VDP1 source-event status should deterministically reset to zero before any trigger events");
+
+  (void)arbiter.commit({0, 1U, 1U, saturnis::bus::BusKind::MmioWrite, 0x05D00090U, 4U, 0x1U});
+  const auto after_trigger = arbiter.commit({0, 2U, 2U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check((after_trigger.value & 0xFFU) == 1U && (after_trigger.value & 0x100U) != 0U,
+        "VDP1 source-event status should expose deterministic event counter and IRQ-level bits after trigger");
+
+  (void)arbiter.commit({0, 3U, 3U, saturnis::bus::BusKind::MmioWrite, 0x05D00094U, 4U, 0xFFFFFFFFU});
+  const auto after_illegal_write = arbiter.commit({0, 4U, 4U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 4U, 0U});
+  check(after_illegal_write.value == after_trigger.value,
+        "VDP1 source-event status should remain read-only under deterministic write attempts");
+
+  const auto upper_half = arbiter.commit({0, 5U, 5U, saturnis::bus::BusKind::MmioRead, 0x05D00094U, 2U, 0U});
+  const auto lower_half = arbiter.commit({0, 6U, 6U, saturnis::bus::BusKind::MmioRead, 0x05D00096U, 2U, 0U});
+  check(upper_half.value == 0U,
+        "VDP1 source-event status high halfword should remain deterministic zero in current scaffold");
+  check(lower_half.value == 0x0101U,
+        "VDP1 source-event status low halfword should deterministically pack IRQ-level and event-counter bits");
+}
+
 void test_vdp2_tvmd_register_masks_to_low_16_bits() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4247,6 +4275,7 @@ int main() {
   test_vdp1_scu_interrupt_handoff_scaffold_sets_and_clears_pending_bits_deterministically();
   test_vdp1_scu_interrupt_source_event_path_sets_pending_bits_deterministically();
   test_vdp1_scu_handoff_trace_fields_and_timing_are_stable_across_runs();
+  test_vdp1_source_event_status_register_is_read_only_and_lane_stable();
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
