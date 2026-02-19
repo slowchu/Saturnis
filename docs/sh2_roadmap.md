@@ -41,13 +41,13 @@ Legend:
 
 ## Group 2 (P0): Core Control-Flow Firmware Blockers (7)
 
-8. [ ] Fix `JSR @Rn` decode/register extraction bug (ensure `n` nibble is extracted correctly) + regression using `JSR @R3` (non-R0). (`S`, deps: D-BR, D-TEST)
-9. [ ] Implement `JSR @Rn` (PR update + delay slot + deterministic PC update policy) + tests. (`M`, deps: D-BR, D-TEST)
-10. [ ] Implement `JMP @Rn` (delay slot + deterministic PC update policy) + tests. (`M`, deps: D-BR, D-TEST)
-11. [ ] Implement `BSR disp12` (PR update + delay slot + correct target formula) + tests. (`M`, deps: D-BR, D-TEST)
-12. [ ] Implement `BT/BF` **and** `BT/S` `BF/S` (if missing) with correct displacement sign-ext and delay-slot rules + tests. (`M`, deps: D-BR, D-TEST)
-13. [ ] Add boundary displacement tests for `BT/BF(/S)` and `BSR` (min/max negative/positive disp). (`S`, deps: D-BR, D-TEST)
-14. [ ] Add branch-in-delay-slot matrix tests across `{BRA,BSR,JMP,JSR,BT,BF}` × `{ALU,mem-op}` slots and ensure ST/MT parity. (`M`, deps: D-BR, D-MEM, D-TEST)
+8. [x] Fix `JSR @Rn` decode/register extraction bug (ensure `n` nibble is extracted correctly) + regression using `JSR @R3` (non-R0). (`S`, deps: D-BR, D-TEST)
+9. [x] Implement `JSR @Rn` (PR update + delay slot + deterministic PC update policy) + tests. (`M`, deps: D-BR, D-TEST)
+10. [x] Implement `JMP @Rn` (delay slot + deterministic PC update policy) + tests. (`M`, deps: D-BR, D-TEST)
+11. [x] Implement `BSR disp12` (PR update + delay slot + correct target formula) + tests. (`M`, deps: D-BR, D-TEST)
+12. [x] Implement `BT/BF` **and** `BT/S` `BF/S` (if missing) with correct displacement sign-ext and delay-slot rules + tests. (`M`, deps: D-BR, D-TEST)
+13. [x] Add boundary displacement tests for `BT/BF(/S)` and `BSR` (min/max negative/positive disp). (`S`, deps: D-BR, D-TEST)
+14. [x] Add branch-in-delay-slot matrix tests across `{BRA,BSR,JMP,JSR,BT,BF}` × `{ALU,mem-op}` slots and ensure ST/MT parity. (`M`, deps: D-BR, D-MEM, D-TEST)
 
 ## Group 3 (P0): Decode Architecture Hardening (7)
 

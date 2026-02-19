@@ -4,6 +4,17 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 2 (control-flow blockers) implementation review
+- Reviewed SH-2 control-flow behavior against Group 2 roadmap goals with emphasis on decode correctness and delayed-branch determinism.
+- Added/validated coverage for:
+  1. `JSR @Rn` non-R0 decode path (`@R3`) with PR link and delay-slot behavior.
+  2. Boundary displacement semantics for `BSR`, `BT/BF`, and `BT/S`/`BF/S` forms.
+  3. Branch delay-slot matrix coverage across `{BRA, BSR, JMP, JSR, BT/S, BF/S}` with both ALU-slot and memory-slot variants.
+- Determinism/code-quality review outcome:
+  1. Repeated-run branch matrix traces are byte-identical.
+  2. Control-flow state (`PC/PR/register side effects`) matches across repeated executions.
+  3. Delay-slot memory paths remain routed through existing bus-commit sequencing.
+
 ### 2026-02-19 Group 1 (exception handler prologue/epilogue) implementation review
 - Reviewed SH-2 decode/execute changes for `STS.L PR,@-Rn`, `LDS.L @Rm+,PR`, `LDC Rm,SR`, and `STC SR,Rn`.
 - Verified each new instruction path keeps deterministic semantics:

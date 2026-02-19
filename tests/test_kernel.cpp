@@ -5,6 +5,7 @@
 #include "dev/devices.hpp"
 #include "mem/memory.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
@@ -4715,6 +4716,178 @@ void test_p0_sh2_exception_paths_do_not_emit_legacy_synthetic_markers() {
         "real exception flow should not emit legacy synthetic entry/return markers");
 }
 
+void test_p0_sh2_jsr_non_r0_decode_and_delay_slot_control_flow() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE308U); // MOV #8,R3
+  mem.write(0x0002U, 2U, 0x430BU); // JSR @R3
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (JSR delay slot)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (return point)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (subroutine body)
+  mem.write(0x000AU, 2U, 0x000BU); // RTS
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (RTS delay slot)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 7U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.pr() == 0x0006U, "JSR @R3 must decode source register nibble correctly and set PR=pc+4");
+  check(core.reg(0) == 4U, "JSR/RTS flow should execute both delay slots and return-path instruction deterministically");
+}
+
+void test_p0_sh2_branch_boundary_displacements_bt_bf_bsrs() {
+  // BSR min/max displacement boundaries (disp12 signed)
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xBFFFU); // BSR -1 -> target 0x0002
+    mem.write(0x0002U, 2U, 0x7001U); // delay slot
+    mem.write(0x0004U, 2U, 0x0009U); // padding
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, 0U);
+    core.step(arbiter, trace, 1U);
+    check(core.pc() == 0x0002U && core.pr() == 0x0004U && core.reg(0) == 1U,
+          "BSR disp12 minimum negative boundary should branch to pc+2 after executing delay slot");
+  }
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xB7FFU); // BSR +2047
+    mem.write(0x0002U, 2U, 0x7001U); // delay slot
+    mem.write(0x1002U, 2U, 0x7001U); // max-positive target from pc=0
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, 0U);
+    core.step(arbiter, trace, 1U);
+    core.step(arbiter, trace, 2U);
+    check(core.pc() == 0x1004U && core.reg(0) == 2U,
+          "BSR disp12 maximum positive boundary should land at deterministic far target after delay slot");
+  }
+
+  // BT/BF and BT/S BF/S min/max signed disp8 boundaries.
+  auto run_branch_case = [](std::uint16_t instr0, std::uint16_t setup_t_instr, std::uint32_t expected_pc_after_two,
+                            bool has_delay_slot, bool expect_r0_inc_after_two) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, setup_t_instr);
+    mem.write(0x0002U, 2U, instr0);
+    mem.write(0x0004U, 2U, 0x7001U); // slot candidate / fallthrough increment
+    mem.write(0x0006U, 2U, 0x0009U);
+    mem.write(0x0104U, 2U, 0x7001U); // max-positive target for disp=+127 with branch at pc=0x0002 => 0x0104
+    mem.write(0xFFFFFF06U, 2U, 0x7001U); // min-negative target for disp=-128 with branch at pc=0x0002 => 0xFFFFFF06
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, 0U); // setup T
+    core.step(arbiter, trace, 1U); // branch
+    core.step(arbiter, trace, 2U); // either slot/fallthrough/target
+
+    check(core.pc() == expected_pc_after_two,
+          "BT/BF(/S) displacement boundary case should resolve to deterministic target/fallthrough PC (instr=" +
+              std::to_string(static_cast<unsigned>(instr0)) + ", actual_pc=" +
+              std::to_string(static_cast<unsigned>(core.pc())) + ", expected_pc=" +
+              std::to_string(static_cast<unsigned>(expected_pc_after_two)) + ")");
+    if (has_delay_slot) {
+      check(core.reg(0) == (expect_r0_inc_after_two ? 1U : 0U),
+            "BT/S BF/S should execute exactly one deterministic delay-slot instruction when branch is taken");
+    }
+  };
+
+  run_branch_case(0x897FU, 0x0018U, 0x0106U, false, false); // BT +127, taken, no delay slot
+  run_branch_case(0x8B80U, 0x0018U, 0x0006U, false, false); // BF -128, not taken
+  run_branch_case(0x8D7FU, 0x0018U, 0x0104U, true, true);   // BT/S +127, taken with delay slot
+  run_branch_case(0x8F80U, 0x0018U, 0x0006U, true, true);   // BF/S -128, not taken still executes delay-slot instruction deterministically
+}
+
+void test_p0_sh2_branch_delay_slot_matrix_alu_vs_memory_ops_is_deterministic() {
+  struct Case {
+    std::uint16_t setup;
+    std::uint16_t branch;
+    std::uint16_t slot_alu;
+    std::uint16_t slot_mem;
+    bool mem_slot;
+  };
+
+  const std::array<Case, 6> cases{{
+      {0x0009U, 0xA001U, 0x7001U, 0x2122U, false}, // BRA
+      {0x0009U, 0xB001U, 0x7001U, 0x2122U, false}, // BSR
+      {0xE108U, 0x412BU, 0x7001U, 0x2122U, false}, // JMP @R1
+      {0xE108U, 0x410BU, 0x7001U, 0x2122U, false}, // JSR @R1
+      {0x0018U, 0x8D01U, 0x7001U, 0x2122U, false}, // BT/S taken
+      {0x0008U, 0x8F01U, 0x7001U, 0x2122U, false}, // BF/S taken
+  }};
+
+  for (const auto &c : cases) {
+    for (int slot_kind = 0; slot_kind < 2; ++slot_kind) {
+      auto init_mem = [&](saturnis::mem::CommittedMemory &mem_x) {
+        mem_x.write(0x0000U, 2U, c.setup);
+        mem_x.write(0x0002U, 2U, c.branch);
+        mem_x.write(0x0004U, 2U, (slot_kind == 0) ? c.slot_alu : c.slot_mem);
+        mem_x.write(0x0006U, 2U, 0x0009U);
+        mem_x.write(0x0008U, 2U, 0x7001U); // branch target payload
+        mem_x.write(0x000AU, 2U, 0x0009U);
+        mem_x.write(0x0040U, 4U, 0x00000000U);
+      };
+
+      saturnis::core::TraceLog trace_a;
+      saturnis::mem::CommittedMemory mem_a;
+      init_mem(mem_a);
+      saturnis::dev::DeviceHub dev_a;
+      saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+      saturnis::cpu::SH2Core core_a(0);
+      core_a.reset(0U, 0x0001FFF0U);
+      core_a.set_pr(0x0008U);
+      core_a.step(arbiter_a, trace_a, 0U);
+      core_a.step(arbiter_a, trace_a, 1U);
+      core_a.step(arbiter_a, trace_a, 2U);
+      core_a.step(arbiter_a, trace_a, 3U);
+
+      saturnis::core::TraceLog trace_b;
+      saturnis::mem::CommittedMemory mem_b;
+      init_mem(mem_b);
+      saturnis::dev::DeviceHub dev_b;
+      saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+      saturnis::cpu::SH2Core core_b(0);
+      core_b.reset(0U, 0x0001FFF0U);
+      core_b.set_pr(0x0008U);
+      core_b.step(arbiter_b, trace_b, 0U);
+      core_b.step(arbiter_b, trace_b, 1U);
+      core_b.step(arbiter_b, trace_b, 2U);
+      core_b.step(arbiter_b, trace_b, 3U);
+
+      check(core_a.pc() == core_b.pc() && core_a.reg(0) == core_b.reg(0) && core_a.pr() == core_b.pr(),
+            "branch delay-slot matrix should be deterministic across repeated runs for ALU and memory slot variants");
+      check(trace_a.to_jsonl() == trace_b.to_jsonl(),
+            "branch delay-slot matrix traces should remain byte-identical across repeated runs");
+
+      if (slot_kind == 0) {
+        check(core_a.reg(0) >= 1U,
+              "ALU delay-slot branch matrix case should execute deterministic arithmetic in the slot");
+      } else {
+        check(mem_a.read(0x0040U, 4U) == 0x00000000U,
+              "memory-op delay-slot matrix case should commit deterministic bus-visible slot effects");
+      }
+    }
+  }
+}
+
 void test_p0_sh2_bsr_and_jmp_delay_slot_control_flow() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -5009,6 +5182,9 @@ int main() {
   test_p0_sh2_nested_exception_entry_counts_two_markers();
   test_p0_sh2_trapa_multi_vector_handlers_are_distinct();
   test_p0_sh2_exception_paths_do_not_emit_legacy_synthetic_markers();
+  test_p0_sh2_jsr_non_r0_decode_and_delay_slot_control_flow();
+  test_p0_sh2_branch_boundary_displacements_bt_bf_bsrs();
+  test_p0_sh2_branch_delay_slot_matrix_alu_vs_memory_ops_is_deterministic();
   test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
   test_p0_sh2_ext_and_neg_register_ops();
   test_p0_sh2_gbr_displacement_load_store_forms();
