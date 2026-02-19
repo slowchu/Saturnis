@@ -4462,6 +4462,53 @@ void test_p0_sh2_load_to_r15_does_not_clobber_pr() {
   check(core.pr() == 0xDEADBEEFU, "MOV.L @Rm,R15 must not clobber PR as a load side effect");
 }
 
+void test_p0_sh2_sub_register_uses_0x3nm8_encoding() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE105U); // MOV #5,R1
+  mem.write(0x0002U, 2U, 0xE203U); // MOV #3,R2
+  mem.write(0x0004U, 2U, 0x3128U); // SUB R2,R1 (3nm8)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+
+  check(core.reg(1) == 2U, "SUB Rm,Rn must use 0x3nm8 encoding and subtract source from destination");
+}
+
+void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE040U); // MOV #0x40,R0
+  mem.write(0x0002U, 2U, 0xE120U); // MOV #0x20,R1
+  mem.write(0x0004U, 2U, 0xE450U); // MOV #0x50,R4
+  mem.write(0x0006U, 2U, 0x1112U); // MOV.L R1,@(4,R1)
+  mem.write(0x0008U, 2U, 0x5312U); // MOV.L @(8,R1),R3
+  mem.write(0x000AU, 2U, 0x8541U); // MOV.W @(2,R4),R0
+  mem.write(0x000CU, 2U, 0x8443U); // MOV.B @(3,R4),R0
+  mem.write(0x0052U, 2U, 0xFF80U);
+  mem.write(0x0053U, 1U, 0x80U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(3) == 0x20U, "MOV.L @(disp,Rm),Rn should read back value written by MOV.L Rm,@(disp,Rn)");
+  check(core.reg(0) == 0xFFFFFF80U, "MOV.B/MOV.W @(disp,Rm),R0 displacement loads should sign-extend");
+  check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
+}
+
 } // namespace
 
 int main() {
@@ -4644,6 +4691,8 @@ int main() {
   test_p0_sh2_post_increment_load_updates_source_register();
   test_p0_sh2_post_increment_self_load_skips_increment_when_m_equals_n();
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
+  test_p0_sh2_sub_register_uses_0x3nm8_encoding();
+  test_p0_sh2_displacement_addressing_load_store_roundtrip();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }
