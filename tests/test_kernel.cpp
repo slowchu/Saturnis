@@ -4544,6 +4544,141 @@ void test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot() {
   check(core.reg(0) == 1U, "execution should resume at instruction after TRAPA return PC");
 }
 
+void test_p0_sh2_rte_memory_delay_slot_executes_before_restore() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0xE255U); // MOV #0x55,R2
+  mem.write(0x0004U, 2U, 0x0009U); // NOP at restored return PC
+  mem.write(0x0006U, 2U, 0x0009U); // NOP
+  mem.write(0x0010U, 4U, 0x00000080U); // exception vector 4 -> handler
+  mem.write(0x0080U, 2U, 0x002BU); // RTE
+  mem.write(0x0082U, 2U, 0x2122U); // MOV.L R2,@R1 (RTE delay-slot memory op)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+
+  core.request_exception_vector(4U);
+  for (std::uint64_t i = 2U; i < 12U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0040U, 4U) == 0x00000055U,
+        "RTE delay-slot memory op should commit before restoring exception return control state");
+  check(core.pc() >= 0x0004U && core.pc() <= 0x000AU,
+        "RTE should restore return PC after delay-slot memory op commits and execution should continue deterministically");
+}
+
+void test_p0_sh2_rte_stack_pop_order_restores_pc_and_sr_pair() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler
+  mem.write(0x0040U, 2U, 0x002BU); // RTE
+  mem.write(0x0042U, 2U, 0x0009U); // RTE delay slot
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.request_exception_vector(4U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.sr() == 0x000000F0U && core.reg(15) == 0x0001FFF0U && (core.pc() & 1U) == 0U,
+        "RTE should restore the stacked PC/SR pair and stack pointer deterministically (PC pop then SR pop)");
+}
+
+void test_p0_sh2_nested_exception_entry_counts_two_markers() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler
+  mem.write(0x0020U, 4U, 0x00000080U); // vector 8 -> handler
+  mem.write(0x0040U, 2U, 0x0009U); // handler 1
+  mem.write(0x0080U, 2U, 0x0009U); // handler 2
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.request_exception_vector(4U);
+  core.step(arbiter, trace, 0U);
+  core.request_exception_vector(8U);
+  for (std::uint64_t i = 1U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  const auto json = trace.to_jsonl();
+  const auto first = json.find("\"reason\":\"EXCEPTION_ENTRY\"");
+  check(first != std::string::npos,
+        "first nested exception request should emit EXCEPTION_ENTRY marker");
+  check(json.find("\"reason\":\"EXCEPTION_ENTRY\"", first + 1) != std::string::npos,
+        "second nested exception request should emit a second EXCEPTION_ENTRY marker");
+}
+
+void test_p0_sh2_trapa_multi_vector_handlers_are_distinct() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE320U); // MOV #0x20,R3
+  mem.write(0x0002U, 2U, 0x432EU); // LDC R3,VBR
+  mem.write(0x0004U, 2U, 0xC301U); // TRAPA #1
+  mem.write(0x0006U, 2U, 0xC302U); // TRAPA #2
+  mem.write(0x0008U, 2U, 0x0009U); // NOP
+  mem.write(0x0024U, 4U, 0x00000060U); // vector #1 handler
+  mem.write(0x0028U, 4U, 0x00000070U); // vector #2 handler
+  mem.write(0x0060U, 2U, 0x7501U); // ADD #1,R5
+  mem.write(0x0062U, 2U, 0x002BU); // RTE
+  mem.write(0x0064U, 2U, 0x0009U); // slot
+  mem.write(0x0070U, 2U, 0x7601U); // ADD #1,R6
+  mem.write(0x0072U, 2U, 0x002BU); // RTE
+  mem.write(0x0074U, 2U, 0x0009U); // slot
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 24U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(5) == 1U && core.reg(6) == 1U,
+        "TRAPA immediate vectors should dispatch to distinct handlers with independent effects");
+}
+
+void test_p0_sh2_exception_paths_do_not_emit_legacy_synthetic_markers() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler
+  mem.write(0x0040U, 2U, 0x002BU); // RTE
+  mem.write(0x0042U, 2U, 0x0009U); // slot
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.request_exception_vector(4U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"EXCEPTION_ENTRY\"") != std::string::npos &&
+            json.find("\"reason\":\"EXCEPTION_RETURN\"") != std::string::npos,
+        "real exception flow should emit EXCEPTION_ENTRY/EXCEPTION_RETURN markers");
+  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") == std::string::npos &&
+            json.find("\"reason\":\"SYNTHETIC_RTE\"") == std::string::npos,
+        "real exception flow should not emit legacy synthetic entry/return markers");
+}
+
 void test_p0_sh2_bsr_and_jmp_delay_slot_control_flow() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4832,6 +4967,11 @@ int main() {
   test_p0_sh2_sub_register_uses_0x3nm8_encoding();
   test_p0_sh2_displacement_addressing_load_store_roundtrip();
   test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot();
+  test_p0_sh2_rte_memory_delay_slot_executes_before_restore();
+  test_p0_sh2_rte_stack_pop_order_restores_pc_and_sr_pair();
+  test_p0_sh2_nested_exception_entry_counts_two_markers();
+  test_p0_sh2_trapa_multi_vector_handlers_are_distinct();
+  test_p0_sh2_exception_paths_do_not_emit_legacy_synthetic_markers();
   test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
   test_p0_sh2_ext_and_neg_register_ops();
   test_p0_sh2_gbr_displacement_load_store_forms();

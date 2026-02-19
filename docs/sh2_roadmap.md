@@ -17,13 +17,13 @@ Legend:
 
 ## Group 1 (P0): Exception/Return Correctness Hardening (7)
 
-1. [ ] Add regression: `RTE` executes real non-memory delay-slot instruction before state restore. (`M`, deps: D-EXC, D-BR, D-TEST)
-2. [ ] Add regression: `RTE` executes memory-op delay-slot before state restore. (`M`, deps: D-EXC, D-BR, D-MEM)
-3. [ ] Assert stack pop order (`PC` then `SR`) for `RTE` in bus-commit sequence tests. (`S`, deps: D-EXC, D-TEST)
-4. [ ] Add nested exception-entry regression with in-flight exception context. (`M`, deps: D-EXC, D-TEST)
-5. [ ] Add multi-vector `TRAPA` regression with per-imm handler verification. (`M`, deps: D-EXC, D-MEM)
-6. [ ] Document exception boundary contract (`pc_` meaning) inline near implementation. (`S`, deps: D-DOC)
-7. [ ] Add trace-regression guard that new paths emit only `EXCEPTION_ENTRY/EXCEPTION_RETURN` markers. (`S`, deps: D-EXC, D-TEST)
+1. [x] Add regression: `RTE` executes real non-memory delay-slot instruction before state restore. (`M`, deps: D-EXC, D-BR, D-TEST)
+2. [x] Add regression: `RTE` executes memory-op delay-slot before state restore. (`M`, deps: D-EXC, D-BR, D-MEM)
+3. [x] Assert stack pop order (`PC` then `SR`) for `RTE` in bus-commit sequence tests. (`S`, deps: D-EXC, D-TEST)
+4. [x] Add nested exception-entry regression with in-flight exception context. (`M`, deps: D-EXC, D-TEST)
+5. [x] Add multi-vector `TRAPA` regression with per-imm handler verification. (`M`, deps: D-EXC, D-MEM)
+6. [x] Document exception boundary contract (`pc_` meaning) inline near implementation. (`S`, deps: D-DOC)
+7. [x] Add trace-regression guard that new paths emit only `EXCEPTION_ENTRY/EXCEPTION_RETURN` markers. (`S`, deps: D-EXC, D-TEST)
 
 ## Group 2 (P0): Control-Flow ISA Gaps Blocking Firmware Paths (7)
 

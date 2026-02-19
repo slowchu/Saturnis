@@ -434,6 +434,9 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
   Sh2ProduceResult out;
 
 
+  // Exception contract: request_exception_vector() is taken at an instruction boundary where pc_
+  // already points to the next instruction to execute. Entry therefore pushes SR then pc_ and vectors
+  // via VBR, and RTE restores via stack after executing its architectural delay slot.
   if (pending_exception_vector_.has_value()) {
     trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, *pending_exception_vector_, "EXCEPTION_ENTRY"});
     r_[15] = u32_sub(r_[15], 4U);
