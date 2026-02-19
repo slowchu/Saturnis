@@ -73,12 +73,12 @@ Legend:
 
 ## Group 5 (P1): Arithmetic/ALU Coverage for BIOS Routines (6)
 
-29. [ ] Implement `ADDC Rm,Rn` with carry in/out via `T`. (`M`, deps: D-ALU, D-TEST)
-30. [ ] Implement `ADDV Rm,Rn` with signed overflow into `T`. (`M`, deps: D-ALU, D-TEST)
-31. [ ] Implement `NEGC Rm,Rn` with borrow semantics via `T`. (`M`, deps: D-ALU, D-TEST)
-32. [ ] Add edge-case tests for `SUBC/SUBV` borrow/overflow chains (including multi-step carry chains). (`S`, deps: D-ALU, D-TEST)
-33. [ ] Add deterministic SR side-effect audit tests for core immediate/logical ops (`AND/OR/XOR/TST/CMP*`). (`S`, deps: D-ALU, D-TEST)
-34. [ ] Add reference-vector checker scaffold (fixed corpus, deterministic; used by future ALU tasks). (`M`, deps: D-TEST)
+29. [x] Implement `ADDC Rm,Rn` with carry in/out via `T`. (`M`, deps: D-ALU, D-TEST)
+30. [x] Implement `ADDV Rm,Rn` with signed overflow into `T`. (`M`, deps: D-ALU, D-TEST)
+31. [x] Implement `NEGC Rm,Rn` with borrow semantics via `T`. (`M`, deps: D-ALU, D-TEST)
+32. [x] Add edge-case tests for `SUBC/SUBV` borrow/overflow chains (including multi-step carry chains). (`S`, deps: D-ALU, D-TEST)
+33. [x] Add deterministic SR side-effect audit tests for core immediate/logical ops (`AND/OR/XOR/TST/CMP*`). (`S`, deps: D-ALU, D-TEST)
+34. [x] Add reference-vector checker scaffold (fixed corpus, deterministic; used by future ALU tasks). (`M`, deps: D-TEST)
 
 ## Group 6 (P1): Shift/Bit Manipulation Expansion (6)
 

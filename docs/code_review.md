@@ -4,6 +4,14 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 5 (ALU coverage) implementation review
+- Implemented and reviewed ALU flag-sensitive instructions: `ADDC`, `ADDV`, and `NEGC`.
+- Added focused deterministic regressions for multi-step `SUBC/SUBV` borrow/overflow chains.
+- Added deterministic `T`-bit side-effect audit coverage for core logical/compare ops (`AND/OR/XOR/TST/CMP`).
+- Added a fixed-corpus ALU reference-vector scaffold to reuse for future arithmetic task groups while preserving deterministic expectations.
+- Review outcome: all new ALU paths operate on register state only, avoid host-time dependence, and remain trace-stable across repeated runs.
+
+
 ### 2026-02-19 Group 4 (addressing-mode breadth) implementation review
 - Added/validated SH-2 addressing-mode coverage for real firmware-style data paths:
   1. PC-relative forms: `MOV.W @(disp,PC),Rn`, `MOV.L @(disp,PC),Rn`, and `MOVA @(disp,PC),R0`.

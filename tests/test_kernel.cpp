@@ -3772,6 +3772,184 @@ void test_sh2_add_register_updates_destination() {
 
 
 
+
+struct Sh2AluReferenceVector {
+  const char *name;
+  std::vector<std::uint16_t> program;
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> preloads;
+  std::uint64_t steps;
+  std::uint32_t reg_index;
+  std::uint32_t expected_reg;
+  bool expected_t;
+};
+
+void run_sh2_alu_reference_vector(const Sh2AluReferenceVector &vec) {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::uint32_t pc = 0U;
+  for (const auto op : vec.program) {
+    mem.write(pc, 2U, op);
+    pc += 2U;
+  }
+  for (const auto &pl : vec.preloads) {
+    mem.write(pl.first, 4U, pl.second);
+  }
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < vec.steps; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(vec.reg_index) == vec.expected_reg,
+        std::string("ALU reference vector failed: ") + vec.name + " (register mismatch)");
+  check(((core.sr() & 1U) != 0U) == vec.expected_t,
+        std::string("ALU reference vector failed: ") + vec.name + " (T-bit mismatch)");
+}
+
+void test_p1_sh2_addc_addv_negc_semantics() {
+  // ADDC carry-in/carry-out
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE1FFU); // MOV #-1,R1
+    mem.write(0x0002U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0004U, 2U, 0x0018U); // SETT
+    mem.write(0x0006U, 2U, 0x312EU); // ADDC R2,R1
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(1) == 1U && ((core.sr() & 1U) != 0U),
+          "ADDC should include carry-in and set T on carry-out");
+  }
+
+  // ADDV signed overflow
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0x6112U); // MOV.L @R1,R1
+    mem.write(0x0004U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0006U, 2U, 0x312FU); // ADDV R2,R1
+    mem.write(0x0040U, 4U, 0x7FFFFFFFU);
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(1) == 0x80000000U && ((core.sr() & 1U) != 0U),
+          "ADDV should set T on signed overflow");
+  }
+
+  // NEGC borrow semantics
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0002U, 2U, 0x0018U); // SETT
+    mem.write(0x0004U, 2U, 0x632AU); // NEGC R2,R3
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 3; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(3) == 0xFFFFFFFEU && ((core.sr() & 1U) != 0U),
+          "NEGC should compute 0 - Rm - T and set T as borrow indicator");
+  }
+}
+
+void test_p1_sh2_subc_subv_borrow_and_overflow_chains() {
+  // SUBC borrow chain
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE300U); // MOV #0,R3
+    mem.write(0x0002U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0004U, 2U, 0x332AU); // SUBC R2,R3 => -1, T=1
+    mem.write(0x0006U, 2U, 0x332AU); // SUBC R2,R3 => -3, T=1
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(3) == 0xFFFFFFFDU && ((core.sr() & 1U) == 0U),
+          "SUBC borrow chain should deterministically propagate carry-in borrow across steps");
+  }
+
+  // SUBV overflow chain
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0x6112U); // MOV.L @R1,R1 (0x80000000)
+    mem.write(0x0004U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0006U, 2U, 0x312BU); // SUBV R2,R1 => overflow (0x80000000 - 1)
+    mem.write(0x0040U, 4U, 0x80000000U);
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(1) == 0x7FFFFFFFU && ((core.sr() & 1U) != 0U),
+          "SUBV should deterministically set T on signed overflow boundary transitions");
+  }
+}
+
+void test_p1_sh2_sr_t_bit_side_effect_audit_for_core_alu_ops() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0018U); // SETT
+  mem.write(0x0002U, 2U, 0xE1F0U); // MOV #-16,R1
+  mem.write(0x0004U, 2U, 0xE20FU); // MOV #15,R2
+  mem.write(0x0006U, 2U, 0x2129U); // AND R2,R1 (should preserve T)
+  mem.write(0x0008U, 2U, 0x212AU); // XOR R2,R1 (preserve T)
+  mem.write(0x000AU, 2U, 0x212BU); // OR R2,R1 (preserve T)
+  mem.write(0x000CU, 2U, 0x2128U); // TST R2,R1 (updates T)
+  mem.write(0x000EU, 2U, 0x3210U); // CMP/EQ R1,R2 (updates T)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0U);
+  check((core.sr() & 1U) != 0U, "SETT should set T before side-effect audit");
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+  core.step(arbiter, trace, 3U);
+  check((core.sr() & 1U) != 0U, "AND should not perturb T-bit deterministically");
+  core.step(arbiter, trace, 4U);
+  check((core.sr() & 1U) != 0U, "XOR should not perturb T-bit deterministically");
+  core.step(arbiter, trace, 5U);
+  check((core.sr() & 1U) != 0U, "OR should not perturb T-bit deterministically");
+  core.step(arbiter, trace, 6U);
+  check((core.sr() & 1U) == 0U, "TST should deterministically update T-bit from logical result");
+  core.step(arbiter, trace, 7U);
+  check((core.sr() & 1U) != 0U, "CMP/EQ should deterministically update T-bit and set it for equal values");
+}
+
+void test_p1_sh2_alu_reference_vector_scaffold() {
+  const std::array<Sh2AluReferenceVector, 3> vectors{{
+      {"addc-carry", {0xE1FFU, 0xE201U, 0x0018U, 0x312EU}, {}, 4U, 1U, 1U, true},
+      {"addv-overflow", {0xE140U, 0x6112U, 0xE201U, 0x312FU}, {{0x0040U, 0x7FFFFFFFU}}, 4U, 1U, 0x80000000U, true},
+      {"negc-borrow", {0xE201U, 0x0018U, 0x632AU}, {}, 3U, 3U, 0xFFFFFFFEU, true},
+  }};
+
+  for (const auto &vec : vectors) {
+    run_sh2_alu_reference_vector(vec);
+  }
+}
+
 void test_sh2_illegal_opcode_faults_deterministically_without_silent_progress() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -5357,6 +5535,10 @@ int main() {
   test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
+  test_p1_sh2_addc_addv_negc_semantics();
+  test_p1_sh2_subc_subv_borrow_and_overflow_chains();
+  test_p1_sh2_sr_t_bit_side_effect_audit_for_core_alu_ops();
+  test_p1_sh2_alu_reference_vector_scaffold();
   test_sh2_illegal_opcode_faults_deterministically_without_silent_progress();
   test_enqueue_contract_fault_is_deterministic_under_interleaved_batch_contention();
   test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic();

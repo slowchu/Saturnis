@@ -164,6 +164,24 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
     write_reg(n, u32_add(r_[n], r_[m]));
     pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x300EU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t carry_in = t_flag() ? 1U : 0U;
+    const std::uint64_t sum = static_cast<std::uint64_t>(r_[n]) + static_cast<std::uint64_t>(r_[m]) +
+                              static_cast<std::uint64_t>(carry_in);
+    const std::uint32_t out = static_cast<std::uint32_t>(sum & 0xFFFFFFFFULL);
+    set_t_flag((sum >> 32U) != 0U);
+    write_reg(n, out);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x300FU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t out = u32_add(r_[n], r_[m]);
+    set_t_flag(add_overflow(r_[n], r_[m], out));
+    write_reg(n, out);
+    pc_ += 2U;
+
   } else if ((instr & 0xF00FU) == 0x6003U) {
     const std::uint32_t n = decode::field_n(instr);
     const std::uint32_t m = decode::field_m(instr);
@@ -188,6 +206,15 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
     write_reg(n, ~r_[m]);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x600AU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t carry_in = t_flag() ? 1U : 0U;
+    const std::uint32_t rhs = u32_add(r_[m], carry_in);
+    const std::uint32_t out = u32_sub(0U, rhs);
+    set_t_flag(rhs != 0U);
+    write_reg(n, out);
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x600BU) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
