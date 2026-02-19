@@ -31,6 +31,10 @@ public:
   [[nodiscard]] std::uint32_t reg(std::size_t index) const;
   [[nodiscard]] std::uint32_t sr() const;
   [[nodiscard]] std::uint32_t pr() const;
+  [[nodiscard]] std::uint32_t gbr() const;
+  [[nodiscard]] std::uint32_t vbr() const;
+  [[nodiscard]] std::uint32_t mach() const;
+  [[nodiscard]] std::uint32_t macl() const;
   void set_pr(std::uint32_t value);
   void request_exception_vector(std::uint32_t vector);
 
@@ -41,7 +45,26 @@ private:
   void set_t_flag(bool value);
 
   struct PendingMemOp {
-    enum class Kind { ReadLong, WriteLong, ReadWord, WriteWord, ReadByte, WriteByte, ExceptionVectorRead };
+    enum class Kind {
+      ReadLong,
+      WriteLong,
+      ReadWord,
+      WriteWord,
+      ReadByte,
+      WriteByte,
+      ExceptionPushSr,
+      ExceptionPushPc,
+      ExceptionVectorRead,
+      TrapaPushSr,
+      TrapaPushPc,
+      TrapaVectorRead,
+      RtePopPc,
+      RtePopSr,
+      RmwAndByteRead,
+      RmwXorByteRead,
+      RmwOrByteRead,
+      RmwWriteByte
+    };
     Kind kind = Kind::ReadLong;
     std::uint32_t phys_addr = 0;
     std::uint8_t size = 4;
@@ -50,6 +73,7 @@ private:
     std::optional<std::uint32_t> post_inc_reg;
     std::uint8_t post_inc_size = 0;
     std::uint32_t post_inc_base_before = 0;
+    std::uint32_t aux = 0;
   };
 
   int cpu_id_;
@@ -57,6 +81,9 @@ private:
   std::uint32_t sr_ = 0;
   std::uint32_t pr_ = 0;
   std::uint32_t gbr_ = 0;
+  std::uint32_t vbr_ = 0;
+  std::uint32_t mach_ = 0;
+  std::uint32_t macl_ = 0;
   std::array<std::uint32_t, 16> r_{};
   core::Tick t_ = 0;
   std::uint64_t executed_ = 0;
@@ -66,6 +93,9 @@ private:
   std::uint32_t exception_return_pc_ = 0;
   std::uint32_t exception_return_sr_ = 0;
   bool has_exception_return_context_ = false;
+  std::uint32_t pending_new_pc_ = 0;
+  std::uint32_t pending_new_sr_ = 0;
+  std::optional<std::uint32_t> pending_trapa_imm_;
   mem::TinyCache icache_{16, 64};
 };
 
