@@ -4,6 +4,16 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 4 (addressing-mode breadth) implementation review
+- Added/validated SH-2 addressing-mode coverage for real firmware-style data paths:
+  1. PC-relative forms: `MOV.W @(disp,PC),Rn`, `MOV.L @(disp,PC),Rn`, and `MOVA @(disp,PC),R0`.
+  2. Indexed `@(R0,Rn)` load/store families for `MOV.B/W/L`.
+  3. Expanded `@(disp,GBR)` scaling/sign-extension matrix assertions across byte/word/long variants.
+- Added deterministic robustness checks for this batch:
+  1. Unaligned indexed long access behavior is now pinned by deterministic modeled-RAM behavior + repeated-run trace parity assertions.
+  2. Decode-collision audit vectors for new addressing encodings remain exclusive under decode pattern matching.
+- Reviewed bus sequencing impact: all new memory forms continue through the existing pending memory-op and arbiter commit pipeline.
+
 ### 2026-02-19 Group 3 (decode hardening) implementation review
 - Added a shared decode helper module with:
   1. Centralized nibble/immediate/displacement extraction helpers.

@@ -547,6 +547,16 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, false), data_phys, 2U, 0U};
         return out;
       }
+      if ((instr & 0xF00FU) == 0x000CU || (instr & 0xF00FU) == 0x000DU || (instr & 0xF00FU) == 0x000EU) {
+        n = (instr >> 8U) & 0x0FU;
+        m = (instr >> 4U) & 0x0FU;
+        const std::uint8_t sz = ((instr & 0x000FU) == 0xCU) ? 1U : (((instr & 0x000FU) == 0xDU) ? 2U : 4U);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::ReadByte : ((sz == 2U) ? PendingMemOp::Kind::ReadWord : PendingMemOp::Kind::ReadLong);
+        const std::uint32_t addr = mem::to_phys(r_[0] + r_[m]);
+        pending_mem_op_ = PendingMemOp{kind, addr, sz, 0U, n, std::nullopt, 0U, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, false), addr, sz, 0U};
+        return out;
+      }
       if ((instr & 0xF000U) == 0x9000U) {
         n = (instr >> 8U) & 0x0FU;
         const std::uint32_t addr = mem::to_phys(u32_add(pc_, 4U) + ((instr & 0xFFU) * 2U));
@@ -600,6 +610,17 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
         const std::uint32_t write_value = r_[m] & 0xFFU;
         pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteByte, data_phys, 1U, write_value, 0U, std::nullopt, 0U, 0U};
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(data_phys, true), data_phys, 1U, write_value};
+        return out;
+      }
+      if ((instr & 0xF00FU) == 0x0004U || (instr & 0xF00FU) == 0x0005U || (instr & 0xF00FU) == 0x0006U) {
+        n = (instr >> 8U) & 0x0FU;
+        m = (instr >> 4U) & 0x0FU;
+        const std::uint8_t sz = ((instr & 0x000FU) == 0x4U) ? 1U : (((instr & 0x000FU) == 0x5U) ? 2U : 4U);
+        const std::uint32_t addr = mem::to_phys(r_[0] + r_[n]);
+        const std::uint32_t write_value = (sz == 1U) ? (r_[m] & 0xFFU) : ((sz == 2U) ? (r_[m] & 0xFFFFU) : r_[m]);
+        const auto kind = (sz == 1U) ? PendingMemOp::Kind::WriteByte : ((sz == 2U) ? PendingMemOp::Kind::WriteWord : PendingMemOp::Kind::WriteLong);
+        pending_mem_op_ = PendingMemOp{kind, addr, sz, write_value, 0U, std::nullopt, 0U, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, true), addr, sz, write_value};
         return out;
       }
       if ((instr & 0xFF00U) == 0xC000U) {

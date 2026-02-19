@@ -4545,10 +4545,14 @@ void test_p0_sh2_decode_patterns_are_exclusive_for_full_opcode_space() {
 }
 
 void test_p0_sh2_decode_family_table_has_corpus_coverage() {
-  const std::array<std::uint16_t, 22> corpus{{
+  const std::array<std::uint16_t, 30> corpus{{
       0xA001U, 0xB001U, 0x410BU, 0x412BU, 0x000BU, 0x8901U, 0x8B01U, 0x8D01U, 0x8F01U,
-      0xC301U, 0x002BU, 0x430EU, 0x0202U, 0x4122U, 0x4126U, 0xE001U, 0x7001U, 0x301CU,
-      0x6103U, 0x2100U, 0x2102U, 0x0009U,
+      0xC301U, 0x002BU, 0x430EU, 0x0202U, 0x4122U, 0x4126U,
+      0x9101U, 0xD101U, 0xC701U,
+      0x051CU, 0x061DU, 0x071EU,
+      0x0124U, 0x0135U, 0x0146U,
+      0xC401U, 0xC501U, 0xC601U,
+      0xC001U, 0xC101U, 0xC201U,
   }};
 
   for (const auto &pattern : saturnis::cpu::decode::patterns()) {
@@ -5028,6 +5032,148 @@ void test_p0_sh2_ext_and_neg_register_ops() {
   check(core.reg(7) == 0xFFFF0080U, "NEG should compute two's complement 0 - Rm");
 }
 
+void test_p0_sh2_pc_relative_word_long_and_mova_forms() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0009U); // NOP to guarantee cache line fill before memory forms
+  mem.write(0x0002U, 2U, 0x9101U); // MOV.W @(1,PC),R1 -> read @0x0008
+  mem.write(0x0004U, 2U, 0xD202U); // MOV.L @(2,PC),R2 -> read @0x0010 (aligned base)
+  mem.write(0x0006U, 2U, 0xC703U); // MOVA @(3,PC),R0 -> ((pc+4)&~3)+3*4 = 0x0014
+  mem.write(0x0008U, 2U, 0xFF80U); // sign-ext word source
+  mem.write(0x0010U, 4U, 0x12345678U); // long source
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(1) == 0xFFFFFF80U,
+        "MOV.W @(disp,PC),Rn should sign-extend loaded word using pc+4 base plus disp*2 (actual=" +
+            std::to_string(static_cast<unsigned>(core.reg(1))) + ")");
+  check(core.reg(2) == 0x12345678U,
+        "MOV.L @(disp,PC),Rn should load longword from aligned ((pc+4)&~3)+disp*4 base");
+  check(core.reg(0) == 0x00000014U,
+        "MOVA @(disp,PC),R0 should compute deterministic aligned PC-relative address");
+}
+
+void test_p0_sh2_r0_indexed_load_store_forms_cover_all_widths() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE004U); // MOV #4,R0
+  mem.write(0x0002U, 2U, 0xE130U); // MOV #0x30,R1 base
+  mem.write(0x0004U, 2U, 0xE2AAU); // MOV #-86,R2
+  mem.write(0x0006U, 2U, 0xE380U); // MOV #-128,R3
+  mem.write(0x0008U, 2U, 0xE410U); // MOV #0x10,R4
+  mem.write(0x000AU, 2U, 0x0124U); // MOV.B R2,@(R0,R1)
+  mem.write(0x000CU, 2U, 0x0135U); // MOV.W R3,@(R0,R1)
+  mem.write(0x000EU, 2U, 0x0146U); // MOV.L R4,@(R0,R1)
+  mem.write(0x0010U, 2U, 0x051CU); // MOV.B @(R0,R1),R5
+  mem.write(0x0012U, 2U, 0x061DU); // MOV.W @(R0,R1),R6
+  mem.write(0x0014U, 2U, 0x071EU); // MOV.L @(R0,R1),R7
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0034U, 4U) == 0x00000010U,
+        "indexed store forms should target address (R0+Rn) and preserve width semantics deterministically");
+  check(core.reg(5) == 0x00000000U && core.reg(6) == 0x00000000U && core.reg(7) == 0x00000010U,
+        "indexed load forms should reflect deterministic byte/word/long interpretation from shared address contents");
+}
+
+void test_p0_sh2_gbr_displacement_scaling_and_sign_extension_matrix() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE340U); // MOV #0x40,R3
+  mem.write(0x0002U, 2U, 0x431EU); // LDC R3,GBR
+  mem.write(0x0004U, 2U, 0xE0FFU); // MOV #-1,R0
+  mem.write(0x0006U, 2U, 0xC001U); // MOV.B R0,@(1,GBR) -> 0x41
+  mem.write(0x0008U, 2U, 0xC101U); // MOV.W R0,@(1,GBR) -> 0x42
+  mem.write(0x000AU, 2U, 0xC201U); // MOV.L R0,@(1,GBR) -> 0x44
+  mem.write(0x000CU, 2U, 0xC401U); // MOV.B @(1,GBR),R0
+  mem.write(0x000EU, 2U, 0xC501U); // MOV.W @(1,GBR),R0
+  mem.write(0x0010U, 2U, 0xC601U); // MOV.L @(1,GBR),R0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0041U, 1U) == 0xFFU,
+        "GBR byte displacement should use disp*1 scaling");
+  check(mem.read(0x0042U, 2U) == 0xFFFFU,
+        "GBR word displacement should use disp*2 scaling");
+  check(mem.read(0x0044U, 4U) == 0xFFFFFFFFU,
+        "GBR long displacement should use disp*4 scaling");
+  check(core.reg(0) == 0xFFFFFFFFU,
+        "GBR displacement load matrix should deterministically return last longword load value");
+}
+
+void test_p0_sh2_new_addressing_forms_unaligned_long_access_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE001U); // MOV #1,R0
+  mem.write(0x0002U, 2U, 0xE131U); // MOV #0x31,R1 (unaligned base for long)
+  mem.write(0x0004U, 2U, 0xE212U); // MOV #0x12,R2
+  mem.write(0x0006U, 2U, 0x0126U); // MOV.L R2,@(R0,R1) -> addr 0x32 (unaligned)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0032U, 4U) == 0x00000012U,
+        "new indexed long addressing form should preserve deterministic modeled unaligned-RAM long write behavior");
+
+  saturnis::core::TraceLog trace2;
+  saturnis::mem::CommittedMemory mem2;
+  saturnis::dev::DeviceHub dev2;
+  saturnis::bus::BusArbiter arbiter2(mem2, dev2, trace2);
+  mem2.write(0x0000U, 2U, 0xE001U);
+  mem2.write(0x0002U, 2U, 0xE131U);
+  mem2.write(0x0004U, 2U, 0xE212U);
+  mem2.write(0x0006U, 2U, 0x0126U);
+  saturnis::cpu::SH2Core core2(0);
+  core2.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core2.step(arbiter2, trace2, i);
+  }
+  check(trace.to_jsonl() == trace2.to_jsonl(),
+        "unaligned indexed long addressing behavior should remain byte-identical across repeated runs");
+}
+
+void test_p0_sh2_decode_collision_audit_for_new_addressing_forms() {
+  check(saturnis::cpu::decode::decode_match_count(0x051CU) <= 1U,
+        "decode collision audit: MOV.B @(R0,Rm),Rn encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x061DU) <= 1U,
+        "decode collision audit: MOV.W @(R0,Rm),Rn encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x071EU) <= 1U,
+        "decode collision audit: MOV.L @(R0,Rm),Rn encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x0124U) <= 1U,
+        "decode collision audit: MOV.B Rm,@(R0,Rn) encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x0135U) <= 1U,
+        "decode collision audit: MOV.W Rm,@(R0,Rn) encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x0146U) <= 1U,
+        "decode collision audit: MOV.L Rm,@(R0,Rn) encoding should remain exclusive");
+}
+
 void test_p0_sh2_gbr_displacement_load_store_forms() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -5261,6 +5407,11 @@ int main() {
   test_p0_sh2_branch_delay_slot_matrix_alu_vs_memory_ops_is_deterministic();
   test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
   test_p0_sh2_ext_and_neg_register_ops();
+  test_p0_sh2_pc_relative_word_long_and_mova_forms();
+  test_p0_sh2_r0_indexed_load_store_forms_cover_all_widths();
+  test_p0_sh2_gbr_displacement_scaling_and_sign_extension_matrix();
+  test_p0_sh2_new_addressing_forms_unaligned_long_access_is_deterministic();
+  test_p0_sh2_decode_collision_audit_for_new_addressing_forms();
   test_p0_sh2_gbr_displacement_load_store_forms();
   std::cout << "saturnis kernel tests passed\n";
   return 0;

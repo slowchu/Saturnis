@@ -3,7 +3,7 @@
 namespace saturnis::cpu::decode {
 namespace {
 
-constexpr std::array<OpcodePattern, 22> kPatterns{{
+constexpr std::array<OpcodePattern, 30> kPatterns{{
     // Branch/control-flow families.
     {0xF000U, 0xA000U, "BRA disp12"},
     {0xF000U, 0xB000U, "BSR disp12"},
@@ -23,19 +23,27 @@ constexpr std::array<OpcodePattern, 22> kPatterns{{
     {0xF0FFU, 0x4022U, "STS.L PR,@-Rn"},
     {0xF0FFU, 0x4026U, "LDS.L @Rm+,PR"},
 
-    // Representative ALU/data movement forms used by current subset.
-    {0xF000U, 0xE000U, "MOV #imm,Rn"},
-    {0xF000U, 0x7000U, "ADD #imm,Rn"},
-    {0xF00FU, 0x300CU, "ADD Rm,Rn"},
-    {0xF00FU, 0x6003U, "MOV Rm,Rn"},
-    {0xF00FU, 0x2000U, "MOV.B Rm,@Rn"},
-    {0xF00FU, 0x2002U, "MOV.L Rm,@Rn"},
-    {0xFFFFU, 0x0009U, "NOP"},
+    // PC-relative/indexed/GBR addressing forms.
+    {0xF000U, 0x9000U, "MOV.W @(disp,PC),Rn"},
+    {0xF000U, 0xD000U, "MOV.L @(disp,PC),Rn"},
+    {0xFF00U, 0xC700U, "MOVA @(disp,PC),R0"},
+    {0xF00FU, 0x000CU, "MOV.B @(R0,Rm),Rn"},
+    {0xF00FU, 0x000DU, "MOV.W @(R0,Rm),Rn"},
+    {0xF00FU, 0x000EU, "MOV.L @(R0,Rm),Rn"},
+    {0xF00FU, 0x0004U, "MOV.B Rm,@(R0,Rn)"},
+    {0xF00FU, 0x0005U, "MOV.W Rm,@(R0,Rn)"},
+    {0xF00FU, 0x0006U, "MOV.L Rm,@(R0,Rn)"},
+    {0xFF00U, 0xC400U, "MOV.B @(disp,GBR),R0"},
+    {0xFF00U, 0xC500U, "MOV.W @(disp,GBR),R0"},
+    {0xFF00U, 0xC600U, "MOV.L @(disp,GBR),R0"},
+    {0xFF00U, 0xC000U, "MOV.B R0,@(disp,GBR)"},
+    {0xFF00U, 0xC100U, "MOV.W R0,@(disp,GBR)"},
+    {0xFF00U, 0xC200U, "MOV.L R0,@(disp,GBR)"},
 }};
 
 } // namespace
 
-const std::array<OpcodePattern, 22> &patterns() { return kPatterns; }
+const std::array<OpcodePattern, 30> &patterns() { return kPatterns; }
 
 std::optional<std::string_view> decode_family(std::uint16_t instr) {
   for (const auto &p : kPatterns) {

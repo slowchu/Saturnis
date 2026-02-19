@@ -61,13 +61,13 @@ Legend:
 
 ## Group 4 (P0): Addressing-Mode Breadth for Real Code Paths (7)
 
-22. [ ] Implement `MOV.W @(disp,PC),Rn` (PC-relative word load) with correct base and sign/zero extension rules + tests. (`L`, deps: D-MEM, D-TEST)
-23. [ ] Implement `MOV.L @(disp,PC),Rn` (PC-relative long load) with correct base/alignment rules + tests. (`L`, deps: D-MEM, D-TEST)
-24. [ ] Implement `MOVA @(disp,PC),R0` + tests (address compute patterns used by firmware). (`M`, deps: D-MEM, D-TEST)
-25. [ ] Implement `@(R0,Rn)` indexed load forms (`MOV.B/W/L`) + tests. (`L`, deps: D-MEM, D-TEST)
-26. [ ] Implement `@(R0,Rn)` indexed store forms (`MOV.B/W/L`) + tests. (`L`, deps: D-MEM, D-TEST)
-27. [ ] Complete remaining `@(disp,GBR)` variants and validate scaling/sign-ext matrix + tests. (`M`, deps: D-MEM, D-TEST)
-28. [ ] Add aligned/unaligned deterministic behavior tests + decode-collision audit tests for all new addressing forms. (`M`, deps: D-MEM, D-TEST)
+22. [x] Implement `MOV.W @(disp,PC),Rn` (PC-relative word load) with correct base and sign/zero extension rules + tests. (`L`, deps: D-MEM, D-TEST)
+23. [x] Implement `MOV.L @(disp,PC),Rn` (PC-relative long load) with correct base/alignment rules + tests. (`L`, deps: D-MEM, D-TEST)
+24. [x] Implement `MOVA @(disp,PC),R0` + tests (address compute patterns used by firmware). (`M`, deps: D-MEM, D-TEST)
+25. [x] Implement `@(R0,Rn)` indexed load forms (`MOV.B/W/L`) + tests. (`L`, deps: D-MEM, D-TEST)
+26. [x] Implement `@(R0,Rn)` indexed store forms (`MOV.B/W/L`) + tests. (`L`, deps: D-MEM, D-TEST)
+27. [x] Complete remaining `@(disp,GBR)` variants and validate scaling/sign-ext matrix + tests. (`M`, deps: D-MEM, D-TEST)
+28. [x] Add aligned/unaligned deterministic behavior tests + decode-collision audit tests for all new addressing forms. (`M`, deps: D-MEM, D-TEST)
 
 ---
 

@@ -21,6 +21,6 @@ struct OpcodePattern {
 
 [[nodiscard]] std::optional<std::string_view> decode_family(std::uint16_t instr);
 [[nodiscard]] std::size_t decode_match_count(std::uint16_t instr);
-[[nodiscard]] const std::array<OpcodePattern, 22> &patterns();
+[[nodiscard]] const std::array<OpcodePattern, 30> &patterns();
 
 } // namespace saturnis::cpu::decode
