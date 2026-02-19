@@ -4,6 +4,18 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 3 (decode hardening) implementation review
+- Added a shared decode helper module with:
+  1. Centralized nibble/immediate/displacement extraction helpers.
+  2. Canonical decode family pattern table for currently modeled SH-2 families.
+  3. Deterministic `decode_match_count` auditing path for overlap/exclusivity checks.
+- Added decode-focused regressions for:
+  1. Adjacent-encoding corpus around control-flow opcodes (`JSR`/`JMP`/`BSR` boundaries).
+  2. Full 65536-opcode exclusivity assertion over decode patterns.
+  3. Decode-family corpus coverage (each pattern family has at least one vector).
+  4. Unknown opcode behavior pinned to deterministic `ILLEGAL_OP` (no implicit NOP fallback).
+- Refactoring note: extracted branch/system register field reads in SH-2 execute path to shared decode field helpers to reduce nibble-extraction drift risk.
+
 ### 2026-02-19 Group 2 (control-flow blockers) implementation review
 - Reviewed SH-2 control-flow behavior against Group 2 roadmap goals with emphasis on decode correctness and delayed-branch determinism.
 - Added/validated coverage for:

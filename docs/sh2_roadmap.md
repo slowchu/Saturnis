@@ -51,13 +51,13 @@ Legend:
 
 ## Group 3 (P0): Decode Architecture Hardening (7)
 
-15. [ ] Refactor opcode decode into helper groups to reduce mask overlap risk (specific-before-generic). (`L`, deps: D-TEST)
-16. [ ] Add comments naming mnemonic + addressing form for every mask pattern in the decode chain. (`S`, deps: D-DOC)
-17. [ ] Introduce shared nibble/field extraction helpers (n/m/imm/disp) + unit tests (prevents `>>4` vs `>>8` class bugs). (`M`, deps: D-TEST)
-18. [ ] Add decode conflict regression corpus for adjacent encodings (include known historical collisions). (`M`, deps: D-TEST)
-19. [ ] Add **exclusivity test** over all 65536 opcodes: each opcode maps to **0 or 1** handler; overlaps fail deterministically. (`M`, deps: D-TEST)
-20. [ ] Add decode coverage test ensuring each implemented mnemonic family has at least one vector. (`M`, deps: D-TEST)
-21. [ ] Replace “unknown opcode → NOP” with deterministic `ILLEGAL_OP` faulting + corpus tests to lock behavior. (`S`, deps: D-TEST)
+15. [x] Refactor opcode decode into helper groups to reduce mask overlap risk (specific-before-generic). (`L`, deps: D-TEST)
+16. [x] Add comments naming mnemonic + addressing form for every mask pattern in the decode chain. (`S`, deps: D-DOC)
+17. [x] Introduce shared nibble/field extraction helpers (n/m/imm/disp) + unit tests (prevents `>>4` vs `>>8` class bugs). (`M`, deps: D-TEST)
+18. [x] Add decode conflict regression corpus for adjacent encodings (include known historical collisions). (`M`, deps: D-TEST)
+19. [x] Add **exclusivity test** over all 65536 opcodes: each opcode maps to **0 or 1** handler; overlaps fail deterministically. (`M`, deps: D-TEST)
+20. [x] Add decode coverage test ensuring each implemented mnemonic family has at least one vector. (`M`, deps: D-TEST)
+21. [x] Replace “unknown opcode → NOP” with deterministic `ILLEGAL_OP` faulting + corpus tests to lock behavior. (`S`, deps: D-TEST)
 
 ## Group 4 (P0): Addressing-Mode Breadth for Real Code Paths (7)
 

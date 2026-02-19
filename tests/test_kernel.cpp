@@ -2,6 +2,7 @@
 #include "core/emulator.hpp"
 #include "cpu/scripted_cpu.hpp"
 #include "cpu/sh2_core.hpp"
+#include "cpu/sh2_decode.hpp"
 #include "dev/devices.hpp"
 #include "mem/memory.hpp"
 
@@ -4514,6 +4515,74 @@ void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
   check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
 }
 
+
+void test_p0_sh2_decode_field_helpers_extract_expected_nibbles() {
+  constexpr std::uint16_t instr = 0x4BAFU;
+  check(saturnis::cpu::decode::field_n(instr) == 0xBU, "decode field_n helper should extract upper register nibble");
+  check(saturnis::cpu::decode::field_m(instr) == 0xAU, "decode field_m helper should extract source register nibble");
+  check(saturnis::cpu::decode::field_imm8(instr) == 0xAFU, "decode field_imm8 helper should extract low-byte immediate");
+  check(saturnis::cpu::decode::field_disp4(instr) == 0xFU, "decode field_disp4 helper should extract low-nibble displacement");
+  check(saturnis::cpu::decode::field_disp12(instr) == 0xBAFU, "decode field_disp12 helper should extract low-12 displacement");
+}
+
+void test_p0_sh2_decode_adjacent_encoding_corpus_is_stable() {
+  using saturnis::cpu::decode::decode_family;
+  check(decode_family(0x430BU).has_value() && *decode_family(0x430BU) == "JSR @Rn",
+        "decode corpus should classify 0x430B as JSR @Rn (non-R0 regression guard)");
+  check(decode_family(0x432BU).has_value() && *decode_family(0x432BU) == "JMP @Rn",
+        "decode corpus should classify adjacent 0x432B as JMP @Rn");
+  check(decode_family(0xB7FFU).has_value() && *decode_family(0xB7FFU) == "BSR disp12",
+        "decode corpus should classify positive-boundary BSR encoding");
+  check(decode_family(0xBFFFU).has_value() && *decode_family(0xBFFFU) == "BSR disp12",
+        "decode corpus should classify negative-boundary BSR encoding");
+}
+
+void test_p0_sh2_decode_patterns_are_exclusive_for_full_opcode_space() {
+  for (std::uint32_t raw = 0U; raw <= 0xFFFFU; ++raw) {
+    const auto matches = saturnis::cpu::decode::decode_match_count(static_cast<std::uint16_t>(raw));
+    check(matches <= 1U, "decode pattern table should map every opcode to at most one family");
+  }
+}
+
+void test_p0_sh2_decode_family_table_has_corpus_coverage() {
+  const std::array<std::uint16_t, 22> corpus{{
+      0xA001U, 0xB001U, 0x410BU, 0x412BU, 0x000BU, 0x8901U, 0x8B01U, 0x8D01U, 0x8F01U,
+      0xC301U, 0x002BU, 0x430EU, 0x0202U, 0x4122U, 0x4126U, 0xE001U, 0x7001U, 0x301CU,
+      0x6103U, 0x2100U, 0x2102U, 0x0009U,
+  }};
+
+  for (const auto &pattern : saturnis::cpu::decode::patterns()) {
+    bool found = false;
+    for (const auto opcode : corpus) {
+      const auto fam = saturnis::cpu::decode::decode_family(opcode);
+      if (fam.has_value() && *fam == pattern.family) {
+        found = true;
+        break;
+      }
+    }
+    check(found, "each decode family should have at least one deterministic corpus opcode coverage vector");
+  }
+}
+
+void test_p0_sh2_illegal_opcode_does_not_fallback_to_nop() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0009U); // NOP
+  mem.write(0x0002U, 2U, 0xFFFFU); // currently unsupported
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ILLEGAL_OP\"") != std::string::npos,
+        "unknown opcode handling should fault with ILLEGAL_OP deterministically instead of falling back to NOP");
+}
+
 void test_p0_sh2_sr_and_pr_stack_forms_cover_handler_prologue_epilogue() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -5169,6 +5238,11 @@ int main() {
   test_sh2_synthetic_rte_without_context_trace_is_stable_across_runs();
   test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();
+  test_p0_sh2_decode_field_helpers_extract_expected_nibbles();
+  test_p0_sh2_decode_adjacent_encoding_corpus_is_stable();
+  test_p0_sh2_decode_patterns_are_exclusive_for_full_opcode_space();
+  test_p0_sh2_decode_family_table_has_corpus_coverage();
+  test_p0_sh2_illegal_opcode_does_not_fallback_to_nop();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();
   test_p0_sh2_post_increment_self_load_skips_increment_when_m_equals_n();
