@@ -31,13 +31,13 @@ Legend:
 
 ## Group 1 (P0): Exception/Return + Handler Prologue/Epilogue (7)
 
-1. [ ] Implement `STS.L PR,@-Rn` (exception/interrupt handler prologue) + regression fixture. (`M`, deps: D-EXC, D-MEM, D-TEST)
-2. [ ] Implement `LDS.L @Rm+,PR` (handler epilogue) + regression fixture. (`M`, deps: D-EXC, D-MEM, D-TEST)
-3. [ ] Implement `LDC Rm,SR` (incl. I-bit behavior) + regression that toggles interrupt mask deterministically. (`M`, deps: D-EXC, D-TEST)
-4. [ ] Implement `STC SR,Rn` + regression proving SR readback and non-target register invariants. (`S`, deps: D-EXC, D-TEST)
-5. [ ] Add regression: `RTE` executes **non-memory** delay-slot instruction before state restore. (`M`, deps: D-EXC, D-BR, D-TEST)
-6. [ ] Add regression: `RTE` executes **memory-op** delay-slot before state restore. (`M`, deps: D-EXC, D-BR, D-MEM, D-TEST)
-7. [ ] Assert stack pop order (`PC` then `SR`) for `RTE` in bus-commit sequence tests (and verify PR survives handler prologue/epilogue). (`S`, deps: D-EXC, D-TEST)
+1. [x] Implement `STS.L PR,@-Rn` (exception/interrupt handler prologue) + regression fixture. (`M`, deps: D-EXC, D-MEM, D-TEST)
+2. [x] Implement `LDS.L @Rm+,PR` (handler epilogue) + regression fixture. (`M`, deps: D-EXC, D-MEM, D-TEST)
+3. [x] Implement `LDC Rm,SR` (incl. I-bit behavior) + regression that toggles interrupt mask deterministically. (`M`, deps: D-EXC, D-TEST)
+4. [x] Implement `STC SR,Rn` + regression proving SR readback and non-target register invariants. (`S`, deps: D-EXC, D-TEST)
+5. [x] Add regression: `RTE` executes **non-memory** delay-slot instruction before state restore. (`M`, deps: D-EXC, D-BR, D-TEST)
+6. [x] Add regression: `RTE` executes **memory-op** delay-slot before state restore. (`M`, deps: D-EXC, D-BR, D-MEM, D-TEST)
+7. [x] Assert stack pop order (`PC` then `SR`) for `RTE` in bus-commit sequence tests (and verify PR survives handler prologue/epilogue). (`S`, deps: D-EXC, D-TEST)
 
 ## Group 2 (P0): Core Control-Flow Firmware Blockers (7)
 

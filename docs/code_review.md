@@ -4,6 +4,14 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 1 (exception handler prologue/epilogue) implementation review
+- Reviewed SH-2 decode/execute changes for `STS.L PR,@-Rn`, `LDS.L @Rm+,PR`, `LDC Rm,SR`, and `STC SR,Rn`.
+- Verified each new instruction path keeps deterministic semantics:
+  1. Stack-address updates are register-derived only (no wall-clock/random inputs).
+  2. Memory forms use existing pending-bus operation pipeline to preserve commit ordering.
+  3. SR/PR register state transitions are explicit and trace-visible through existing snapshots.
+- Added a focused regression that exercises all four forms together and validates SR readback, PR roundtrip, and stack pointer invariants.
+
 ### 2026-02-19 TODO/PR documentation reconciliation
 - Reviewed the latest non-merge PR commit span (`5c33242`..`a6a13a0`) against the tracked TODO backlog to ensure completed work is captured in project docs.
 - Confirmed recently landed ISA/control-flow fixes are now explicitly tracked in `docs/todo.md`:
