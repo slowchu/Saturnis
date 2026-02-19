@@ -4587,6 +4587,66 @@ void test_p0_sh2_bsr_and_jmp_delay_slot_control_flow() {
   check(core2.pr() == 0xDEADBEEFU, "JMP must not modify PR");
 }
 
+void test_p0_sh2_ext_and_neg_register_ops() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6212U); // MOV.L @R1,R2
+  mem.write(0x0004U, 2U, 0x632CU); // EXTU.B R2,R3
+  mem.write(0x0006U, 2U, 0x642DU); // EXTU.W R2,R4
+  mem.write(0x0008U, 2U, 0x652EU); // EXTS.B R2,R5
+  mem.write(0x000AU, 2U, 0x662FU); // EXTS.W R2,R6
+  mem.write(0x000CU, 2U, 0x672BU); // NEG R2,R7
+  mem.write(0x0040U, 4U, 0x0000FF80U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(3) == 0x00000080U, "EXTU.B should zero-extend low byte");
+  check(core.reg(4) == 0x0000FF80U, "EXTU.W should zero-extend low word");
+  check(core.reg(5) == 0xFFFFFF80U, "EXTS.B should sign-extend low byte");
+  check(core.reg(6) == 0xFFFFFF80U, "EXTS.W should sign-extend low word");
+  check(core.reg(7) == 0xFFFF0080U, "NEG should compute two's complement 0 - Rm");
+}
+
+void test_p0_sh2_gbr_displacement_load_store_forms() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE350U); // MOV #0x50,R3
+  mem.write(0x0002U, 2U, 0x431EU); // LDC R3,GBR
+  mem.write(0x0004U, 2U, 0xE07FU); // MOV #0x7F,R0
+  mem.write(0x0006U, 2U, 0xC002U); // MOV.B R0,@(2,GBR)
+  mem.write(0x0008U, 2U, 0xE0FFU); // MOV #-1,R0
+  mem.write(0x000AU, 2U, 0xC102U); // MOV.W R0,@(2,GBR)
+  mem.write(0x000CU, 2U, 0xE012U); // MOV #0x12,R0
+  mem.write(0x000EU, 2U, 0xC201U); // MOV.L R0,@(1,GBR)
+  mem.write(0x0010U, 2U, 0xE080U); // MOV #-128,R0
+  mem.write(0x0012U, 2U, 0xC003U); // MOV.B R0,@(3,GBR)
+  mem.write(0x0014U, 2U, 0xC403U); // MOV.B @(3,GBR),R0
+  mem.write(0x0016U, 2U, 0xC502U); // MOV.W @(2,GBR),R0
+  mem.write(0x0018U, 2U, 0xC601U); // MOV.L @(1,GBR),R0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0052U, 1U) == 0x7FU, "MOV.B R0,@(disp,GBR) should write low byte");
+  check(mem.read(0x0054U, 4U) == 0x00000012U, "MOV.L R0,@(disp,GBR) should write longword at scaled disp*4");
+  check(mem.read(0x0053U, 1U) == 0x80U, "GBR byte store with negative value should preserve low byte");
+  check(core.reg(0) == 0x00000012U, "GBR displacement load sequence should complete with MOV.L @(disp,GBR),R0 result");
+}
+
 } // namespace
 
 int main() {
@@ -4773,6 +4833,8 @@ int main() {
   test_p0_sh2_displacement_addressing_load_store_roundtrip();
   test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot();
   test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
+  test_p0_sh2_ext_and_neg_register_ops();
+  test_p0_sh2_gbr_displacement_load_store_forms();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }

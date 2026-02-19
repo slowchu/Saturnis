@@ -278,27 +278,10 @@
 14. [x] Implement `@(disp,Rm)` displacement addressing forms (load/store subset in this vertical slice).
 15. [x] Add `MACH/MACL`, `MUL.L`, and transfer ops `STS`/`LDS`.
 
-## Post-PR documentation sync (completed)
-
-1. [x] Implement `BSR` with deterministic delay-slot + PR link semantics.
-2. [x] Implement `JMP @Rm` with deterministic delay-slot control-flow semantics.
-3. [x] Harden stack-based `RTE` return flow to preserve deterministic delayed-target restore behavior.
-4. [x] Fix `JSR @Rm` register decode to use the encoded `Rm` field consistently.
-5. [x] Fix byte store displacement decode (`MOV.B R0,@(disp,Rn)`) to use byte addressing (no incorrect scaling).
-6. [x] Refresh TODO/code-review docs so recently completed PR work is explicitly recorded.
-
-## Recent PR coverage audit (completed)
-
-1. [x] `5c33242` (`Complete 16-task TODO batch with deterministic VDP1/arbiter/test hardening`) is represented by the completed 16-task VDP1 hardening queues above.
-2. [x] `f43e451` (`Run repeat priority hardening cycle`) is represented by the completed priority hardening queue above.
-3. [x] `4f3ccc3` (`Expand SH-2 ISA coverage with control regs and exception flow`) is represented in SH-2 ISA batch items for VBR/GBR, TRAPA, and stack-based exception flow.
-4. [x] `ebc2026` (`Extend SH-2 displacement forms and fix SUB opcode decode`) is represented in SH-2 ISA batch items for `@(disp,Rm)` forms and `SUB`/`SUBC`/`SUBV`.
-5. [x] `ec76c90` (`Harden RTE delay slot restore and add BSR/JMP coverage`) is represented in the post-PR sync queue (`BSR`, `JMP`, `RTE` hardening).
-6. [x] `a6a13a0` (`Fix SH-2 JSR register decode and displacement store decoding`) is represented in the post-PR sync queue (`JSR` decode and byte displacement fix).
-7. [x] Documentation-only add/delete commits (`0ca35cb`, `bb40ec3`, `c66f306`, `1863f66`, `5359662`) do not add emulator behaviors and require no TODO backlog action.
-
 ## Next batch candidates
 
+- `BSR`
+- `JMP @Rm`
 - `@(R0,Rn)` indexed
 - `@(disp,GBR)`
 - `EXTS/EXTU`
