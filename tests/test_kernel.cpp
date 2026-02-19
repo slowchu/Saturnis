@@ -4513,6 +4513,42 @@ void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
   check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
 }
 
+void test_p0_sh2_sr_and_pr_stack_forms_cover_handler_prologue_epilogue() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE33CU); // MOV #0x3C,R3
+  mem.write(0x0002U, 2U, 0x430EU); // LDC R3,SR
+  mem.write(0x0004U, 2U, 0x0202U); // STC SR,R2
+  mem.write(0x0006U, 2U, 0xE110U); // MOV #0x10,R1
+  mem.write(0x0008U, 2U, 0x4122U); // STS.L PR,@-R1
+  mem.write(0x000AU, 2U, 0x0009U); // NOP
+  mem.write(0x000CU, 2U, 0x4126U); // LDS.L @R1+,PR
+  mem.write(0x000EU, 2U, 0xE40FU); // MOV #0x0F,R4
+  mem.write(0x0010U, 2U, 0x440EU); // LDC R4,SR
+  mem.write(0x0012U, 2U, 0x0502U); // STC SR,R5
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0xCAFEBABEU);
+
+  for (std::uint64_t i = 0U; i < 12U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.sr() == 0x0000000FU, "LDC Rm,SR should deterministically update SR including interrupt-mask bits");
+  check(core.reg(2) == 0x0000003CU && core.reg(5) == 0x0000000FU,
+        "STC SR,Rn should read back SR without perturbing non-target registers");
+  check(mem.read(0x0000000CU, 4U) == 0xCAFEBABEU,
+        "STS.L PR,@-Rn should push PR to pre-decremented address");
+  check(core.pr() == 0xCAFEBABEU,
+        "LDS.L @Rm+,PR should restore PR from stack value deterministically");
+  check(core.reg(1) == 0x00000010U,
+        "STS.L/LDS.L stack forms should preserve deterministic pre-decrement/post-increment pointer roundtrip");
+}
+
 void test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4966,6 +5002,7 @@ int main() {
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
   test_p0_sh2_sub_register_uses_0x3nm8_encoding();
   test_p0_sh2_displacement_addressing_load_store_roundtrip();
+  test_p0_sh2_sr_and_pr_stack_forms_cover_handler_prologue_epilogue();
   test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot();
   test_p0_sh2_rte_memory_delay_slot_executes_before_restore();
   test_p0_sh2_rte_stack_pop_order_restores_pc_and_sr_pair();
