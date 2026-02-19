@@ -1,4 +1,5 @@
 #include "cpu/sh2_core.hpp"
+#include "cpu/sh2_decode.hpp"
 
 namespace saturnis::cpu {
 namespace {
@@ -164,8 +165,8 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     write_reg(n, u32_add(r_[n], r_[m]));
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x6003U) {
-    const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t n = decode::field_n(instr);
+    const std::uint32_t m = decode::field_m(instr);
     write_reg(n, r_[m]);
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x2009U) {
@@ -316,6 +317,14 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t m = (instr >> 8U) & 0x0FU;
     gbr_ = r_[m];
     pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x400EU) {
+    const std::uint32_t m = decode::field_n(instr);
+    sr_ = r_[m];
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x0002U) {
+    const std::uint32_t n = decode::field_n(instr);
+    write_reg(n, sr_);
+    pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x402EU) {
     const std::uint32_t m = (instr >> 8U) & 0x0FU;
     vbr_ = r_[m];
@@ -381,7 +390,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = u32_add_i64(u32_add(branch_pc, 4U), byte_offset);
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x400BU) {
-    const std::uint32_t m = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = decode::field_n(instr);
     pr_ = pc_ + 4U;
     next_branch_target = r_[m];
     pc_ += 2U;
@@ -389,7 +398,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = pr_;
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x402BU) {
-    const std::uint32_t m = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = decode::field_n(instr);
     next_branch_target = r_[m];
     pc_ += 2U;
   } else if (instr == 0x002BU) {
@@ -498,6 +507,22 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
         const std::uint32_t addr = mem::to_phys(r_[n] + (disp * 4U));
         pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, addr, 4U, r_[m], 0U, std::nullopt, 0U, 0U};
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, true), addr, 4U, r_[m]};
+        return out;
+      }
+      if ((instr & 0xF0FFU) == 0x4022U) {
+        n = (instr >> 8U) & 0x0FU;
+        r_[n] = u32_sub(r_[n], 4U);
+        const std::uint32_t addr = mem::to_phys(r_[n]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, addr, 4U, pr_, 0U, std::nullopt, 0U, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, true), addr, 4U, pr_};
+        return out;
+      }
+      if ((instr & 0xF0FFU) == 0x4026U) {
+        m = (instr >> 8U) & 0x0FU;
+        const std::uint32_t addr = mem::to_phys(r_[m]);
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, addr, 4U, 0U, 0U, m, 4U, r_[m]};
+        pending_mem_op_->aux = 1U;
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, false), addr, 4U, 0U};
         return out;
       }
       if ((instr & 0xFF00U) == 0x8500U) {
@@ -768,7 +793,11 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
       return;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
-      r_[pending.dst_reg] = response.value;
+      if (pending.aux == 1U) {
+        pr_ = response.value;
+      } else {
+        r_[pending.dst_reg] = response.value;
+      }
     } else if (pending.kind == PendingMemOp::Kind::ReadWord) {
       const std::uint16_t word = static_cast<std::uint16_t>(response.value & 0xFFFFU);
       r_[pending.dst_reg] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(word)));
