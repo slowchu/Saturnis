@@ -181,7 +181,6 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     set_t_flag(add_overflow(r_[n], r_[m], out));
     write_reg(n, out);
     pc_ += 2U;
-
   } else if ((instr & 0xF00FU) == 0x6003U) {
     const std::uint32_t n = decode::field_n(instr);
     const std::uint32_t m = decode::field_m(instr);
@@ -399,11 +398,61 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     set_t_flag(msb);
     write_reg(n, (r_[n] << 1U) | (msb ? 1U : 0U));
     pc_ += 2U;
-  } else if ((instr & 0xF0FFU) == 0x4005U) {
+  } else if ((instr & 0xF0FFU) == 0x4008U || (instr & 0xF0FFU) == 0x4018U ||
+             (instr & 0xF0FFU) == 0x4028U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
-    const bool lsb = (r_[n] & 0x1U) != 0U;
-    set_t_flag(lsb);
-    write_reg(n, (r_[n] >> 1U) | (lsb ? 0x80000000U : 0U));
+    const std::uint32_t sh = ((instr & 0x00FFU) == 0x08U) ? 2U : (((instr & 0x00FFU) == 0x18U) ? 8U : 16U);
+    write_reg(n, r_[n] << sh);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4009U || (instr & 0xF0FFU) == 0x4019U ||
+             (instr & 0xF0FFU) == 0x4029U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t sh = ((instr & 0x00FFU) == 0x09U) ? 2U : (((instr & 0x00FFU) == 0x19U) ? 8U : 16U);
+    write_reg(n, r_[n] >> sh);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4020U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    set_t_flag((r_[n] & 0x80000000U) != 0U);
+    write_reg(n, r_[n] << 1U);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4021U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    set_t_flag((r_[n] & 0x1U) != 0U);
+    write_reg(n, static_cast<std::uint32_t>(static_cast<std::int32_t>(r_[n]) >> 1));
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4024U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t carry_in = t_flag() ? 1U : 0U;
+    set_t_flag((r_[n] & 0x80000000U) != 0U);
+    write_reg(n, (r_[n] << 1U) | carry_in);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4025U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t carry_in = t_flag() ? 0x80000000U : 0U;
+    set_t_flag((r_[n] & 0x1U) != 0U);
+    write_reg(n, (r_[n] >> 1U) | carry_in);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x400CU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t amount = r_[m] & 0x1FU;
+    if ((r_[m] & 0x80000000U) == 0U) {
+      write_reg(n, r_[n] << amount);
+    } else {
+      const std::uint32_t inv = (0U - r_[m]) & 0x1FU;
+      write_reg(n, static_cast<std::uint32_t>(static_cast<std::int32_t>(r_[n]) >> inv));
+    }
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x400DU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t amount = r_[m] & 0x1FU;
+    if ((r_[m] & 0x80000000U) == 0U) {
+      write_reg(n, r_[n] << amount);
+    } else {
+      const std::uint32_t inv = (0U - r_[m]) & 0x1FU;
+      write_reg(n, r_[n] >> inv);
+    }
     pc_ += 2U;
   } else if ((instr & 0xF000U) == 0xA000U) {
     const std::uint32_t branch_pc = pc_;

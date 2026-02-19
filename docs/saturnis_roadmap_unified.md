@@ -195,12 +195,15 @@
 
 ### Group 6 (P1): Shift/Bit Manipulation Expansion
 
-35. [ ] Implement `SHLL2/SHLL8/SHLL16` as one family + vector tests. (`S`, `D-ALU`, `D-TEST`)
-36. [ ] Implement `SHLR2/SHLR8/SHLR16` as one family + vector tests. (`S`, `D-ALU`, `D-TEST`)
-37. [ ] Implement `SHAL/SHAR` (arithmetic shifts) + `T`-bit behavior tests. (`M`, `D-ALU`, `D-TEST`)
-38. [ ] Implement `ROTL/ROTR` + `T`-bit behavior tests. (`M`, `D-ALU`, `D-TEST`)
-39. [ ] Implement `ROTCL/ROTCR` (rotate through carry) + vector tests. (`M`, `D-ALU`, `D-TEST`)
-40. [ ] Implement `SHAD/SHLD` (variable shifts) + vector tests for negative/large shift counts. (`L`, `D-ALU`, `D-TEST`)
+
+35. [x] Implement `SHLL2/SHLL8/SHLL16` as one family + vector tests. (`S`, `D-ALU`, `D-TEST`)
+36. [x] Implement `SHLR2/SHLR8/SHLR16` as one family + vector tests. (`S`, `D-ALU`, `D-TEST`)
+37. [x] Implement `SHAL/SHAR` (arithmetic shifts) + `T`-bit behavior tests. (`M`, `D-ALU`, `D-TEST`)
+38. [x] Implement `ROTL/ROTR` + `T`-bit behavior tests. (`M`, `D-ALU`, `D-TEST`)
+39. [x] Implement `ROTCL/ROTCR` (rotate through carry) + vector tests. (`M`, `D-ALU`, `D-TEST`)
+40. [x] Implement `SHAD/SHLD` (variable shifts) + vector tests for negative/large shift counts. (`L`, `D-ALU`, `D-TEST`)
+
+
 
 ---
 

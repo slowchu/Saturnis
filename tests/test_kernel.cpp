@@ -3809,6 +3809,76 @@ void run_sh2_alu_reference_vector(const Sh2AluReferenceVector &vec) {
   check(((core.sr() & 1U) != 0U) == vec.expected_t,
         std::string("ALU reference vector failed: ") + vec.name + " (T-bit mismatch)");
 }
+void test_p1_sh2_shift_family_shlln_shlrn_vectors() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE101U); // MOV #1,R1
+  mem.write(0x0002U, 2U, 0x4108U); // SHLL2 R1 -> 4
+  mem.write(0x0004U, 2U, 0x4118U); // SHLL8 R1 -> 0x400
+  mem.write(0x0006U, 2U, 0x4128U); // SHLL16 R1 -> 0x04000000
+  mem.write(0x0008U, 2U, 0xE240U); // MOV #0x40,R2
+  mem.write(0x000AU, 2U, 0x6222U); // MOV.L @R2,R2 (0x80000000)
+  mem.write(0x000CU, 2U, 0x4209U); // SHLR2 R2
+  mem.write(0x000EU, 2U, 0x4219U); // SHLR8 R2
+  mem.write(0x0010U, 2U, 0x4229U); // SHLR16 R2
+  mem.write(0x0040U, 4U, 0x80000000U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 9; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(1) == 0x04000000U, "SHLL2/8/16 family should apply deterministic fixed left shifts");
+  check(core.reg(2) == 0x00000020U, "SHLR2/8/16 family should apply deterministic fixed right shifts");
+}
+
+void test_p1_sh2_shal_shar_and_rotc_t_bit_behavior() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6112U); // MOV.L @R1,R1 => 0x80000001
+  mem.write(0x0004U, 2U, 0x4120U); // SHAL R1 (T=old msb=1)
+  mem.write(0x0006U, 2U, 0x0018U); // SETT
+  mem.write(0x0008U, 2U, 0x4125U); // ROTCR R1 (T=old lsb)
+  mem.write(0x000AU, 2U, 0x4124U); // ROTCL R1
+  mem.write(0x000CU, 2U, 0x4121U); // SHAR R1
+  mem.write(0x0040U, 4U, 0x80000001U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 7; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check((core.sr() & 1U) == 0U, "SHAL/ROTCL/ROTCR/SHAR sequence should keep deterministic T-bit transitions");
+  check(core.reg(1) == 0x00000001U, "SHAL/SHAR and rotate-through-carry sequence should be deterministic");
+}
+
+void test_p1_sh2_shad_shld_variable_shift_vectors() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE101U); // MOV #1,R1
+  mem.write(0x0002U, 2U, 0xE302U); // MOV #2,R3
+  mem.write(0x0004U, 2U, 0x413CU); // SHAD R3,R1 => 4
+  mem.write(0x0006U, 2U, 0xE4FCU); // MOV #-4,R4
+  mem.write(0x0008U, 2U, 0x414CU); // SHAD R4,R1 => arithmetic >>4 => 0
+  mem.write(0x000AU, 2U, 0xE510U); // MOV #16,R5
+  mem.write(0x000CU, 2U, 0x415DU); // SHLD R5,R1 => 0
+  mem.write(0x000EU, 2U, 0xE6F8U); // MOV #-8,R6
+  mem.write(0x0010U, 2U, 0x416DU); // SHLD R6,R1 => logical >>8 => 0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 9; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(1) == 0U, "SHAD/SHLD variable shifts should deterministically handle positive and negative shift counts");
+}
 
 void test_p1_sh2_addc_addv_negc_semantics() {
   // ADDC carry-in/carry-out
@@ -5535,6 +5605,9 @@ int main() {
   test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
+  test_p1_sh2_shift_family_shlln_shlrn_vectors();
+  test_p1_sh2_shal_shar_and_rotc_t_bit_behavior();
+  test_p1_sh2_shad_shld_variable_shift_vectors();
   test_p1_sh2_addc_addv_negc_semantics();
   test_p1_sh2_subc_subv_borrow_and_overflow_chains();
   test_p1_sh2_sr_t_bit_side_effect_audit_for_core_alu_ops();
