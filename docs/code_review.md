@@ -4,6 +4,18 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 TODO/PR documentation reconciliation
+- Reviewed the latest non-merge PR commit span (`5c33242`..`a6a13a0`) against the tracked TODO backlog to ensure completed work is captured in project docs.
+- Confirmed recently landed ISA/control-flow fixes are now explicitly tracked in `docs/todo.md`:
+  1. `BSR` implementation with deterministic delay-slot + PR link semantics.
+  2. `JMP @Rm` implementation with deterministic delayed-branch behavior.
+  3. Stack-based `RTE` delayed-target restore hardening.
+  4. `JSR @Rm` register decode correction.
+  5. `MOV.B R0,@(disp,Rn)` displacement decode correction (byte addressing semantics).
+- Backlog hygiene update: removed `BSR`/`JMP @Rm` from next-batch candidates now that they are completed.
+- Added a commit-to-TODO audit block in `docs/todo.md` so each recent behavior-changing PR has explicit backlog coverage linkage.
+- Current highest-value ISA follow-ups remain: indexed `@(R0,Rn)`/`@(disp,GBR)` addressing, sign/zero-extension ops, and additional ALU/shift/mul/div forms.
+
 ### 2026-02-18 priority review (repeat hardening session)
 - Conducted a focused review over VDP1 command/completion MMIO scaffolding, arbiter fault payload determinism, scripted store-buffer boundedness, and ST/MT trace-prefix parity checks.
 - Prioritized risk classes for this session:

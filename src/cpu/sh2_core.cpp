@@ -381,7 +381,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     next_branch_target = u32_add_i64(u32_add(branch_pc, 4U), byte_offset);
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x400BU) {
-    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t m = (instr >> 8U) & 0x0FU;
     pr_ = pc_ + 4U;
     next_branch_target = r_[m];
     pc_ += 2U;
