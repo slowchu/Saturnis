@@ -1,4 +1,4 @@
-
+ARCHIVED FOR BREVITY. DO NOT PURSUE
 ## Group 1 (P0): Exception/Return Correctness Hardening (7)
 
 1. [x] Add regression: `RTE` executes real non-memory delay-slot instruction before state restore. (`M`, deps: D-EXC, D-BR, D-TEST)

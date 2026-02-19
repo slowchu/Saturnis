@@ -3809,7 +3809,6 @@ void run_sh2_alu_reference_vector(const Sh2AluReferenceVector &vec) {
   check(((core.sr() & 1U) != 0U) == vec.expected_t,
         std::string("ALU reference vector failed: ") + vec.name + " (T-bit mismatch)");
 }
-
 void test_p1_sh2_shift_family_shlln_shlrn_vectors() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
