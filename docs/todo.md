@@ -259,3 +259,34 @@
 14. [x] Retain deterministic VDP1 event-counter wrap policy regression and ensure explicit TODO documentation linkage.
 15. [x] Refresh architecture notes with updated scaffold-policy constraints and known fidelity gaps.
 16. [x] Run another focused full-project code-review pass and refresh risk notes.
+
+## SH-2 ISA Completeness Batch (Tasks 1-15)
+
+1. [x] MOV.L `@(disp,PC),Rn`.
+2. [x] MOV.W `@(disp,PC),Rn`.
+3. [x] MOVA `@(disp,PC),R0`.
+4. [x] Add `VBR`; implement `STC VBR,Rn` / `LDC Rm,VBR`.
+5. [x] Add `GBR`; implement `STC GBR,Rn` / `LDC Rm,GBR`.
+6. [x] Implement `MOV.L/W/B Rm,@-Rn` pre-decrement stores.
+7. [x] Implement `SUB`, `SUBC`, `SUBV`.
+8. [x] Implement register logical ops `AND` / `OR` / `XOR` / `NOT`.
+9. [x] Implement immediate logical-on-R0 plus GBR-relative byte RMW forms.
+10. [x] Implement `BT`, `BF`, `BT/S`, `BF/S`.
+11. [x] Implement additional compare variants (`CMP/HS`, `CMP/GE`, `CMP/HI`, `CMP/GT`, `CMP/PL`, `CMP/PZ`, `CMP/STR`).
+12. [x] Implement `TRAPA #imm` stack/vector flow.
+13. [x] Upgrade exception entry + `RTE` toward stack-based VBR flow.
+14. [x] Implement `@(disp,Rm)` displacement addressing forms (load/store subset in this vertical slice).
+15. [x] Add `MACH/MACL`, `MUL.L`, and transfer ops `STS`/`LDS`.
+
+## Next batch candidates
+
+- `BSR`
+- `JMP @Rm`
+- `@(R0,Rn)` indexed
+- `@(disp,GBR)`
+- `EXTS/EXTU`
+- `NEG`
+- `SHLL2/8/16`
+- `DMULS/DMULU`
+- `MULS/MULU`
+- `DIV0U/DIV1`
