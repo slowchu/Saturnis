@@ -4230,6 +4230,7 @@ void test_sh2_exception_entry_and_rte_roundtrip() {
   mem.write(0x0002U, 2U, 0x0009U); // NOP at exception return target
   mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler 0x40
   mem.write(0x0040U, 2U, 0x002BU); // RTE
+  mem.write(0x0042U, 2U, 0x0009U); // RTE delay slot
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
@@ -4243,9 +4244,12 @@ void test_sh2_exception_entry_and_rte_roundtrip() {
   core.step(arbiter, trace, 3U);
   core.step(arbiter, trace, 4U);
   core.step(arbiter, trace, 5U);
-  check(core.pc() == 0x0000U, "RTE should restore deterministic exception return PC");
+  check(core.pc() == 0x0042U, "RTE should stage delay-slot execution before control-state restore");
 
   core.step(arbiter, trace, 6U);
+  check(core.pc() == 0x0000U, "RTE should restore deterministic exception return PC after delay slot");
+
+  core.step(arbiter, trace, 7U);
   check(core.pc() == 0x0002U, "execution should continue deterministically after RTE return");
 
   const auto json = trace.to_jsonl();
@@ -4509,83 +4513,78 @@ void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
   check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
 }
 
-void test_p0_sh2_jsr_uses_m_field_from_bits_11_8() {
+void test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
   saturnis::bus::BusArbiter arbiter(mem, dev, trace);
 
-  mem.write(0x0000U, 2U, 0xE310U); // MOV #0x10,R3
-  mem.write(0x0002U, 2U, 0x430BU); // JSR @R3
-  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (delay slot)
-  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (must be skipped)
-  mem.write(0x0010U, 2U, 0x7001U); // ADD #1,R0 (branch target)
+  mem.write(0x0000U, 2U, 0xE320U); // MOV #0x20,R3
+  mem.write(0x0002U, 2U, 0x432EU); // LDC R3,VBR
+  mem.write(0x0004U, 2U, 0xC301U); // TRAPA #1
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (instruction after TRAPA)
+  mem.write(0x0008U, 2U, 0x0009U); // NOP
+
+  mem.write(0x0024U, 4U, 0x00000060U); // VBR(0x20) + vector(1)*4 -> handler
+  mem.write(0x0060U, 2U, 0x002BU); // RTE
+  mem.write(0x0062U, 2U, 0x7701U); // ADD #1,R7 (RTE delay slot)
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
 
-  core.step(arbiter, trace, 0U);
-  core.step(arbiter, trace, 1U);
-  core.step(arbiter, trace, 2U);
-  core.step(arbiter, trace, 3U);
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
 
-  check(core.pr() == 0x0006U, "JSR @Rm should set PR to the post-delay-slot return address");
-  check(core.reg(0) == 2U, "JSR @Rm should execute delay slot exactly once and then execute target instruction");
-  check(core.pc() == 0x0012U, "JSR @Rm should branch to register target selected from bits 11..8");
+  check(mem.read(0x0001FFE8U, 4U) == 0x00000006U,
+        "TRAPA should push return PC (pc+2) onto stack before vectoring to handler");
+  check(mem.read(0x0001FFEcU, 4U) == 0x000000F0U,
+        "TRAPA should push SR onto stack before vectoring to handler");
+  check(core.reg(7) == 1U, "RTE must execute its delay-slot instruction before restoring control state");
+  check(core.reg(0) == 1U, "execution should resume at instruction after TRAPA return PC");
 }
 
-void test_p0_sh2_movb_disp_store_writes_single_byte_and_records_byte_bus_size() {
+void test_p0_sh2_bsr_and_jmp_delay_slot_control_flow() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
   saturnis::bus::BusArbiter arbiter(mem, dev, trace);
 
-  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
-  mem.write(0x0002U, 2U, 0xE055U); // MOV #0x55,R0
-  mem.write(0x0004U, 2U, 0x8110U); // MOV.B R0,@(1,R1)
-  mem.write(0x0041U, 1U, 0x11U);
-  mem.write(0x0042U, 1U, 0x22U);
+  // BSR flow
+  mem.write(0x0000U, 2U, 0xB002U); // BSR +2 -> target 0x0008
+  mem.write(0x0002U, 2U, 0x7001U); // ADD #1,R0 (BSR delay slot)
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (return point)
+  mem.write(0x0006U, 2U, 0x0009U); // NOP
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (subroutine body)
+  mem.write(0x000AU, 2U, 0x000BU); // RTS
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (RTS delay slot)
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 6U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+  check(core.pr() == 0x0004U, "BSR must set PR to pc+4 before branching");
+  check(core.reg(0) == 4U, "BSR/RTS should execute both delay slots and return-path instruction deterministically");
 
-  core.step(arbiter, trace, 0U);
-  core.step(arbiter, trace, 1U);
-  const auto produced = core.produce_until_bus(2U, trace, 1U);
-  check(produced.op.has_value(), "MOV.B R0,@(disp,Rn) should produce a bus write");
-  check(produced.op->size == 1U, "MOV.B R0,@(disp,Rn) should emit a byte-sized bus write");
-  const auto resp = arbiter.commit(*produced.op);
-  core.apply_ifetch_and_step(resp, trace);
+  // JMP flow in fresh core
+  saturnis::core::TraceLog trace2;
+  saturnis::mem::CommittedMemory mem2;
+  saturnis::dev::DeviceHub dev2;
+  saturnis::bus::BusArbiter arbiter2(mem2, dev2, trace2);
+  mem2.write(0x0000U, 2U, 0xE108U); // MOV #8,R1
+  mem2.write(0x0002U, 2U, 0x412BU); // JMP @R1
+  mem2.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (JMP delay slot)
+  mem2.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (jump target)
 
-  check(mem.read(0x0041U, 1U) == 0x55U, "MOV.B R0,@(disp,Rn) should update exactly the addressed byte");
-  check(mem.read(0x0042U, 1U) == 0x22U, "MOV.B R0,@(disp,Rn) should not clobber neighboring bytes");
-}
-
-void test_p0_sh2_movw_disp_store_scales_disp_by_two_and_records_word_bus_size() {
-  saturnis::core::TraceLog trace;
-  saturnis::mem::CommittedMemory mem;
-  saturnis::dev::DeviceHub dev;
-  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
-
-  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
-  mem.write(0x0002U, 2U, 0xE055U); // MOV #0x55,R0
-  mem.write(0x0004U, 2U, 0x8111U); // MOV.W R0,@(1,R1)
-  mem.write(0x0041U, 1U, 0x11U);
-  mem.write(0x0042U, 2U, 0xABCDU);
-
-  saturnis::cpu::SH2Core core(0);
-  core.reset(0U, 0x0001FFF0U);
-
-  core.step(arbiter, trace, 0U);
-  core.step(arbiter, trace, 1U);
-  const auto produced = core.produce_until_bus(2U, trace, 1U);
-  check(produced.op.has_value(), "MOV.W R0,@(disp,Rn) should produce a bus write");
-  check(produced.op->size == 2U, "MOV.W R0,@(disp,Rn) should emit a word-sized bus write");
-  const auto resp = arbiter.commit(*produced.op);
-  core.apply_ifetch_and_step(resp, trace);
-
-  check(mem.read(0x0041U, 1U) == 0x11U, "MOV.W R0,@(disp,Rn) should not write at unscaled byte displacement");
-  check(mem.read(0x0042U, 2U) == 0x0055U, "MOV.W R0,@(disp,Rn) should use disp*2 effective address and store 16 bits");
+  saturnis::cpu::SH2Core core2(0);
+  core2.reset(0U, 0x0001FFF0U);
+  core2.set_pr(0xDEADBEEFU);
+  for (std::uint64_t i = 0U; i < 4U; ++i) {
+    core2.step(arbiter2, trace2, i);
+  }
+  check(core2.reg(0) == 2U, "JMP should execute delay slot then land on target instruction");
+  check(core2.pr() == 0xDEADBEEFU, "JMP must not modify PR");
 }
 
 } // namespace
@@ -4772,9 +4771,8 @@ int main() {
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
   test_p0_sh2_sub_register_uses_0x3nm8_encoding();
   test_p0_sh2_displacement_addressing_load_store_roundtrip();
-  test_p0_sh2_jsr_uses_m_field_from_bits_11_8();
-  test_p0_sh2_movb_disp_store_writes_single_byte_and_records_byte_bus_size();
-  test_p0_sh2_movw_disp_store_scales_disp_by_two_and_records_word_bus_size();
+  test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot();
+  test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }

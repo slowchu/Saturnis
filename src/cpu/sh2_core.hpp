@@ -95,6 +95,7 @@ private:
   bool has_exception_return_context_ = false;
   std::uint32_t pending_new_pc_ = 0;
   std::uint32_t pending_new_sr_ = 0;
+  bool pending_rte_restore_ = false;
   std::optional<std::uint32_t> pending_trapa_imm_;
   mem::TinyCache icache_{16, 64};
 };

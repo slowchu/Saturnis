@@ -109,6 +109,7 @@ void SH2Core::reset(std::uint32_t pc, std::uint32_t sp) {
   has_exception_return_context_ = false;
   pending_new_pc_ = 0;
   pending_new_sr_ = 0;
+  pending_rte_restore_ = false;
   pending_trapa_imm_.reset();
 }
 
@@ -346,6 +347,12 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::int64_t byte_offset = static_cast<std::int64_t>(signext12(instr)) * 2LL;
     next_branch_target = u32_add_i64(u32_add(branch_pc, 4U), byte_offset);
     pc_ += 2U;
+  } else if ((instr & 0xF000U) == 0xB000U) {
+    const std::uint32_t branch_pc = pc_;
+    const std::int64_t byte_offset = static_cast<std::int64_t>(signext12(instr)) * 2LL;
+    pr_ = pc_ + 4U;
+    next_branch_target = u32_add_i64(u32_add(branch_pc, 4U), byte_offset);
+    pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x400BU) {
     const std::uint32_t m = (instr >> 8U) & 0x0FU;
     pr_ = pc_ + 4U;
@@ -353,6 +360,10 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     pc_ += 2U;
   } else if (instr == 0x000BU) {
     next_branch_target = pr_;
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x402BU) {
+    const std::uint32_t m = (instr >> 8U) & 0x0FU;
+    next_branch_target = r_[m];
     pc_ += 2U;
   } else if (instr == 0x002BU) {
     if (!has_exception_return_context_) {
@@ -374,6 +385,10 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   }
 
   if (delay_slot_target.has_value()) {
+    if (pending_rte_restore_) {
+      sr_ = pending_new_sr_;
+      pending_rte_restore_ = false;
+    }
     pc_ = *delay_slot_target;
   } else if (next_branch_target.has_value()) {
     pending_branch_target_ = *next_branch_target;
@@ -662,11 +677,8 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     if (pending.kind == PendingMemOp::Kind::RtePopSr) {
       pending_new_sr_ = response.value;
       r_[15] = u32_add(r_[15], 4U);
-      const std::uint32_t slot_pc = pc_;
-      pc_ = slot_pc;
-      execute_instruction(static_cast<std::uint16_t>(0x0009U), trace, true);
-      sr_ = pending_new_sr_;
-      pc_ = pending_new_pc_;
+      pending_rte_restore_ = true;
+      pending_branch_target_ = pending_new_pc_;
       has_exception_return_context_ = false;
       t_ += 1;
       ++executed_;
@@ -702,6 +714,10 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
     }
 
     if (pending_branch_target_.has_value()) {
+      if (pending_rte_restore_) {
+        sr_ = pending_new_sr_;
+        pending_rte_restore_ = false;
+      }
       pc_ = *pending_branch_target_;
       pending_branch_target_.reset();
     } else {
