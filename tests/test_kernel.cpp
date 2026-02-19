@@ -4509,6 +4509,85 @@ void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
   check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
 }
 
+void test_p0_sh2_jsr_uses_m_field_from_bits_11_8() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE310U); // MOV #0x10,R3
+  mem.write(0x0002U, 2U, 0x430BU); // JSR @R3
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (delay slot)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (must be skipped)
+  mem.write(0x0010U, 2U, 0x7001U); // ADD #1,R0 (branch target)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+  core.step(arbiter, trace, 3U);
+
+  check(core.pr() == 0x0006U, "JSR @Rm should set PR to the post-delay-slot return address");
+  check(core.reg(0) == 2U, "JSR @Rm should execute delay slot exactly once and then execute target instruction");
+  check(core.pc() == 0x0012U, "JSR @Rm should branch to register target selected from bits 11..8");
+}
+
+void test_p0_sh2_movb_disp_store_writes_single_byte_and_records_byte_bus_size() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0xE055U); // MOV #0x55,R0
+  mem.write(0x0004U, 2U, 0x8110U); // MOV.B R0,@(1,R1)
+  mem.write(0x0041U, 1U, 0x11U);
+  mem.write(0x0042U, 1U, 0x22U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+  const auto produced = core.produce_until_bus(2U, trace, 1U);
+  check(produced.op.has_value(), "MOV.B R0,@(disp,Rn) should produce a bus write");
+  check(produced.op->size == 1U, "MOV.B R0,@(disp,Rn) should emit a byte-sized bus write");
+  const auto resp = arbiter.commit(*produced.op);
+  core.apply_ifetch_and_step(resp, trace);
+
+  check(mem.read(0x0041U, 1U) == 0x55U, "MOV.B R0,@(disp,Rn) should update exactly the addressed byte");
+  check(mem.read(0x0042U, 1U) == 0x22U, "MOV.B R0,@(disp,Rn) should not clobber neighboring bytes");
+}
+
+void test_p0_sh2_movw_disp_store_scales_disp_by_two_and_records_word_bus_size() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0xE055U); // MOV #0x55,R0
+  mem.write(0x0004U, 2U, 0x8111U); // MOV.W R0,@(1,R1)
+  mem.write(0x0041U, 1U, 0x11U);
+  mem.write(0x0042U, 2U, 0xABCDU);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+  const auto produced = core.produce_until_bus(2U, trace, 1U);
+  check(produced.op.has_value(), "MOV.W R0,@(disp,Rn) should produce a bus write");
+  check(produced.op->size == 2U, "MOV.W R0,@(disp,Rn) should emit a word-sized bus write");
+  const auto resp = arbiter.commit(*produced.op);
+  core.apply_ifetch_and_step(resp, trace);
+
+  check(mem.read(0x0041U, 1U) == 0x11U, "MOV.W R0,@(disp,Rn) should not write at unscaled byte displacement");
+  check(mem.read(0x0042U, 2U) == 0x0055U, "MOV.W R0,@(disp,Rn) should use disp*2 effective address and store 16 bits");
+}
+
 } // namespace
 
 int main() {
@@ -4693,6 +4772,9 @@ int main() {
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
   test_p0_sh2_sub_register_uses_0x3nm8_encoding();
   test_p0_sh2_displacement_addressing_load_store_roundtrip();
+  test_p0_sh2_jsr_uses_m_field_from_bits_11_8();
+  test_p0_sh2_movb_disp_store_writes_single_byte_and_records_byte_bus_size();
+  test_p0_sh2_movw_disp_store_scales_disp_by_two_and_records_word_bus_size();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }
