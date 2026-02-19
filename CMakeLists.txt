@@ -34,6 +34,7 @@ add_library(saturnis_core
   src/mem/memory.cpp
   src/cpu/scripted_cpu.cpp
   src/cpu/sh2_core.cpp
+  src/cpu/sh2_decode.cpp
   src/dev/devices.cpp
   src/platform/file_io.cpp
   src/platform/sdl_window.cpp
