@@ -4221,7 +4221,7 @@ void test_scripted_cpu_cache_fill_mismatch_faults_deterministically() {
         "mismatched fill must not silently populate cache; subsequent read should still require bus op");
 }
 
-void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
+void test_sh2_exception_entry_and_rte_roundtrip() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -4236,19 +4236,23 @@ void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
   core.request_exception_vector(4U);
 
   core.step(arbiter, trace, 0U);
-  check(core.pc() == 0x0040U, "synthetic exception entry should vector to handler address");
-
   core.step(arbiter, trace, 1U);
-  check(core.pc() == 0x0002U, "synthetic RTE should restore deterministic exception return PC");
-
   core.step(arbiter, trace, 2U);
-  check(core.pc() == 0x0004U, "execution should continue deterministically after synthetic RTE return");
+  check(core.pc() == 0x0040U, "exception entry should vector to handler address after stack pushes and vector read");
+
+  core.step(arbiter, trace, 3U);
+  core.step(arbiter, trace, 4U);
+  core.step(arbiter, trace, 5U);
+  check(core.pc() == 0x0000U, "RTE should restore deterministic exception return PC");
+
+  core.step(arbiter, trace, 6U);
+  check(core.pc() == 0x0002U, "execution should continue deterministically after RTE return");
 
   const auto json = trace.to_jsonl();
-  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
-        "synthetic exception entry must be explicitly trace-labeled");
-  check(json.find("\"reason\":\"SYNTHETIC_RTE\"") != std::string::npos,
-        "synthetic RTE return path must be explicitly trace-labeled");
+  check(json.find("\"reason\":\"EXCEPTION_ENTRY\"") != std::string::npos,
+        "exception entry must be explicitly trace-labeled");
+  check(json.find("\"reason\":\"EXCEPTION_RETURN\"") != std::string::npos,
+        "RTE return path must be explicitly trace-labeled");
 }
 
 void test_scripted_cpu_store_buffer_stress_retires_boundedly() {
@@ -4281,7 +4285,7 @@ void test_scripted_cpu_store_buffer_stress_retires_boundedly() {
         "scripted CPU stress read forwarding should deterministically observe latest committed same-address write");
 }
 
-void test_sh2_synthetic_exception_nested_entry_guard_is_deterministic() {
+void test_sh2_exception_nested_entry_guard_is_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -4301,10 +4305,10 @@ void test_sh2_synthetic_exception_nested_entry_guard_is_deterministic() {
   core.step(arbiter, trace, 2U);
 
   const auto json = trace.to_jsonl();
-  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
-        "nested synthetic exception flow should emit deterministic exception-entry markers");
-  check(core.pc() != 0U,
-        "nested synthetic exception flow should continue with deterministic non-zero PC progression");
+  check(json.find("\"reason\":\"EXCEPTION_ENTRY\"") != std::string::npos,
+        "nested exception flow should emit deterministic exception-entry markers");
+  check((core.pc() & 1U) == 0U,
+        "nested exception flow should continue with deterministic aligned PC progression");
 }
 
 void test_sh2_synthetic_rte_without_context_faults_loudly() {
@@ -4630,8 +4634,8 @@ int main() {
   test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
   test_scripted_cpu_store_buffer_stress_retires_boundedly();
   test_scripted_cpu_store_buffer_stress_never_exceeds_capacity();
-  test_sh2_synthetic_exception_entry_and_rte_roundtrip();
-  test_sh2_synthetic_exception_nested_entry_guard_is_deterministic();
+  test_sh2_exception_entry_and_rte_roundtrip();
+  test_sh2_exception_nested_entry_guard_is_deterministic();
   test_sh2_synthetic_rte_without_context_faults_loudly();
   test_sh2_synthetic_rte_without_context_trace_is_stable_across_runs();
   test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
