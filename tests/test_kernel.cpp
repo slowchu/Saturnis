@@ -4221,7 +4221,7 @@ void test_scripted_cpu_cache_fill_mismatch_faults_deterministically() {
         "mismatched fill must not silently populate cache; subsequent read should still require bus op");
 }
 
-void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
+void test_sh2_exception_entry_and_rte_roundtrip() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -4230,25 +4230,33 @@ void test_sh2_synthetic_exception_entry_and_rte_roundtrip() {
   mem.write(0x0002U, 2U, 0x0009U); // NOP at exception return target
   mem.write(0x0010U, 4U, 0x00000040U); // vector 4 -> handler 0x40
   mem.write(0x0040U, 2U, 0x002BU); // RTE
+  mem.write(0x0042U, 2U, 0x0009U); // RTE delay slot
 
   saturnis::cpu::SH2Core core(0);
   core.reset(0U, 0x0001FFF0U);
   core.request_exception_vector(4U);
 
   core.step(arbiter, trace, 0U);
-  check(core.pc() == 0x0040U, "synthetic exception entry should vector to handler address");
-
   core.step(arbiter, trace, 1U);
-  check(core.pc() == 0x0002U, "synthetic RTE should restore deterministic exception return PC");
-
   core.step(arbiter, trace, 2U);
-  check(core.pc() == 0x0004U, "execution should continue deterministically after synthetic RTE return");
+  check(core.pc() == 0x0040U, "exception entry should vector to handler address after stack pushes and vector read");
+
+  core.step(arbiter, trace, 3U);
+  core.step(arbiter, trace, 4U);
+  core.step(arbiter, trace, 5U);
+  check(core.pc() == 0x0042U, "RTE should stage delay-slot execution before control-state restore");
+
+  core.step(arbiter, trace, 6U);
+  check(core.pc() == 0x0000U, "RTE should restore deterministic exception return PC after delay slot");
+
+  core.step(arbiter, trace, 7U);
+  check(core.pc() == 0x0002U, "execution should continue deterministically after RTE return");
 
   const auto json = trace.to_jsonl();
-  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
-        "synthetic exception entry must be explicitly trace-labeled");
-  check(json.find("\"reason\":\"SYNTHETIC_RTE\"") != std::string::npos,
-        "synthetic RTE return path must be explicitly trace-labeled");
+  check(json.find("\"reason\":\"EXCEPTION_ENTRY\"") != std::string::npos,
+        "exception entry must be explicitly trace-labeled");
+  check(json.find("\"reason\":\"EXCEPTION_RETURN\"") != std::string::npos,
+        "RTE return path must be explicitly trace-labeled");
 }
 
 void test_scripted_cpu_store_buffer_stress_retires_boundedly() {
@@ -4281,7 +4289,7 @@ void test_scripted_cpu_store_buffer_stress_retires_boundedly() {
         "scripted CPU stress read forwarding should deterministically observe latest committed same-address write");
 }
 
-void test_sh2_synthetic_exception_nested_entry_guard_is_deterministic() {
+void test_sh2_exception_nested_entry_guard_is_deterministic() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
   saturnis::dev::DeviceHub dev;
@@ -4301,10 +4309,10 @@ void test_sh2_synthetic_exception_nested_entry_guard_is_deterministic() {
   core.step(arbiter, trace, 2U);
 
   const auto json = trace.to_jsonl();
-  check(json.find("\"reason\":\"SYNTHETIC_EXCEPTION_ENTRY\"") != std::string::npos,
-        "nested synthetic exception flow should emit deterministic exception-entry markers");
-  check(core.pc() != 0U,
-        "nested synthetic exception flow should continue with deterministic non-zero PC progression");
+  check(json.find("\"reason\":\"EXCEPTION_ENTRY\"") != std::string::npos,
+        "nested exception flow should emit deterministic exception-entry markers");
+  check((core.pc() & 1U) == 0U,
+        "nested exception flow should continue with deterministic aligned PC progression");
 }
 
 void test_sh2_synthetic_rte_without_context_faults_loudly() {
@@ -4456,6 +4464,127 @@ void test_p0_sh2_load_to_r15_does_not_clobber_pr() {
 
   check(core.reg(15) == 0x11223344U, "MOV.L @Rm,R15 should load stack pointer destination register");
   check(core.pr() == 0xDEADBEEFU, "MOV.L @Rm,R15 must not clobber PR as a load side effect");
+}
+
+void test_p0_sh2_sub_register_uses_0x3nm8_encoding() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE105U); // MOV #5,R1
+  mem.write(0x0002U, 2U, 0xE203U); // MOV #3,R2
+  mem.write(0x0004U, 2U, 0x3128U); // SUB R2,R1 (3nm8)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+
+  check(core.reg(1) == 2U, "SUB Rm,Rn must use 0x3nm8 encoding and subtract source from destination");
+}
+
+void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE040U); // MOV #0x40,R0
+  mem.write(0x0002U, 2U, 0xE120U); // MOV #0x20,R1
+  mem.write(0x0004U, 2U, 0xE450U); // MOV #0x50,R4
+  mem.write(0x0006U, 2U, 0x1112U); // MOV.L R1,@(4,R1)
+  mem.write(0x0008U, 2U, 0x5312U); // MOV.L @(8,R1),R3
+  mem.write(0x000AU, 2U, 0x8541U); // MOV.W @(2,R4),R0
+  mem.write(0x000CU, 2U, 0x8443U); // MOV.B @(3,R4),R0
+  mem.write(0x0052U, 2U, 0xFF80U);
+  mem.write(0x0053U, 1U, 0x80U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(3) == 0x20U, "MOV.L @(disp,Rm),Rn should read back value written by MOV.L Rm,@(disp,Rn)");
+  check(core.reg(0) == 0xFFFFFF80U, "MOV.B/MOV.W @(disp,Rm),R0 displacement loads should sign-extend");
+  check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
+}
+
+void test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE320U); // MOV #0x20,R3
+  mem.write(0x0002U, 2U, 0x432EU); // LDC R3,VBR
+  mem.write(0x0004U, 2U, 0xC301U); // TRAPA #1
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (instruction after TRAPA)
+  mem.write(0x0008U, 2U, 0x0009U); // NOP
+
+  mem.write(0x0024U, 4U, 0x00000060U); // VBR(0x20) + vector(1)*4 -> handler
+  mem.write(0x0060U, 2U, 0x002BU); // RTE
+  mem.write(0x0062U, 2U, 0x7701U); // ADD #1,R7 (RTE delay slot)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0001FFE8U, 4U) == 0x00000006U,
+        "TRAPA should push return PC (pc+2) onto stack before vectoring to handler");
+  check(mem.read(0x0001FFEcU, 4U) == 0x000000F0U,
+        "TRAPA should push SR onto stack before vectoring to handler");
+  check(core.reg(7) == 1U, "RTE must execute its delay-slot instruction before restoring control state");
+  check(core.reg(0) == 1U, "execution should resume at instruction after TRAPA return PC");
+}
+
+void test_p0_sh2_bsr_and_jmp_delay_slot_control_flow() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  // BSR flow
+  mem.write(0x0000U, 2U, 0xB002U); // BSR +2 -> target 0x0008
+  mem.write(0x0002U, 2U, 0x7001U); // ADD #1,R0 (BSR delay slot)
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (return point)
+  mem.write(0x0006U, 2U, 0x0009U); // NOP
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (subroutine body)
+  mem.write(0x000AU, 2U, 0x000BU); // RTS
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (RTS delay slot)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 6U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+  check(core.pr() == 0x0004U, "BSR must set PR to pc+4 before branching");
+  check(core.reg(0) == 4U, "BSR/RTS should execute both delay slots and return-path instruction deterministically");
+
+  // JMP flow in fresh core
+  saturnis::core::TraceLog trace2;
+  saturnis::mem::CommittedMemory mem2;
+  saturnis::dev::DeviceHub dev2;
+  saturnis::bus::BusArbiter arbiter2(mem2, dev2, trace2);
+  mem2.write(0x0000U, 2U, 0xE108U); // MOV #8,R1
+  mem2.write(0x0002U, 2U, 0x412BU); // JMP @R1
+  mem2.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (JMP delay slot)
+  mem2.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (jump target)
+
+  saturnis::cpu::SH2Core core2(0);
+  core2.reset(0U, 0x0001FFF0U);
+  core2.set_pr(0xDEADBEEFU);
+  for (std::uint64_t i = 0U; i < 4U; ++i) {
+    core2.step(arbiter2, trace2, i);
+  }
+  check(core2.reg(0) == 2U, "JMP should execute delay slot then land on target instruction");
+  check(core2.pr() == 0xDEADBEEFU, "JMP must not modify PR");
 }
 
 } // namespace
@@ -4630,8 +4759,8 @@ int main() {
   test_scripted_cpu_cache_fill_mismatch_faults_deterministically();
   test_scripted_cpu_store_buffer_stress_retires_boundedly();
   test_scripted_cpu_store_buffer_stress_never_exceeds_capacity();
-  test_sh2_synthetic_exception_entry_and_rte_roundtrip();
-  test_sh2_synthetic_exception_nested_entry_guard_is_deterministic();
+  test_sh2_exception_entry_and_rte_roundtrip();
+  test_sh2_exception_nested_entry_guard_is_deterministic();
   test_sh2_synthetic_rte_without_context_faults_loudly();
   test_sh2_synthetic_rte_without_context_trace_is_stable_across_runs();
   test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
@@ -4640,6 +4769,10 @@ int main() {
   test_p0_sh2_post_increment_load_updates_source_register();
   test_p0_sh2_post_increment_self_load_skips_increment_when_m_equals_n();
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
+  test_p0_sh2_sub_register_uses_0x3nm8_encoding();
+  test_p0_sh2_displacement_addressing_load_store_roundtrip();
+  test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot();
+  test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
   std::cout << "saturnis kernel tests passed\n";
   return 0;
 }
