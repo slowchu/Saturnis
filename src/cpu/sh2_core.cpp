@@ -181,6 +181,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     set_t_flag(add_overflow(r_[n], r_[m], out));
     write_reg(n, out);
     pc_ += 2U;
+
   } else if ((instr & 0xF00FU) == 0x6003U) {
     const std::uint32_t n = decode::field_n(instr);
     const std::uint32_t m = decode::field_m(instr);

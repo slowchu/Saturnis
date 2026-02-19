@@ -183,6 +183,7 @@
 
 ### Group 5 (P1): Arithmetic/ALU Coverage for BIOS Routines
 
+
 29. [x] Implement `ADDC Rm,Rn` with carry in/out via `T`. (`M`, `D-ALU`, `D-TEST`)
 30. [x] Implement `ADDV Rm,Rn` with signed overflow into `T`. (`M`, `D-ALU`, `D-TEST`)
 31. [x] Implement `NEGC Rm,Rn` with borrow semantics via `T`. (`M`, `D-ALU`, `D-TEST`)
