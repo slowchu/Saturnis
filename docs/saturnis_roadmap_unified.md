@@ -251,12 +251,12 @@
 
 ### Group 11 (P2): Testing Infrastructure Upgrades
 
-65. [ ] Introduce SH-2 opcode microtest harness with declarative vectors. (`L`, `D-TEST`)
-66. [ ] Add helper assertions for bus op sequence shape (read/write order, addr, size). (`S`, `D-TEST`)
-67. [ ] Add helper assertions for SR `T`-bit transitions. (`S`, `D-TEST`)
-68. [ ] Split monolithic SH-2 tests into themed clusters (alu/branch/mem/exception). (`M`, `D-TEST`)
-69. [ ] Add deterministic "golden state" checkpoints for longer control-flow fixtures. (`M`, `D-TEST`)
-70. [ ] Add microtest naming convention + template in docs for future contributors. (`S`, `D-DOC`)
+65. [x] Introduce SH-2 opcode microtest harness with declarative vectors. (`L`, `D-TEST`)
+66. [x] Add helper assertions for bus op sequence shape (read/write order, addr, size). (`S`, `D-TEST`)
+67. [x] Add helper assertions for SR `T`-bit transitions. (`S`, `D-TEST`)
+68. [x] Split monolithic SH-2 tests into themed clusters (alu/branch/mem/exception). (`M`, `D-TEST`)
+69. [x] Add deterministic "golden state" checkpoints for longer control-flow fixtures. (`M`, `D-TEST`)
+70. [x] Add microtest naming convention + template in docs for future contributors. (`S`, `D-DOC`)
 
 ---
 
