@@ -4,6 +4,22 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 8 (system/register transfer completeness) implementation review
+- Implemented stack-form system and accumulator transfers in SH-2 pipeline:
+  1. `STC.L SR/GBR/VBR,@-Rn`.
+  2. `LDC.L @Rm+,SR/GBR/VBR`.
+  3. `STS.L MACH/MACL,@-Rn` and `LDS.L @Rm+,MACH/MACL`.
+- Reused pending memory-op sequencing with explicit special-register load destinations to preserve deterministic bus-order semantics.
+- Added deterministic regressions for stack roundtrip behavior and a reset/non-target invariance suite covering system and accumulator transfer operations.
+- Follow-up review found and fixed a runahead hazard where consecutive stack-form writes could overwrite `pending_mem_op_`; stack-form write bus-op generation now covers `STC.L`/`STS.L` families consistently to preserve write ordering.
+
+### 2026-02-19 Group 7 (multiply/divide family) implementation review
+- Implemented multiply/divide instruction coverage in the SH-2 execute path:
+  1. `MULS.W` / `MULU.W` into `MACL`.
+  2. `DMULS.L` / `DMULU.L` into `MACH:MACL`.
+  3. `DIV0U`, `DIV0S`, and deterministic `DIV1` step semantics with SR `Q/M/T` interaction.
+- Added deterministic regression vectors for multiply family outputs and divide status behavior.
+- Added explicit TODO-backed guard test asserting unsupported `MAC.W/MAC.L` paths remain loud `ILLEGAL_OP` faults until full deterministic semantics are implemented.
 
 ### 2026-02-19 Group 6 (shift/bit expansion) implementation review
 - Implemented and reviewed shift/bit families in SH-2 execute path:
@@ -20,9 +36,6 @@ Date: 2026-02-17 (challenge session update)
 - Added deterministic `T`-bit side-effect audit coverage for core logical/compare ops (`AND/OR/XOR/TST/CMP`).
 - Added a fixed-corpus ALU reference-vector scaffold to reuse for future arithmetic task groups while preserving deterministic expectations.
 - Review outcome: all new ALU paths operate on register state only, avoid host-time dependence, and remain trace-stable across repeated runs.
-
-
-
 
 ### 2026-02-19 Group 4 (addressing-mode breadth) implementation review
 - Added/validated SH-2 addressing-mode coverage for real firmware-style data paths:

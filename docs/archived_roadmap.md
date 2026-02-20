@@ -100,12 +100,12 @@ Legend:
 
 ## Group 8 (P1): System/Register Transfer Completeness (6)
 
-47. [ ] Implement `STC.L SR,@-Rn` (push SR) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
-48. [ ] Implement `LDC.L @Rm+,SR` (pop SR) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
-49. [ ] Implement `STC/LDC GBR` forms (+ `.L` stack forms if needed) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
-50. [ ] Implement `STC/LDC VBR` forms (+ `.L` stack forms if needed) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
-51. [ ] Implement `STS/LDS MACH/MACL` forms (+ `.L` stack forms if needed) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
-52. [ ] Add reset-state + non-target invariance test suite for all system/accumulator transfers. (`S`, deps: D-TEST)
+47. [x] Implement `STC.L SR,@-Rn` (push SR) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
+48. [x] Implement `LDC.L @Rm+,SR` (pop SR) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
+49. [x] Implement `STC/LDC GBR` forms (+ `.L` stack forms if needed) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
+50. [x] Implement `STC/LDC VBR` forms (+ `.L` stack forms if needed) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
+51. [x] Implement `STS/LDS MACH/MACL` forms (+ `.L` stack forms if needed) + tests. (`M`, deps: D-EXC, D-MEM, D-TEST)
+52. [x] Add reset-state + non-target invariance test suite for all system/accumulator transfers. (`S`, deps: D-TEST)
 
 ## Group 9 (P1): Memory Ordering + Determinism Validation (6)
 
