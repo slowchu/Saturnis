@@ -14,7 +14,6 @@ Date: 2026-02-17 (challenge session update)
 - Added vector regressions for fixed-shift families, arithmetic/rotate-through-carry `T`-bit transitions, and variable-shift positive/negative count handling.
 - Review note: all new shift paths are pure register transformations with deterministic bit-level behavior and no timing/random dependencies.
 
-
 ### 2026-02-19 Group 5 (ALU coverage) implementation review
 - Implemented and reviewed ALU flag-sensitive instructions: `ADDC`, `ADDV`, and `NEGC`.
 - Added focused deterministic regressions for multi-step `SUBC/SUBV` borrow/overflow chains.

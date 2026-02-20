@@ -91,12 +91,12 @@ Legend:
 
 ## Group 7 (P1): Multiply/Divide Instruction Family (6)
 
-41. [ ] Implement `MULS.W` + `MULU.W` as one family task + tests. (`M`, deps: D-ALU, D-TEST)
-42. [ ] Implement `DMULS.L` into `MACH:MACL` + tests. (`L`, deps: D-ALU, D-TEST)
-43. [ ] Implement `DMULU.L` into `MACH:MACL` + tests. (`L`, deps: D-ALU, D-TEST)
-44. [ ] Implement `DIV0U` + `DIV0S` + tests (status bit behavior). (`M`, deps: D-ALU, D-TEST)
-45. [ ] Implement `DIV1` deterministic step semantics + focused vector tests. (`L`, deps: D-ALU, D-TEST)
-46. [ ] Add `MAC.W/MAC.L` plan: either implement minimal deterministic behavior or explicitly `ILLEGAL_OP` with TODO+tests. (`M`, deps: D-ALU, D-TEST)
+41. [x] Implement `MULS.W` + `MULU.W` as one family task + tests. (`M`, deps: D-ALU, D-TEST)
+42. [x] Implement `DMULS.L` into `MACH:MACL` + tests. (`L`, deps: D-ALU, D-TEST)
+43. [x] Implement `DMULU.L` into `MACH:MACL` + tests. (`L`, deps: D-ALU, D-TEST)
+44. [x] Implement `DIV0U` + `DIV0S` + tests (status bit behavior). (`M`, deps: D-ALU, D-TEST)
+45. [x] Implement `DIV1` deterministic step semantics + focused vector tests. (`L`, deps: D-ALU, D-TEST)
+46. [x] Add `MAC.W/MAC.L` plan: either implement minimal deterministic behavior or explicitly `ILLEGAL_OP` with TODO+tests. (`M`, deps: D-ALU, D-TEST)
 
 ## Group 8 (P1): System/Register Transfer Completeness (6)
 
