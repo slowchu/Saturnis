@@ -5,6 +5,8 @@ namespace saturnis::cpu {
 namespace {
 
 constexpr std::uint32_t kSrTBit = 0x00000001U;
+constexpr std::uint32_t kSrQBit = 0x00000100U;
+constexpr std::uint32_t kSrMBit = 0x00000200U;
 
 [[nodiscard]] constexpr std::uint32_t u32_add(std::uint32_t a, std::uint32_t b) {
   return a + b;
@@ -123,10 +125,23 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   auto write_reg = [this](std::uint32_t n, std::uint32_t value) {
     r_[n] = value;
   };
+  auto q_flag = [this]() { return (sr_ & kSrQBit) != 0U; };
+  auto m_flag = [this]() { return (sr_ & kSrMBit) != 0U; };
+  auto set_q_flag = [this](bool value) {
+    if (value) sr_ |= kSrQBit;
+    else sr_ &= ~kSrQBit;
+  };
+  auto set_m_flag = [this](bool value) {
+    if (value) sr_ |= kSrMBit;
+    else sr_ &= ~kSrMBit;
+  };
   if (instr == 0x0009U) {
     pc_ += 2U;
   } else if (instr == 0x0018U) {
     set_t_flag(true);
+    pc_ += 2U;
+  } else if (instr == 0x0019U) {
+    sr_ &= ~(kSrQBit | kSrMBit | kSrTBit);
     pc_ += 2U;
   } else if (instr == 0x0008U) {
     set_t_flag(false);
@@ -201,6 +216,27 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
     write_reg(n, r_[n] | r_[m]);
     pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x200EU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint32_t lhs = r_[n] & 0xFFFFU;
+    const std::uint32_t rhs = r_[m] & 0xFFFFU;
+    macl_ = lhs * rhs;
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x200FU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::int32_t lhs = static_cast<std::int16_t>(r_[n] & 0xFFFFU);
+    const std::int32_t rhs = static_cast<std::int16_t>(r_[m] & 0xFFFFU);
+    macl_ = static_cast<std::uint32_t>(lhs * rhs);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x2007U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    set_q_flag((r_[n] & 0x80000000U) != 0U);
+    set_m_flag((r_[m] & 0x80000000U) != 0U);
+    set_t_flag(q_flag() == m_flag());
+    pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x6007U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     const std::uint32_t m = (instr >> 4U) & 0x0FU;
@@ -263,6 +299,57 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t out = u32_sub(r_[n], r_[m]);
     set_t_flag(sub_overflow(r_[n], r_[m], out));
     write_reg(n, out);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x300DU) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::int64_t prod = static_cast<std::int64_t>(static_cast<std::int32_t>(r_[n])) *
+                              static_cast<std::int64_t>(static_cast<std::int32_t>(r_[m]));
+    mach_ = static_cast<std::uint32_t>((static_cast<std::uint64_t>(prod) >> 32U) & 0xFFFFFFFFULL);
+    macl_ = static_cast<std::uint32_t>(static_cast<std::uint64_t>(prod) & 0xFFFFFFFFULL);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x3005U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const std::uint64_t prod = static_cast<std::uint64_t>(r_[n]) * static_cast<std::uint64_t>(r_[m]);
+    mach_ = static_cast<std::uint32_t>((prod >> 32U) & 0xFFFFFFFFULL);
+    macl_ = static_cast<std::uint32_t>(prod & 0xFFFFFFFFULL);
+    pc_ += 2U;
+  } else if ((instr & 0xF00FU) == 0x3004U) {
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    const std::uint32_t m = (instr >> 4U) & 0x0FU;
+    const bool old_q = q_flag();
+    const bool m_status = m_flag();
+    std::uint32_t rn = r_[n];
+    set_q_flag((rn & 0x80000000U) != 0U);
+    rn = (rn << 1U) | (t_flag() ? 1U : 0U);
+
+    const std::uint32_t rm = r_[m];
+    bool new_q = false;
+    if (!old_q) {
+      if (!m_status) {
+        const std::uint32_t tmp = rn;
+        rn = u32_sub(rn, rm);
+        new_q = rn > tmp;
+      } else {
+        const std::uint32_t tmp = rn;
+        rn = u32_add(rn, rm);
+        new_q = rn < tmp;
+      }
+    } else {
+      if (!m_status) {
+        const std::uint32_t tmp = rn;
+        rn = u32_add(rn, rm);
+        new_q = rn < tmp;
+      } else {
+        const std::uint32_t tmp = rn;
+        rn = u32_sub(rn, rm);
+        new_q = rn > tmp;
+      }
+    }
+    set_q_flag(new_q);
+    set_t_flag(new_q == m_status);
+    write_reg(n, rn);
     pc_ += 2U;
   } else if ((instr & 0xF00FU) == 0x3002U) {
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
@@ -492,6 +579,7 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t addr = mem::to_phys(r_[15]);
     pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::TrapaPushSr, addr, 4U, sr_, 0U, std::nullopt, 0U, 0U};
   } else {
+    // TODO(ISA): MAC.W/MAC.L are intentionally left as explicit ILLEGAL_OP until deterministic semantics are implemented.
     trace.add_fault(core::FaultEvent{t_, cpu_id_, pc_, static_cast<std::uint32_t>(instr), "ILLEGAL_OP"});
     pc_ += 2U;
   }

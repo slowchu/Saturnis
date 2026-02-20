@@ -183,7 +183,6 @@
 
 ### Group 5 (P1): Arithmetic/ALU Coverage for BIOS Routines
 
-
 29. [x] Implement `ADDC Rm,Rn` with carry in/out via `T`. (`M`, `D-ALU`, `D-TEST`)
 30. [x] Implement `ADDV Rm,Rn` with signed overflow into `T`. (`M`, `D-ALU`, `D-TEST`)
 31. [x] Implement `NEGC Rm,Rn` with borrow semantics via `T`. (`M`, `D-ALU`, `D-TEST`)
@@ -195,7 +194,6 @@
 
 ### Group 6 (P1): Shift/Bit Manipulation Expansion
 
-
 35. [x] Implement `SHLL2/SHLL8/SHLL16` as one family + vector tests. (`S`, `D-ALU`, `D-TEST`)
 36. [x] Implement `SHLR2/SHLR8/SHLR16` as one family + vector tests. (`S`, `D-ALU`, `D-TEST`)
 37. [x] Implement `SHAL/SHAR` (arithmetic shifts) + `T`-bit behavior tests. (`M`, `D-ALU`, `D-TEST`)
@@ -203,18 +201,16 @@
 39. [x] Implement `ROTCL/ROTCR` (rotate through carry) + vector tests. (`M`, `D-ALU`, `D-TEST`)
 40. [x] Implement `SHAD/SHLD` (variable shifts) + vector tests for negative/large shift counts. (`L`, `D-ALU`, `D-TEST`)
 
-
-
 ---
 
 ### Group 7 (P1): Multiply/Divide Instruction Family
 
-41. [ ] Implement `MULS.W` + `MULU.W` as one family task + tests. (`M`, `D-ALU`, `D-TEST`)
-42. [ ] Implement `DMULS.L` into `MACH:MACL` + tests. (`L`, `D-ALU`, `D-TEST`)
-43. [ ] Implement `DMULU.L` into `MACH:MACL` + tests. (`L`, `D-ALU`, `D-TEST`)
-44. [ ] Implement `DIV0U` + `DIV0S` + tests (status bit behavior). (`M`, `D-ALU`, `D-TEST`)
-45. [ ] Implement `DIV1` deterministic step semantics + focused vector tests. (`L`, `D-ALU`, `D-TEST`)
-46. [ ] Add `MAC.W/MAC.L` plan: either implement minimal deterministic behavior or explicitly `ILLEGAL_OP` with TODO + tests. (`M`, `D-ALU`, `D-TEST`)
+41. [x] Implement `MULS.W` + `MULU.W` as one family task + tests. (`M`, `D-ALU`, `D-TEST`)
+42. [x] Implement `DMULS.L` into `MACH:MACL` + tests. (`L`, `D-ALU`, `D-TEST`)
+43. [x] Implement `DMULU.L` into `MACH:MACL` + tests. (`L`, `D-ALU`, `D-TEST`)
+44. [x] Implement `DIV0U` + `DIV0S` + tests (status bit behavior). (`M`, `D-ALU`, `D-TEST`)
+45. [x] Implement `DIV1` deterministic step semantics + focused vector tests. (`L`, `D-ALU`, `D-TEST`)
+46. [x] Add `MAC.W/MAC.L` plan: either implement minimal deterministic behavior or explicitly `ILLEGAL_OP` with TODO + tests. (`M`, `D-ALU`, `D-TEST`)
 
 ---
 
