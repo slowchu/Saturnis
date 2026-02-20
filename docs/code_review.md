@@ -4,6 +4,12 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 9 (memory ordering + determinism validation) implementation review
+- Added deterministic mixed-width same-address overwrite regressions for newly added system-transfer stack paths (`STC.L` payload overwritten by byte/word stores before `LDC.L` restore).
+- Added focused aliasing coverage for post-increment and pre-decrement edge cases, including `MOV.B/W/L @Rm+,Rn (m==n)` and explicit current-model behavior for `MOV.L Rn,@-Rn` aliasing.
+- Added deterministic contention/stall validations for overlapping long accesses and dual-CPU overlapping-width writes.
+- Added trace-stability checks for new Group 8 transfer paths and a long-prefix (64-line) stability check over a transfer stress fixture.
+
 ### 2026-02-19 Group 8 (system/register transfer completeness) implementation review
 - Implemented stack-form system and accumulator transfers in SH-2 pipeline:
   1. `STC.L SR/GBR/VBR,@-Rn`.

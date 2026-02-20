@@ -109,12 +109,12 @@ Legend:
 
 ## Group 9 (P1): Memory Ordering + Determinism Validation (6)
 
-53. [ ] Expand mixed-width same-address overwrite matrix for newly added forms. (`M`, deps: D-MEM, D-TEST)
-54. [ ] Add aliasing tests (`m == n`) for all post-inc/pre-dec forms (incl. `MOV.{B/W/L} @Rm+,Rn`). (`S`, deps: D-MEM, D-TEST)
-55. [ ] Add dual-CPU contention tests for overlapping SH-2 memory writes (same addr, different widths). (`M`, deps: D-MEM, D-TEST)
-56. [ ] Add deterministic stall-distribution assertions for any new blocking ops (if stall model is used). (`S`, deps: D-MEM, D-TEST)
-57. [ ] Add byte-identical trace stability tests over repeated runs (ST vs MT) for new op paths. (`S`, deps: D-TEST)
-58. [ ] Add long-prefix commit stability checks (64+ lines) for SH-2 stress fixtures. (`M`, deps: D-TEST)
+53. [x] Expand mixed-width same-address overwrite matrix for newly added forms. (`M`, deps: D-MEM, D-TEST)
+54. [x] Add aliasing tests (`m == n`) for all post-inc/pre-dec forms (incl. `MOV.{B/W/L} @Rm+,Rn`). (`S`, deps: D-MEM, D-TEST)
+55. [x] Add dual-CPU contention tests for overlapping SH-2 memory writes (same addr, different widths). (`M`, deps: D-MEM, D-TEST)
+56. [x] Add deterministic stall-distribution assertions for any new blocking ops (if stall model is used). (`S`, deps: D-MEM, D-TEST)
+57. [x] Add byte-identical trace stability tests over repeated runs (ST vs MT) for new op paths. (`S`, deps: D-TEST)
+58. [x] Add long-prefix commit stability checks (64+ lines) for SH-2 stress fixtures. (`M`, deps: D-TEST)
 
 ---
 
