@@ -7,6 +7,12 @@ namespace {
 constexpr std::uint32_t kSrTBit = 0x00000001U;
 constexpr std::uint32_t kSrQBit = 0x00000100U;
 constexpr std::uint32_t kSrMBit = 0x00000200U;
+constexpr std::uint32_t kLoadAuxPr = 1U;
+constexpr std::uint32_t kLoadAuxSr = 2U;
+constexpr std::uint32_t kLoadAuxGbr = 3U;
+constexpr std::uint32_t kLoadAuxVbr = 4U;
+constexpr std::uint32_t kLoadAuxMach = 5U;
+constexpr std::uint32_t kLoadAuxMacl = 6U;
 
 [[nodiscard]] constexpr std::uint32_t u32_add(std::uint32_t a, std::uint32_t b) {
   return a + b;
@@ -426,6 +432,20 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
     const std::uint32_t n = (instr >> 8U) & 0x0FU;
     write_reg(n, vbr_);
     pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4003U || (instr & 0xF0FFU) == 0x4013U || (instr & 0xF0FFU) == 0x4023U ||
+             (instr & 0xF0FFU) == 0x4002U || (instr & 0xF0FFU) == 0x4012U) {
+    // STC/STS.L <sys>,@-Rn stack push forms.
+    const std::uint32_t n = (instr >> 8U) & 0x0FU;
+    r_[n] = u32_sub(r_[n], 4U);
+    const std::uint32_t addr = mem::to_phys(r_[n]);
+    std::uint32_t value = 0U;
+    if ((instr & 0xF0FFU) == 0x4003U) value = sr_;
+    else if ((instr & 0xF0FFU) == 0x4013U) value = gbr_;
+    else if ((instr & 0xF0FFU) == 0x4023U) value = vbr_;
+    else if ((instr & 0xF0FFU) == 0x4002U) value = mach_;
+    else value = macl_;
+    pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, addr, 4U, value, 0U, std::nullopt, 0U, 0U};
+    pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x401EU) {
     const std::uint32_t m = (instr >> 8U) & 0x0FU;
     gbr_ = r_[m];
@@ -437,6 +457,18 @@ void SH2Core::execute_instruction(std::uint16_t instr, core::TraceLog &trace, bo
   } else if ((instr & 0xF0FFU) == 0x0002U) {
     const std::uint32_t n = decode::field_n(instr);
     write_reg(n, sr_);
+    pc_ += 2U;
+  } else if ((instr & 0xF0FFU) == 0x4026U || (instr & 0xF0FFU) == 0x4007U || (instr & 0xF0FFU) == 0x4017U ||
+             (instr & 0xF0FFU) == 0x4027U || (instr & 0xF0FFU) == 0x4006U || (instr & 0xF0FFU) == 0x4016U) {
+    const std::uint32_t m = (instr >> 8U) & 0x0FU;
+    const std::uint32_t addr = mem::to_phys(r_[m]);
+    pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, addr, 4U, 0U, 0U, m, 4U, r_[m]};
+    if ((instr & 0xF0FFU) == 0x4026U) pending_mem_op_->aux = kLoadAuxPr;
+    else if ((instr & 0xF0FFU) == 0x4007U) pending_mem_op_->aux = kLoadAuxSr;
+    else if ((instr & 0xF0FFU) == 0x4017U) pending_mem_op_->aux = kLoadAuxGbr;
+    else if ((instr & 0xF0FFU) == 0x4027U) pending_mem_op_->aux = kLoadAuxVbr;
+    else if ((instr & 0xF0FFU) == 0x4006U) pending_mem_op_->aux = kLoadAuxMach;
+    else pending_mem_op_->aux = kLoadAuxMacl;
     pc_ += 2U;
   } else if ((instr & 0xF0FFU) == 0x402EU) {
     const std::uint32_t m = (instr >> 8U) & 0x0FU;
@@ -673,19 +705,33 @@ Sh2ProduceResult SH2Core::produce_until_bus(std::uint64_t seq, core::TraceLog &t
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, true), addr, 4U, r_[m]};
         return out;
       }
-      if ((instr & 0xF0FFU) == 0x4022U) {
+      if ((instr & 0xF0FFU) == 0x4022U || (instr & 0xF0FFU) == 0x4003U || (instr & 0xF0FFU) == 0x4013U ||
+          (instr & 0xF0FFU) == 0x4023U || (instr & 0xF0FFU) == 0x4002U || (instr & 0xF0FFU) == 0x4012U) {
         n = (instr >> 8U) & 0x0FU;
         r_[n] = u32_sub(r_[n], 4U);
         const std::uint32_t addr = mem::to_phys(r_[n]);
-        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, addr, 4U, pr_, 0U, std::nullopt, 0U, 0U};
-        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, true), addr, 4U, pr_};
+        std::uint32_t value = 0U;
+        if ((instr & 0xF0FFU) == 0x4022U) value = pr_;
+        else if ((instr & 0xF0FFU) == 0x4003U) value = sr_;
+        else if ((instr & 0xF0FFU) == 0x4013U) value = gbr_;
+        else if ((instr & 0xF0FFU) == 0x4023U) value = vbr_;
+        else if ((instr & 0xF0FFU) == 0x4002U) value = mach_;
+        else value = macl_;
+        pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::WriteLong, addr, 4U, value, 0U, std::nullopt, 0U, 0U};
+        out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, true), addr, 4U, value};
         return out;
       }
-      if ((instr & 0xF0FFU) == 0x4026U) {
+      if ((instr & 0xF0FFU) == 0x4026U || (instr & 0xF0FFU) == 0x4007U || (instr & 0xF0FFU) == 0x4017U ||
+          (instr & 0xF0FFU) == 0x4027U || (instr & 0xF0FFU) == 0x4006U || (instr & 0xF0FFU) == 0x4016U) {
         m = (instr >> 8U) & 0x0FU;
         const std::uint32_t addr = mem::to_phys(r_[m]);
         pending_mem_op_ = PendingMemOp{PendingMemOp::Kind::ReadLong, addr, 4U, 0U, 0U, m, 4U, r_[m]};
-        pending_mem_op_->aux = 1U;
+        if ((instr & 0xF0FFU) == 0x4026U) pending_mem_op_->aux = kLoadAuxPr;
+        else if ((instr & 0xF0FFU) == 0x4007U) pending_mem_op_->aux = kLoadAuxSr;
+        else if ((instr & 0xF0FFU) == 0x4017U) pending_mem_op_->aux = kLoadAuxGbr;
+        else if ((instr & 0xF0FFU) == 0x4027U) pending_mem_op_->aux = kLoadAuxVbr;
+        else if ((instr & 0xF0FFU) == 0x4006U) pending_mem_op_->aux = kLoadAuxMach;
+        else pending_mem_op_->aux = kLoadAuxMacl;
         out.op = bus::BusOp{cpu_id_, t_, seq, data_access_kind(addr, false), addr, 4U, 0U};
         return out;
       }
@@ -978,8 +1024,18 @@ void SH2Core::apply_ifetch_and_step(const bus::BusResponse &response, core::Trac
       trace.add_state(core::CpuSnapshot{t_, cpu_id_, pc_, sr_, r_});
       return;
     } else if (pending.kind == PendingMemOp::Kind::ReadLong) {
-      if (pending.aux == 1U) {
+      if (pending.aux == kLoadAuxPr) {
         pr_ = response.value;
+      } else if (pending.aux == kLoadAuxSr) {
+        sr_ = response.value;
+      } else if (pending.aux == kLoadAuxGbr) {
+        gbr_ = response.value;
+      } else if (pending.aux == kLoadAuxVbr) {
+        vbr_ = response.value;
+      } else if (pending.aux == kLoadAuxMach) {
+        mach_ = response.value;
+      } else if (pending.aux == kLoadAuxMacl) {
+        macl_ = response.value;
       } else {
         r_[pending.dst_reg] = response.value;
       }

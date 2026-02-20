@@ -3809,6 +3809,402 @@ void run_sh2_alu_reference_vector(const Sh2AluReferenceVector &vec) {
   check(((core.sr() & 1U) != 0U) == vec.expected_t,
         std::string("ALU reference vector failed: ") + vec.name + " (T-bit mismatch)");
 }
+
+void test_p1_sh2_system_transfer_stack_forms_sr_gbr_vbr_mach_macl() {
+  // SR stack-form roundtrip.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE160U); // MOV #0x60,R1
+    mem.write(0x0002U, 2U, 0x4103U); // STC.L SR,@-R1
+    mem.write(0x0004U, 2U, 0xE200U); // MOV #0,R2
+    mem.write(0x0006U, 2U, 0x420EU); // LDC R2,SR
+    mem.write(0x0008U, 2U, 0x4107U); // LDC.L @R1+,SR
+    mem.write(0x000AU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 14; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+    check(core.sr() == 0x000000F0U, "STC.L/LDC.L SR stack forms should roundtrip SR deterministically");
+    check(core.reg(1) == 0x00000060U,
+          "STC.L/LDC.L SR stack forms should preserve pointer post-increment roundtrip");
+  }
+
+  // MACH/MACL stack-form roundtrip.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE770U); // MOV #0x70,R7
+    mem.write(0x0002U, 2U, 0xE540U); // MOV #0x40,R5
+    mem.write(0x0004U, 2U, 0xE67FU); // MOV #0x7F,R6
+    mem.write(0x0006U, 2U, 0x450AU); // LDS R5,MACH
+    mem.write(0x0008U, 2U, 0x461AU); // LDS R6,MACL
+    mem.write(0x000AU, 2U, 0x4702U); // STS.L MACH,@-R7
+    mem.write(0x000CU, 2U, 0x4712U); // STS.L MACL,@-R7
+    mem.write(0x000EU, 2U, 0xE200U); // MOV #0,R2
+    mem.write(0x0010U, 2U, 0x420AU); // LDS R2,MACH
+    mem.write(0x0012U, 2U, 0x421AU); // LDS R2,MACL
+    mem.write(0x0014U, 2U, 0x4716U); // LDS.L @R7+,MACL
+    mem.write(0x0016U, 2U, 0x4706U); // LDS.L @R7+,MACH
+    mem.write(0x0018U, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 30; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+    check(core.mach() == 0x00000040U,
+          "STS.L/LDS.L MACH stack form should restore MACH deterministically");
+    check(core.macl() == 0x0000007FU,
+          "STS.L/LDS.L MACL stack form should restore MACL deterministically");
+    check(core.reg(7) == 0x00000070U,
+          "STS.L/LDS.L MACH/MACL stack forms should preserve pointer roundtrip");
+  }
+
+  // GBR/VBR register-transfer roundtrip.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE312U); // MOV #0x12,R3
+    mem.write(0x0002U, 2U, 0x431EU); // LDC R3,GBR
+    mem.write(0x0004U, 2U, 0xE423U); // MOV #0x23,R4
+    mem.write(0x0006U, 2U, 0x442EU); // LDC R4,VBR
+    mem.write(0x0008U, 2U, 0x0312U); // STC GBR,R3
+    mem.write(0x000AU, 2U, 0x0422U); // STC VBR,R4
+    mem.write(0x000CU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 12; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+    check(core.reg(3) == 0x00000012U && core.reg(4) == 0x00000023U,
+          "STC/LDC GBR/VBR register-transfer forms should roundtrip deterministically");
+  }
+}
+
+void test_p1_sh2_system_transfer_reset_and_non_target_invariance_suite() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0202U); // STC SR,R2
+  mem.write(0x0002U, 2U, 0x0312U); // STC GBR,R3
+  mem.write(0x0004U, 2U, 0x0422U); // STC VBR,R4
+  mem.write(0x0006U, 2U, 0x050AU); // STS MACH,R5
+  mem.write(0x0008U, 2U, 0x061AU); // STS MACL,R6
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0xA5A5A5A5U);
+  for (int i = 0; i < 5; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(2) == 0x000000F0U, "reset-state SR should be observable through STC SR,Rn");
+  check(core.reg(3) == 0U && core.reg(4) == 0U && core.reg(5) == 0U && core.reg(6) == 0U,
+        "reset-state system/accumulator registers should be zero-observable via transfer ops");
+  check(core.pr() == 0xA5A5A5A5U && core.reg(1) == 0U,
+        "system transfer ops should preserve non-target invariants for PR and unrelated GPRs");
+}
+
+void test_p1_sh2_group9_mixed_width_overwrite_matrix_for_system_stack_forms() {
+  struct Case {
+    std::uint16_t overwrite_op;
+    std::uint8_t r0_imm;
+    std::uint32_t expected_sr;
+    const char *name;
+  };
+
+  const std::array<Case, 2> cases{{
+      {0x2100U, 0x33U, 0x330000F0U, "byte overwrite over STC.L SR payload should be deterministic"},
+      {0x2101U, 0xFEU, 0xFFFE00F0U, "word overwrite over STC.L SR payload should be deterministic"},
+  }};
+
+  for (const auto &tc : cases) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE17CU); // MOV #0x7C,R1
+    mem.write(0x0002U, 2U, 0x4103U); // STC.L SR,@-R1 -> [0x78]
+    mem.write(0x0004U, 2U, static_cast<std::uint16_t>(0xE000U | tc.r0_imm)); // MOV #imm,R0
+    mem.write(0x0006U, 2U, tc.overwrite_op); // MOV.B/W R0,@R1 (same address)
+    mem.write(0x0008U, 2U, 0xE200U); // MOV #0,R2
+    mem.write(0x000AU, 2U, 0x420EU); // LDC R2,SR
+    mem.write(0x000CU, 2U, 0x4107U); // LDC.L @R1+,SR
+    mem.write(0x000EU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 18U; ++i) core.step(arbiter, trace, i);
+
+    check(core.sr() == tc.expected_sr, std::string("mixed-width same-address overwrite matrix: ") + tc.name);
+    check(core.reg(1) == 0x0000007CU,
+          "mixed-width same-address overwrite matrix should preserve STC.L/LDC.L pointer roundtrip");
+  }
+}
+
+void test_p1_sh2_group9_aliasing_post_inc_pre_dec_forms() {
+  // Post-increment aliasing matrix for MOV.{B/W/L} @Rm+,Rn with m == n.
+  struct AliasCase {
+    std::uint16_t op;
+    std::uint32_t expected;
+    const char *name;
+  };
+  const std::array<AliasCase, 3> alias_cases{{
+      {0x6114U, 0xFFFFFF80U, "aliasing matrix: MOV.B @R1+,R1 should sign-extend and skip increment when m==n"},
+      {0x6115U, 0xFFFF80FFU, "aliasing matrix: MOV.W @R1+,R1 should sign-extend and skip increment when m==n"},
+      {0x6116U, 0x80FF7F01U, "aliasing matrix: MOV.L @R1+,R1 should load longword and skip increment when m==n"},
+  }};
+  for (const auto &tc : alias_cases) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, tc.op);
+    mem.write(0x0040U, 4U, 0x80FF7F01U);
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 6U; ++i) core.step(arbiter, trace, i);
+
+    check(core.reg(1) == tc.expected, tc.name);
+  }
+
+  // Pre-decrement aliasing behavior for MOV.L R1,@-R1 (n == m) should remain deterministic.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0x2116U); // MOV.L R1,@-R1 (alias n==m)
+    mem.write(0x0004U, 2U, 0x6112U); // MOV.L @R1,R1
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 8U; ++i) core.step(arbiter, trace, i);
+
+    check(core.reg(1) == 0x0000003CU,
+          "aliasing matrix: MOV.L R1,@-R1 should deterministically store/load decremented pointer in current model");
+    check(mem.read(0x003CU, 4U) == 0x0000003CU,
+          "aliasing matrix: pre-decrement alias store payload should be deterministic at decremented address");
+  }
+}
+
+void test_p1_sh2_group9_dual_cpu_overlapping_write_contention_determinism() {
+  auto run_once = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    const saturnis::bus::BusOp cpu0_long{0, 0U, 0U, saturnis::bus::BusKind::Write, 0x20000020U, 4U, 0x11223344U};
+    const saturnis::bus::BusOp cpu1_byte{1, 0U, 1U, saturnis::bus::BusKind::Write, 0x20000020U, 1U, 0xAAU};
+    const auto committed = arbiter.commit_batch({cpu0_long, cpu1_byte});
+
+    return std::make_tuple(committed, mem.read(0x20000020U, 4U));
+  };
+
+  const auto [first_committed, first_value] = run_once();
+  const auto [second_committed, second_value] = run_once();
+
+  check(first_committed.size() == 2U && second_committed.size() == 2U,
+        "dual-CPU overlapping-write contention should commit both writes in one deterministic batch");
+  check(first_committed[0].op.cpu_id == second_committed[0].op.cpu_id &&
+            first_committed[1].op.cpu_id == second_committed[1].op.cpu_id,
+        "dual-CPU overlapping-write contention winner ordering should be deterministic across runs");
+  check(first_value == second_value,
+        "dual-CPU overlapping-write contention final memory value should be deterministic across runs");
+}
+
+void test_p1_sh2_group9_stall_distribution_for_new_stack_transfer_reads_is_deterministic() {
+  auto run_once = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    const saturnis::bus::BusOp cpu0_read{0, 0U, 0U, saturnis::bus::BusKind::Read, 0x20000080U, 4U, 0U};
+    const saturnis::bus::BusOp cpu1_read{1, 0U, 1U, saturnis::bus::BusKind::Read, 0x20000080U, 4U, 0U};
+    const auto committed = arbiter.commit_batch({cpu0_read, cpu1_read});
+    check(committed.size() == 2U,
+          "stall-distribution guard should have two committed overlapping long reads for comparison");
+    return std::make_pair(committed[0].response.stall, committed[1].response.stall);
+  };
+
+  const auto first = run_once();
+  const auto second = run_once();
+
+  check(first == second,
+        "stall-distribution for overlapping long reads (stack-transfer analogue) should be deterministic across runs");
+}
+
+void test_p1_sh2_group9_trace_stability_for_new_system_transfer_paths() {
+  auto run_trace = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE17CU); // MOV #0x7C,R1
+    mem.write(0x0002U, 2U, 0x4103U); // STC.L SR,@-R1
+    mem.write(0x0004U, 2U, 0xE332U); // MOV #0x32,R3
+    mem.write(0x0006U, 2U, 0x431EU); // LDC R3,GBR
+    mem.write(0x0008U, 2U, 0x4113U); // STC.L GBR,@-R1
+    mem.write(0x000AU, 2U, 0x4117U); // LDC.L @R1+,GBR
+    mem.write(0x000CU, 2U, 0x4107U); // LDC.L @R1+,SR
+    mem.write(0x000EU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 24U; ++i) core.step(arbiter, trace, i);
+
+    return trace.to_jsonl();
+  };
+
+  const auto a = run_trace();
+  const auto b = run_trace();
+  check(a == b,
+        "new system-transfer stack/register paths should produce byte-identical traces across repeated runs");
+}
+
+void test_p1_sh2_group9_long_prefix_commit_stability_for_transfer_stress_fixture() {
+  auto run_trace = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE17CU); // MOV #0x7C,R1
+    for (std::uint32_t i = 0U; i < 24U; ++i) {
+      const std::uint32_t pc = 0x0002U + (i * 8U);
+      mem.write(pc + 0U, 2U, 0x4103U); // STC.L SR,@-R1
+      mem.write(pc + 2U, 2U, 0x4107U); // LDC.L @R1+,SR
+      mem.write(pc + 4U, 2U, 0x0009U); // NOP
+      mem.write(pc + 6U, 2U, 0x0009U); // NOP
+    }
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 220U; ++i) core.step(arbiter, trace, i);
+
+    return trace.to_jsonl();
+  };
+
+  auto prefix64 = [](const std::string &jsonl) {
+    std::string out;
+    std::size_t start = 0U;
+    std::size_t lines = 0U;
+    while (lines < 64U && start < jsonl.size()) {
+      const std::size_t end = jsonl.find('\n', start);
+      if (end == std::string::npos) break;
+      out.append(jsonl, start, (end - start + 1U));
+      start = end + 1U;
+      ++lines;
+    }
+    check(lines == 64U,
+          "long-prefix stability stress fixture should emit at least 64 trace lines for prefix comparison");
+    return out;
+  };
+
+  const auto a = run_trace();
+  const auto b = run_trace();
+  check(prefix64(a) == prefix64(b),
+        "long-prefix commit stability check should keep first 64 SH-2 stress trace lines byte-identical");
+}
+
+void test_p1_sh2_mul_family_muls_mulu_and_dmul_pairs() {
+  // MULS.W / MULU.W
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE1FFU); // MOV #-1,R1
+    mem.write(0x0002U, 2U, 0xE202U); // MOV #2,R2
+    mem.write(0x0004U, 2U, 0x212FU); // MULS.W R2,R1 -> -2
+    mem.write(0x0006U, 2U, 0x212EU); // MULU.W R2,R1 -> 0x0001FFFE
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.macl() == 0x0001FFFEU, "MULS.W/MULU.W family should deterministically update MACL");
+  }
+  // DMULS.L / DMULU.L
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0xE250U); // MOV #0x50,R2
+    mem.write(0x0004U, 2U, 0x6112U); // MOV.L @R1,R1 => 0xFFFFFFFF
+    mem.write(0x0006U, 2U, 0x6222U); // MOV.L @R2,R2 => 0x00000002
+    mem.write(0x0008U, 2U, 0x312DU); // DMULS.L R2,R1 => -2
+    mem.write(0x000AU, 2U, 0x3125U); // DMULU.L R2,R1 => 0x00000001FFFFFFFE
+    mem.write(0x0040U, 4U, 0xFFFFFFFFU);
+    mem.write(0x0050U, 4U, 0x00000002U);
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 6; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.mach() == 0x00000001U && core.macl() == 0xFFFFFFFEU,
+          "DMULS.L/DMULU.L should deterministically update MACH:MACL pair");
+  }
+}
+
+void test_p1_sh2_div0u_div0s_div1_semantics() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0018U); // SETT
+  mem.write(0x0002U, 2U, 0x0019U); // DIV0U (clear Q/M/T)
+  mem.write(0x0004U, 2U, 0xE1FFU); // MOV #-1,R1
+  mem.write(0x0006U, 2U, 0xE201U); // MOV #1,R2
+  mem.write(0x0008U, 2U, 0x2127U); // DIV0S R2,R1
+  mem.write(0x000AU, 2U, 0xE302U); // MOV #2,R3
+  mem.write(0x000CU, 2U, 0x3134U); // DIV1 R3,R1
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 7; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check((core.sr() & 0x00000301U) == 0x00000100U,
+        "DIV0U/DIV0S/DIV1 sequence should deterministically update Q/M/T bits in SR");
+}
+
+void test_p1_sh2_mac_w_l_are_explicit_illegal_with_todo_guard() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x412FU); // representative MAC.W-form encoding (currently unsupported)
+  mem.write(0x0002U, 2U, 0x012FU); // representative MAC.L-form encoding (currently unsupported)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ILLEGAL_OP\"") != std::string::npos,
+        "MAC.W/MAC.L plan guard should remain explicit ILLEGAL_OP until deterministic implementation lands");
+}
+
 void test_p1_sh2_shift_family_shlln_shlrn_vectors() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -5608,6 +6004,17 @@ int main() {
   test_p1_sh2_shift_family_shlln_shlrn_vectors();
   test_p1_sh2_shal_shar_and_rotc_t_bit_behavior();
   test_p1_sh2_shad_shld_variable_shift_vectors();
+  test_p1_sh2_system_transfer_stack_forms_sr_gbr_vbr_mach_macl();
+  test_p1_sh2_system_transfer_reset_and_non_target_invariance_suite();
+  test_p1_sh2_group9_mixed_width_overwrite_matrix_for_system_stack_forms();
+  test_p1_sh2_group9_aliasing_post_inc_pre_dec_forms();
+  test_p1_sh2_group9_dual_cpu_overlapping_write_contention_determinism();
+  test_p1_sh2_group9_stall_distribution_for_new_stack_transfer_reads_is_deterministic();
+  test_p1_sh2_group9_trace_stability_for_new_system_transfer_paths();
+  test_p1_sh2_group9_long_prefix_commit_stability_for_transfer_stress_fixture();
+  test_p1_sh2_mul_family_muls_mulu_and_dmul_pairs();
+  test_p1_sh2_div0u_div0s_div1_semantics();
+  test_p1_sh2_mac_w_l_are_explicit_illegal_with_todo_guard();
   test_p1_sh2_addc_addv_negc_semantics();
   test_p1_sh2_subc_subv_borrow_and_overflow_chains();
   test_p1_sh2_sr_t_bit_side_effect_audit_for_core_alu_ops();

@@ -216,23 +216,23 @@
 
 ### Group 8 (P1): System/Register Transfer Completeness
 
-47. [ ] Implement `STC.L SR,@-Rn` (push SR) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
-48. [ ] Implement `LDC.L @Rm+,SR` (pop SR) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
-49. [ ] Implement `STC/LDC GBR` forms (+ `.L` stack forms if needed) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
-50. [ ] Implement `STC/LDC VBR` forms (+ `.L` stack forms if needed) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
-51. [ ] Implement `STS/LDS MACH/MACL` forms (+ `.L` stack forms if needed) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
-52. [ ] Add reset-state + non-target invariance test suite for all system/accumulator transfers. (`S`, `D-TEST`)
+47. [x] Implement `STC.L SR,@-Rn` (push SR) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
+48. [x] Implement `LDC.L @Rm+,SR` (pop SR) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
+49. [x] Implement `STC/LDC GBR` forms (+ `.L` stack forms if needed) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
+50. [x] Implement `STC/LDC VBR` forms (+ `.L` stack forms if needed) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
+51. [x] Implement `STS/LDS MACH/MACL` forms (+ `.L` stack forms if needed) + tests. (`M`, `D-EXC`, `D-MEM`, `D-TEST`)
+52. [x] Add reset-state + non-target invariance test suite for all system/accumulator transfers. (`S`, `D-TEST`)
 
 ---
 
 ### Group 9 (P1): Memory Ordering + Determinism Validation
 
-53. [ ] Expand mixed-width same-address overwrite matrix for newly added forms. (`M`, `D-MEM`, `D-TEST`)
-54. [ ] Add aliasing tests (`m == n`) for all post-inc/pre-dec forms (incl. `MOV.{B/W/L} @Rm+,Rn`). (`S`, `D-MEM`, `D-TEST`)
-55. [ ] Add dual-CPU contention tests for overlapping SH-2 memory writes (same addr, different widths). (`M`, `D-MEM`, `D-TEST`)
-56. [ ] Add deterministic stall-distribution assertions for any new blocking ops (if stall model is used). (`S`, `D-MEM`, `D-TEST`)
-57. [ ] Add byte-identical trace stability tests over repeated runs (ST vs MT) for new op paths. (`S`, `D-TEST`)
-58. [ ] Add long-prefix commit stability checks (64+ lines) for SH-2 stress fixtures. (`M`, `D-TEST`)
+53. [x] Expand mixed-width same-address overwrite matrix for newly added forms. (`M`, `D-MEM`, `D-TEST`)
+54. [x] Add aliasing tests (`m == n`) for all post-inc/pre-dec forms (incl. `MOV.{B/W/L} @Rm+,Rn`). (`S`, `D-MEM`, `D-TEST`)
+55. [x] Add dual-CPU contention tests for overlapping SH-2 memory writes (same addr, different widths). (`M`, `D-MEM`, `D-TEST`)
+56. [x] Add deterministic stall-distribution assertions for any new blocking ops (if stall model is used). (`S`, `D-MEM`, `D-TEST`)
+57. [x] Add byte-identical trace stability tests over repeated runs (ST vs MT) for new op paths. (`S`, `D-TEST`)
+58. [x] Add long-prefix commit stability checks (64+ lines) for SH-2 stress fixtures. (`M`, `D-TEST`)
 
 **Exit criteria (C1–C2):** BIOS checkpoint reached without relying on undefined delay-slot behavior. ISA gaps for selected v1.0 titles (see J-pre matrices) are closed.
 
