@@ -2,9 +2,11 @@
 #include "core/emulator.hpp"
 #include "cpu/scripted_cpu.hpp"
 #include "cpu/sh2_core.hpp"
+#include "cpu/sh2_decode.hpp"
 #include "dev/devices.hpp"
 #include "mem/memory.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
@@ -3770,6 +3772,650 @@ void test_sh2_add_register_updates_destination() {
 
 
 
+
+struct Sh2AluReferenceVector {
+  const char *name;
+  std::vector<std::uint16_t> program;
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> preloads;
+  std::uint64_t steps;
+  std::uint32_t reg_index;
+  std::uint32_t expected_reg;
+  bool expected_t;
+};
+
+void run_sh2_alu_reference_vector(const Sh2AluReferenceVector &vec) {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  std::uint32_t pc = 0U;
+  for (const auto op : vec.program) {
+    mem.write(pc, 2U, op);
+    pc += 2U;
+  }
+  for (const auto &pl : vec.preloads) {
+    mem.write(pl.first, 4U, pl.second);
+  }
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < vec.steps; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(vec.reg_index) == vec.expected_reg,
+        std::string("ALU reference vector failed: ") + vec.name + " (register mismatch)");
+  check(((core.sr() & 1U) != 0U) == vec.expected_t,
+        std::string("ALU reference vector failed: ") + vec.name + " (T-bit mismatch)");
+}
+
+void test_p1_sh2_system_transfer_stack_forms_sr_gbr_vbr_mach_macl() {
+  // SR stack-form roundtrip.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE160U); // MOV #0x60,R1
+    mem.write(0x0002U, 2U, 0x4103U); // STC.L SR,@-R1
+    mem.write(0x0004U, 2U, 0xE200U); // MOV #0,R2
+    mem.write(0x0006U, 2U, 0x420EU); // LDC R2,SR
+    mem.write(0x0008U, 2U, 0x4107U); // LDC.L @R1+,SR
+    mem.write(0x000AU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 14; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+    check(core.sr() == 0x000000F0U, "STC.L/LDC.L SR stack forms should roundtrip SR deterministically");
+    check(core.reg(1) == 0x00000060U,
+          "STC.L/LDC.L SR stack forms should preserve pointer post-increment roundtrip");
+  }
+
+  // MACH/MACL stack-form roundtrip.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE770U); // MOV #0x70,R7
+    mem.write(0x0002U, 2U, 0xE540U); // MOV #0x40,R5
+    mem.write(0x0004U, 2U, 0xE67FU); // MOV #0x7F,R6
+    mem.write(0x0006U, 2U, 0x450AU); // LDS R5,MACH
+    mem.write(0x0008U, 2U, 0x461AU); // LDS R6,MACL
+    mem.write(0x000AU, 2U, 0x4702U); // STS.L MACH,@-R7
+    mem.write(0x000CU, 2U, 0x4712U); // STS.L MACL,@-R7
+    mem.write(0x000EU, 2U, 0xE200U); // MOV #0,R2
+    mem.write(0x0010U, 2U, 0x420AU); // LDS R2,MACH
+    mem.write(0x0012U, 2U, 0x421AU); // LDS R2,MACL
+    mem.write(0x0014U, 2U, 0x4716U); // LDS.L @R7+,MACL
+    mem.write(0x0016U, 2U, 0x4706U); // LDS.L @R7+,MACH
+    mem.write(0x0018U, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 30; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+    check(core.mach() == 0x00000040U,
+          "STS.L/LDS.L MACH stack form should restore MACH deterministically");
+    check(core.macl() == 0x0000007FU,
+          "STS.L/LDS.L MACL stack form should restore MACL deterministically");
+    check(core.reg(7) == 0x00000070U,
+          "STS.L/LDS.L MACH/MACL stack forms should preserve pointer roundtrip");
+  }
+
+  // GBR/VBR register-transfer roundtrip.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE312U); // MOV #0x12,R3
+    mem.write(0x0002U, 2U, 0x431EU); // LDC R3,GBR
+    mem.write(0x0004U, 2U, 0xE423U); // MOV #0x23,R4
+    mem.write(0x0006U, 2U, 0x442EU); // LDC R4,VBR
+    mem.write(0x0008U, 2U, 0x0312U); // STC GBR,R3
+    mem.write(0x000AU, 2U, 0x0422U); // STC VBR,R4
+    mem.write(0x000CU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 12; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+    check(core.reg(3) == 0x00000012U && core.reg(4) == 0x00000023U,
+          "STC/LDC GBR/VBR register-transfer forms should roundtrip deterministically");
+  }
+}
+
+void test_p1_sh2_system_transfer_reset_and_non_target_invariance_suite() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0202U); // STC SR,R2
+  mem.write(0x0002U, 2U, 0x0312U); // STC GBR,R3
+  mem.write(0x0004U, 2U, 0x0422U); // STC VBR,R4
+  mem.write(0x0006U, 2U, 0x050AU); // STS MACH,R5
+  mem.write(0x0008U, 2U, 0x061AU); // STS MACL,R6
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0xA5A5A5A5U);
+  for (int i = 0; i < 5; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(2) == 0x000000F0U, "reset-state SR should be observable through STC SR,Rn");
+  check(core.reg(3) == 0U && core.reg(4) == 0U && core.reg(5) == 0U && core.reg(6) == 0U,
+        "reset-state system/accumulator registers should be zero-observable via transfer ops");
+  check(core.pr() == 0xA5A5A5A5U && core.reg(1) == 0U,
+        "system transfer ops should preserve non-target invariants for PR and unrelated GPRs");
+}
+
+void test_p1_sh2_group9_mixed_width_overwrite_matrix_for_system_stack_forms() {
+  struct Case {
+    std::uint16_t overwrite_op;
+    std::uint8_t r0_imm;
+    std::uint32_t expected_sr;
+    const char *name;
+  };
+
+  const std::array<Case, 2> cases{{
+      {0x2100U, 0x33U, 0x330000F0U, "byte overwrite over STC.L SR payload should be deterministic"},
+      {0x2101U, 0xFEU, 0xFFFE00F0U, "word overwrite over STC.L SR payload should be deterministic"},
+  }};
+
+  for (const auto &tc : cases) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE17CU); // MOV #0x7C,R1
+    mem.write(0x0002U, 2U, 0x4103U); // STC.L SR,@-R1 -> [0x78]
+    mem.write(0x0004U, 2U, static_cast<std::uint16_t>(0xE000U | tc.r0_imm)); // MOV #imm,R0
+    mem.write(0x0006U, 2U, tc.overwrite_op); // MOV.B/W R0,@R1 (same address)
+    mem.write(0x0008U, 2U, 0xE200U); // MOV #0,R2
+    mem.write(0x000AU, 2U, 0x420EU); // LDC R2,SR
+    mem.write(0x000CU, 2U, 0x4107U); // LDC.L @R1+,SR
+    mem.write(0x000EU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 18U; ++i) core.step(arbiter, trace, i);
+
+    check(core.sr() == tc.expected_sr, std::string("mixed-width same-address overwrite matrix: ") + tc.name);
+    check(core.reg(1) == 0x0000007CU,
+          "mixed-width same-address overwrite matrix should preserve STC.L/LDC.L pointer roundtrip");
+  }
+}
+
+void test_p1_sh2_group9_aliasing_post_inc_pre_dec_forms() {
+  // Post-increment aliasing matrix for MOV.{B/W/L} @Rm+,Rn with m == n.
+  struct AliasCase {
+    std::uint16_t op;
+    std::uint32_t expected;
+    const char *name;
+  };
+  const std::array<AliasCase, 3> alias_cases{{
+      {0x6114U, 0xFFFFFF80U, "aliasing matrix: MOV.B @R1+,R1 should sign-extend and skip increment when m==n"},
+      {0x6115U, 0xFFFF80FFU, "aliasing matrix: MOV.W @R1+,R1 should sign-extend and skip increment when m==n"},
+      {0x6116U, 0x80FF7F01U, "aliasing matrix: MOV.L @R1+,R1 should load longword and skip increment when m==n"},
+  }};
+  for (const auto &tc : alias_cases) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, tc.op);
+    mem.write(0x0040U, 4U, 0x80FF7F01U);
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 6U; ++i) core.step(arbiter, trace, i);
+
+    check(core.reg(1) == tc.expected, tc.name);
+  }
+
+  // Pre-decrement aliasing behavior for MOV.L R1,@-R1 (n == m) should remain deterministic.
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0x2116U); // MOV.L R1,@-R1 (alias n==m)
+    mem.write(0x0004U, 2U, 0x6112U); // MOV.L @R1,R1
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 8U; ++i) core.step(arbiter, trace, i);
+
+    check(core.reg(1) == 0x0000003CU,
+          "aliasing matrix: MOV.L R1,@-R1 should deterministically store/load decremented pointer in current model");
+    check(mem.read(0x003CU, 4U) == 0x0000003CU,
+          "aliasing matrix: pre-decrement alias store payload should be deterministic at decremented address");
+  }
+}
+
+void test_p1_sh2_group9_dual_cpu_overlapping_write_contention_determinism() {
+  auto run_once = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    const saturnis::bus::BusOp cpu0_long{0, 0U, 0U, saturnis::bus::BusKind::Write, 0x20000020U, 4U, 0x11223344U};
+    const saturnis::bus::BusOp cpu1_byte{1, 0U, 1U, saturnis::bus::BusKind::Write, 0x20000020U, 1U, 0xAAU};
+    const auto committed = arbiter.commit_batch({cpu0_long, cpu1_byte});
+
+    return std::make_tuple(committed, mem.read(0x20000020U, 4U));
+  };
+
+  const auto [first_committed, first_value] = run_once();
+  const auto [second_committed, second_value] = run_once();
+
+  check(first_committed.size() == 2U && second_committed.size() == 2U,
+        "dual-CPU overlapping-write contention should commit both writes in one deterministic batch");
+  check(first_committed[0].op.cpu_id == second_committed[0].op.cpu_id &&
+            first_committed[1].op.cpu_id == second_committed[1].op.cpu_id,
+        "dual-CPU overlapping-write contention winner ordering should be deterministic across runs");
+  check(first_value == second_value,
+        "dual-CPU overlapping-write contention final memory value should be deterministic across runs");
+}
+
+void test_p1_sh2_group9_stall_distribution_for_new_stack_transfer_reads_is_deterministic() {
+  auto run_once = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    const saturnis::bus::BusOp cpu0_read{0, 0U, 0U, saturnis::bus::BusKind::Read, 0x20000080U, 4U, 0U};
+    const saturnis::bus::BusOp cpu1_read{1, 0U, 1U, saturnis::bus::BusKind::Read, 0x20000080U, 4U, 0U};
+    const auto committed = arbiter.commit_batch({cpu0_read, cpu1_read});
+    check(committed.size() == 2U,
+          "stall-distribution guard should have two committed overlapping long reads for comparison");
+    return std::make_pair(committed[0].response.stall, committed[1].response.stall);
+  };
+
+  const auto first = run_once();
+  const auto second = run_once();
+
+  check(first == second,
+        "stall-distribution for overlapping long reads (stack-transfer analogue) should be deterministic across runs");
+}
+
+void test_p1_sh2_group9_trace_stability_for_new_system_transfer_paths() {
+  auto run_trace = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE17CU); // MOV #0x7C,R1
+    mem.write(0x0002U, 2U, 0x4103U); // STC.L SR,@-R1
+    mem.write(0x0004U, 2U, 0xE332U); // MOV #0x32,R3
+    mem.write(0x0006U, 2U, 0x431EU); // LDC R3,GBR
+    mem.write(0x0008U, 2U, 0x4113U); // STC.L GBR,@-R1
+    mem.write(0x000AU, 2U, 0x4117U); // LDC.L @R1+,GBR
+    mem.write(0x000CU, 2U, 0x4107U); // LDC.L @R1+,SR
+    mem.write(0x000EU, 2U, 0x0009U); // NOP
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 24U; ++i) core.step(arbiter, trace, i);
+
+    return trace.to_jsonl();
+  };
+
+  const auto a = run_trace();
+  const auto b = run_trace();
+  check(a == b,
+        "new system-transfer stack/register paths should produce byte-identical traces across repeated runs");
+}
+
+void test_p1_sh2_group9_long_prefix_commit_stability_for_transfer_stress_fixture() {
+  auto run_trace = []() {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE17CU); // MOV #0x7C,R1
+    for (std::uint32_t i = 0U; i < 24U; ++i) {
+      const std::uint32_t pc = 0x0002U + (i * 8U);
+      mem.write(pc + 0U, 2U, 0x4103U); // STC.L SR,@-R1
+      mem.write(pc + 2U, 2U, 0x4107U); // LDC.L @R1+,SR
+      mem.write(pc + 4U, 2U, 0x0009U); // NOP
+      mem.write(pc + 6U, 2U, 0x0009U); // NOP
+    }
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < 220U; ++i) core.step(arbiter, trace, i);
+
+    return trace.to_jsonl();
+  };
+
+  auto prefix64 = [](const std::string &jsonl) {
+    std::string out;
+    std::size_t start = 0U;
+    std::size_t lines = 0U;
+    while (lines < 64U && start < jsonl.size()) {
+      const std::size_t end = jsonl.find('\n', start);
+      if (end == std::string::npos) break;
+      out.append(jsonl, start, (end - start + 1U));
+      start = end + 1U;
+      ++lines;
+    }
+    check(lines == 64U,
+          "long-prefix stability stress fixture should emit at least 64 trace lines for prefix comparison");
+    return out;
+  };
+
+  const auto a = run_trace();
+  const auto b = run_trace();
+  check(prefix64(a) == prefix64(b),
+        "long-prefix commit stability check should keep first 64 SH-2 stress trace lines byte-identical");
+}
+
+void test_p1_sh2_mul_family_muls_mulu_and_dmul_pairs() {
+  // MULS.W / MULU.W
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE1FFU); // MOV #-1,R1
+    mem.write(0x0002U, 2U, 0xE202U); // MOV #2,R2
+    mem.write(0x0004U, 2U, 0x212FU); // MULS.W R2,R1 -> -2
+    mem.write(0x0006U, 2U, 0x212EU); // MULU.W R2,R1 -> 0x0001FFFE
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.macl() == 0x0001FFFEU, "MULS.W/MULU.W family should deterministically update MACL");
+  }
+  // DMULS.L / DMULU.L
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0xE250U); // MOV #0x50,R2
+    mem.write(0x0004U, 2U, 0x6112U); // MOV.L @R1,R1 => 0xFFFFFFFF
+    mem.write(0x0006U, 2U, 0x6222U); // MOV.L @R2,R2 => 0x00000002
+    mem.write(0x0008U, 2U, 0x312DU); // DMULS.L R2,R1 => -2
+    mem.write(0x000AU, 2U, 0x3125U); // DMULU.L R2,R1 => 0x00000001FFFFFFFE
+    mem.write(0x0040U, 4U, 0xFFFFFFFFU);
+    mem.write(0x0050U, 4U, 0x00000002U);
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 6; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.mach() == 0x00000001U && core.macl() == 0xFFFFFFFEU,
+          "DMULS.L/DMULU.L should deterministically update MACH:MACL pair");
+  }
+}
+
+void test_p1_sh2_div0u_div0s_div1_semantics() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0018U); // SETT
+  mem.write(0x0002U, 2U, 0x0019U); // DIV0U (clear Q/M/T)
+  mem.write(0x0004U, 2U, 0xE1FFU); // MOV #-1,R1
+  mem.write(0x0006U, 2U, 0xE201U); // MOV #1,R2
+  mem.write(0x0008U, 2U, 0x2127U); // DIV0S R2,R1
+  mem.write(0x000AU, 2U, 0xE302U); // MOV #2,R3
+  mem.write(0x000CU, 2U, 0x3134U); // DIV1 R3,R1
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 7; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check((core.sr() & 0x00000301U) == 0x00000100U,
+        "DIV0U/DIV0S/DIV1 sequence should deterministically update Q/M/T bits in SR");
+}
+
+void test_p1_sh2_mac_w_l_are_explicit_illegal_with_todo_guard() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x412FU); // representative MAC.W-form encoding (currently unsupported)
+  mem.write(0x0002U, 2U, 0x012FU); // representative MAC.L-form encoding (currently unsupported)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ILLEGAL_OP\"") != std::string::npos,
+        "MAC.W/MAC.L plan guard should remain explicit ILLEGAL_OP until deterministic implementation lands");
+}
+
+void test_p1_sh2_shift_family_shlln_shlrn_vectors() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE101U); // MOV #1,R1
+  mem.write(0x0002U, 2U, 0x4108U); // SHLL2 R1 -> 4
+  mem.write(0x0004U, 2U, 0x4118U); // SHLL8 R1 -> 0x400
+  mem.write(0x0006U, 2U, 0x4128U); // SHLL16 R1 -> 0x04000000
+  mem.write(0x0008U, 2U, 0xE240U); // MOV #0x40,R2
+  mem.write(0x000AU, 2U, 0x6222U); // MOV.L @R2,R2 (0x80000000)
+  mem.write(0x000CU, 2U, 0x4209U); // SHLR2 R2
+  mem.write(0x000EU, 2U, 0x4219U); // SHLR8 R2
+  mem.write(0x0010U, 2U, 0x4229U); // SHLR16 R2
+  mem.write(0x0040U, 4U, 0x80000000U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 9; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(1) == 0x04000000U, "SHLL2/8/16 family should apply deterministic fixed left shifts");
+  check(core.reg(2) == 0x00000020U, "SHLR2/8/16 family should apply deterministic fixed right shifts");
+}
+
+void test_p1_sh2_shal_shar_and_rotc_t_bit_behavior() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+  mem.write(0x0002U, 2U, 0x6112U); // MOV.L @R1,R1 => 0x80000001
+  mem.write(0x0004U, 2U, 0x4120U); // SHAL R1 (T=old msb=1)
+  mem.write(0x0006U, 2U, 0x0018U); // SETT
+  mem.write(0x0008U, 2U, 0x4125U); // ROTCR R1 (T=old lsb)
+  mem.write(0x000AU, 2U, 0x4124U); // ROTCL R1
+  mem.write(0x000CU, 2U, 0x4121U); // SHAR R1
+  mem.write(0x0040U, 4U, 0x80000001U);
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 7; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check((core.sr() & 1U) == 0U, "SHAL/ROTCL/ROTCR/SHAR sequence should keep deterministic T-bit transitions");
+  check(core.reg(1) == 0x00000001U, "SHAL/SHAR and rotate-through-carry sequence should be deterministic");
+}
+
+void test_p1_sh2_shad_shld_variable_shift_vectors() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE101U); // MOV #1,R1
+  mem.write(0x0002U, 2U, 0xE302U); // MOV #2,R3
+  mem.write(0x0004U, 2U, 0x413CU); // SHAD R3,R1 => 4
+  mem.write(0x0006U, 2U, 0xE4FCU); // MOV #-4,R4
+  mem.write(0x0008U, 2U, 0x414CU); // SHAD R4,R1 => arithmetic >>4 => 0
+  mem.write(0x000AU, 2U, 0xE510U); // MOV #16,R5
+  mem.write(0x000CU, 2U, 0x415DU); // SHLD R5,R1 => 0
+  mem.write(0x000EU, 2U, 0xE6F8U); // MOV #-8,R6
+  mem.write(0x0010U, 2U, 0x416DU); // SHLD R6,R1 => logical >>8 => 0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (int i = 0; i < 9; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+
+  check(core.reg(1) == 0U, "SHAD/SHLD variable shifts should deterministically handle positive and negative shift counts");
+}
+
+void test_p1_sh2_addc_addv_negc_semantics() {
+  // ADDC carry-in/carry-out
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE1FFU); // MOV #-1,R1
+    mem.write(0x0002U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0004U, 2U, 0x0018U); // SETT
+    mem.write(0x0006U, 2U, 0x312EU); // ADDC R2,R1
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(1) == 1U && ((core.sr() & 1U) != 0U),
+          "ADDC should include carry-in and set T on carry-out");
+  }
+
+  // ADDV signed overflow
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0x6112U); // MOV.L @R1,R1
+    mem.write(0x0004U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0006U, 2U, 0x312FU); // ADDV R2,R1
+    mem.write(0x0040U, 4U, 0x7FFFFFFFU);
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(1) == 0x80000000U && ((core.sr() & 1U) != 0U),
+          "ADDV should set T on signed overflow");
+  }
+
+  // NEGC borrow semantics
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0002U, 2U, 0x0018U); // SETT
+    mem.write(0x0004U, 2U, 0x632AU); // NEGC R2,R3
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 3; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(3) == 0xFFFFFFFEU && ((core.sr() & 1U) != 0U),
+          "NEGC should compute 0 - Rm - T and set T as borrow indicator");
+  }
+}
+
+void test_p1_sh2_subc_subv_borrow_and_overflow_chains() {
+  // SUBC borrow chain
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE300U); // MOV #0,R3
+    mem.write(0x0002U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0004U, 2U, 0x332AU); // SUBC R2,R3 => -1, T=1
+    mem.write(0x0006U, 2U, 0x332AU); // SUBC R2,R3 => -3, T=1
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(3) == 0xFFFFFFFDU && ((core.sr() & 1U) == 0U),
+          "SUBC borrow chain should deterministically propagate carry-in borrow across steps");
+  }
+
+  // SUBV overflow chain
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xE140U); // MOV #0x40,R1
+    mem.write(0x0002U, 2U, 0x6112U); // MOV.L @R1,R1 (0x80000000)
+    mem.write(0x0004U, 2U, 0xE201U); // MOV #1,R2
+    mem.write(0x0006U, 2U, 0x312BU); // SUBV R2,R1 => overflow (0x80000000 - 1)
+    mem.write(0x0040U, 4U, 0x80000000U);
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (int i = 0; i < 4; ++i) core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.reg(1) == 0x7FFFFFFFU && ((core.sr() & 1U) != 0U),
+          "SUBV should deterministically set T on signed overflow boundary transitions");
+  }
+}
+
+void test_p1_sh2_sr_t_bit_side_effect_audit_for_core_alu_ops() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0018U); // SETT
+  mem.write(0x0002U, 2U, 0xE1F0U); // MOV #-16,R1
+  mem.write(0x0004U, 2U, 0xE20FU); // MOV #15,R2
+  mem.write(0x0006U, 2U, 0x2129U); // AND R2,R1 (should preserve T)
+  mem.write(0x0008U, 2U, 0x212AU); // XOR R2,R1 (preserve T)
+  mem.write(0x000AU, 2U, 0x212BU); // OR R2,R1 (preserve T)
+  mem.write(0x000CU, 2U, 0x2128U); // TST R2,R1 (updates T)
+  mem.write(0x000EU, 2U, 0x3210U); // CMP/EQ R1,R2 (updates T)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  core.step(arbiter, trace, 0U);
+  check((core.sr() & 1U) != 0U, "SETT should set T before side-effect audit");
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+  core.step(arbiter, trace, 3U);
+  check((core.sr() & 1U) != 0U, "AND should not perturb T-bit deterministically");
+  core.step(arbiter, trace, 4U);
+  check((core.sr() & 1U) != 0U, "XOR should not perturb T-bit deterministically");
+  core.step(arbiter, trace, 5U);
+  check((core.sr() & 1U) != 0U, "OR should not perturb T-bit deterministically");
+  core.step(arbiter, trace, 6U);
+  check((core.sr() & 1U) == 0U, "TST should deterministically update T-bit from logical result");
+  core.step(arbiter, trace, 7U);
+  check((core.sr() & 1U) != 0U, "CMP/EQ should deterministically update T-bit and set it for equal values");
+}
+
+void test_p1_sh2_alu_reference_vector_scaffold() {
+  const std::array<Sh2AluReferenceVector, 3> vectors{{
+      {"addc-carry", {0xE1FFU, 0xE201U, 0x0018U, 0x312EU}, {}, 4U, 1U, 1U, true},
+      {"addv-overflow", {0xE140U, 0x6112U, 0xE201U, 0x312FU}, {{0x0040U, 0x7FFFFFFFU}}, 4U, 1U, 0x80000000U, true},
+      {"negc-borrow", {0xE201U, 0x0018U, 0x632AU}, {}, 3U, 3U, 0xFFFFFFFEU, true},
+  }};
+
+  for (const auto &vec : vectors) {
+    run_sh2_alu_reference_vector(vec);
+  }
+}
+
 void test_sh2_illegal_opcode_faults_deterministically_without_silent_progress() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4513,6 +5159,114 @@ void test_p0_sh2_displacement_addressing_load_store_roundtrip() {
   check(mem.read(0x0028U, 4U) == 0x00000020U, "MOV.L displacement store should commit at scaled disp*4 address");
 }
 
+
+void test_p0_sh2_decode_field_helpers_extract_expected_nibbles() {
+  constexpr std::uint16_t instr = 0x4BAFU;
+  check(saturnis::cpu::decode::field_n(instr) == 0xBU, "decode field_n helper should extract upper register nibble");
+  check(saturnis::cpu::decode::field_m(instr) == 0xAU, "decode field_m helper should extract source register nibble");
+  check(saturnis::cpu::decode::field_imm8(instr) == 0xAFU, "decode field_imm8 helper should extract low-byte immediate");
+  check(saturnis::cpu::decode::field_disp4(instr) == 0xFU, "decode field_disp4 helper should extract low-nibble displacement");
+  check(saturnis::cpu::decode::field_disp12(instr) == 0xBAFU, "decode field_disp12 helper should extract low-12 displacement");
+}
+
+void test_p0_sh2_decode_adjacent_encoding_corpus_is_stable() {
+  using saturnis::cpu::decode::decode_family;
+  check(decode_family(0x430BU).has_value() && *decode_family(0x430BU) == "JSR @Rn",
+        "decode corpus should classify 0x430B as JSR @Rn (non-R0 regression guard)");
+  check(decode_family(0x432BU).has_value() && *decode_family(0x432BU) == "JMP @Rn",
+        "decode corpus should classify adjacent 0x432B as JMP @Rn");
+  check(decode_family(0xB7FFU).has_value() && *decode_family(0xB7FFU) == "BSR disp12",
+        "decode corpus should classify positive-boundary BSR encoding");
+  check(decode_family(0xBFFFU).has_value() && *decode_family(0xBFFFU) == "BSR disp12",
+        "decode corpus should classify negative-boundary BSR encoding");
+}
+
+void test_p0_sh2_decode_patterns_are_exclusive_for_full_opcode_space() {
+  for (std::uint32_t raw = 0U; raw <= 0xFFFFU; ++raw) {
+    const auto matches = saturnis::cpu::decode::decode_match_count(static_cast<std::uint16_t>(raw));
+    check(matches <= 1U, "decode pattern table should map every opcode to at most one family");
+  }
+}
+
+void test_p0_sh2_decode_family_table_has_corpus_coverage() {
+  const std::array<std::uint16_t, 30> corpus{{
+      0xA001U, 0xB001U, 0x410BU, 0x412BU, 0x000BU, 0x8901U, 0x8B01U, 0x8D01U, 0x8F01U,
+      0xC301U, 0x002BU, 0x430EU, 0x0202U, 0x4122U, 0x4126U,
+      0x9101U, 0xD101U, 0xC701U,
+      0x051CU, 0x061DU, 0x071EU,
+      0x0124U, 0x0135U, 0x0146U,
+      0xC401U, 0xC501U, 0xC601U,
+      0xC001U, 0xC101U, 0xC201U,
+  }};
+
+  for (const auto &pattern : saturnis::cpu::decode::patterns()) {
+    bool found = false;
+    for (const auto opcode : corpus) {
+      const auto fam = saturnis::cpu::decode::decode_family(opcode);
+      if (fam.has_value() && *fam == pattern.family) {
+        found = true;
+        break;
+      }
+    }
+    check(found, "each decode family should have at least one deterministic corpus opcode coverage vector");
+  }
+}
+
+void test_p0_sh2_illegal_opcode_does_not_fallback_to_nop() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0009U); // NOP
+  mem.write(0x0002U, 2U, 0xFFFFU); // currently unsupported
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+
+  const auto json = trace.to_jsonl();
+  check(json.find("\"reason\":\"ILLEGAL_OP\"") != std::string::npos,
+        "unknown opcode handling should fault with ILLEGAL_OP deterministically instead of falling back to NOP");
+}
+
+void test_p0_sh2_sr_and_pr_stack_forms_cover_handler_prologue_epilogue() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE33CU); // MOV #0x3C,R3
+  mem.write(0x0002U, 2U, 0x430EU); // LDC R3,SR
+  mem.write(0x0004U, 2U, 0x0202U); // STC SR,R2
+  mem.write(0x0006U, 2U, 0xE110U); // MOV #0x10,R1
+  mem.write(0x0008U, 2U, 0x4122U); // STS.L PR,@-R1
+  mem.write(0x000AU, 2U, 0x0009U); // NOP
+  mem.write(0x000CU, 2U, 0x4126U); // LDS.L @R1+,PR
+  mem.write(0x000EU, 2U, 0xE40FU); // MOV #0x0F,R4
+  mem.write(0x0010U, 2U, 0x440EU); // LDC R4,SR
+  mem.write(0x0012U, 2U, 0x0502U); // STC SR,R5
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.set_pr(0xCAFEBABEU);
+
+  for (std::uint64_t i = 0U; i < 12U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.sr() == 0x0000000FU, "LDC Rm,SR should deterministically update SR including interrupt-mask bits");
+  check(core.reg(2) == 0x0000003CU && core.reg(5) == 0x0000000FU,
+        "STC SR,Rn should read back SR without perturbing non-target registers");
+  check(mem.read(0x0000000CU, 4U) == 0xCAFEBABEU,
+        "STS.L PR,@-Rn should push PR to pre-decremented address");
+  check(core.pr() == 0xCAFEBABEU,
+        "LDS.L @Rm+,PR should restore PR from stack value deterministically");
+  check(core.reg(1) == 0x00000010U,
+        "STS.L/LDS.L stack forms should preserve deterministic pre-decrement/post-increment pointer roundtrip");
+}
+
 void test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4679,6 +5433,178 @@ void test_p0_sh2_exception_paths_do_not_emit_legacy_synthetic_markers() {
         "real exception flow should not emit legacy synthetic entry/return markers");
 }
 
+void test_p0_sh2_jsr_non_r0_decode_and_delay_slot_control_flow() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE308U); // MOV #8,R3
+  mem.write(0x0002U, 2U, 0x430BU); // JSR @R3
+  mem.write(0x0004U, 2U, 0x7001U); // ADD #1,R0 (JSR delay slot)
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0 (return point)
+  mem.write(0x0008U, 2U, 0x7001U); // ADD #1,R0 (subroutine body)
+  mem.write(0x000AU, 2U, 0x000BU); // RTS
+  mem.write(0x000CU, 2U, 0x7001U); // ADD #1,R0 (RTS delay slot)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 7U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.pr() == 0x0006U, "JSR @R3 must decode source register nibble correctly and set PR=pc+4");
+  check(core.reg(0) == 4U, "JSR/RTS flow should execute both delay slots and return-path instruction deterministically");
+}
+
+void test_p0_sh2_branch_boundary_displacements_bt_bf_bsrs() {
+  // BSR min/max displacement boundaries (disp12 signed)
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xBFFFU); // BSR -1 -> target 0x0002
+    mem.write(0x0002U, 2U, 0x7001U); // delay slot
+    mem.write(0x0004U, 2U, 0x0009U); // padding
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, 0U);
+    core.step(arbiter, trace, 1U);
+    check(core.pc() == 0x0002U && core.pr() == 0x0004U && core.reg(0) == 1U,
+          "BSR disp12 minimum negative boundary should branch to pc+2 after executing delay slot");
+  }
+  {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    mem.write(0x0000U, 2U, 0xB7FFU); // BSR +2047
+    mem.write(0x0002U, 2U, 0x7001U); // delay slot
+    mem.write(0x1002U, 2U, 0x7001U); // max-positive target from pc=0
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, 0U);
+    core.step(arbiter, trace, 1U);
+    core.step(arbiter, trace, 2U);
+    check(core.pc() == 0x1004U && core.reg(0) == 2U,
+          "BSR disp12 maximum positive boundary should land at deterministic far target after delay slot");
+  }
+
+  // BT/BF and BT/S BF/S min/max signed disp8 boundaries.
+  auto run_branch_case = [](std::uint16_t instr0, std::uint16_t setup_t_instr, std::uint32_t expected_pc_after_two,
+                            bool has_delay_slot, bool expect_r0_inc_after_two) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+    mem.write(0x0000U, 2U, setup_t_instr);
+    mem.write(0x0002U, 2U, instr0);
+    mem.write(0x0004U, 2U, 0x7001U); // slot candidate / fallthrough increment
+    mem.write(0x0006U, 2U, 0x0009U);
+    mem.write(0x0104U, 2U, 0x7001U); // max-positive target for disp=+127 with branch at pc=0x0002 => 0x0104
+    mem.write(0xFFFFFF06U, 2U, 0x7001U); // min-negative target for disp=-128 with branch at pc=0x0002 => 0xFFFFFF06
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    core.step(arbiter, trace, 0U); // setup T
+    core.step(arbiter, trace, 1U); // branch
+    core.step(arbiter, trace, 2U); // either slot/fallthrough/target
+
+    check(core.pc() == expected_pc_after_two,
+          "BT/BF(/S) displacement boundary case should resolve to deterministic target/fallthrough PC (instr=" +
+              std::to_string(static_cast<unsigned>(instr0)) + ", actual_pc=" +
+              std::to_string(static_cast<unsigned>(core.pc())) + ", expected_pc=" +
+              std::to_string(static_cast<unsigned>(expected_pc_after_two)) + ")");
+    if (has_delay_slot) {
+      check(core.reg(0) == (expect_r0_inc_after_two ? 1U : 0U),
+            "BT/S BF/S should execute exactly one deterministic delay-slot instruction when branch is taken");
+    }
+  };
+
+  run_branch_case(0x897FU, 0x0018U, 0x0106U, false, false); // BT +127, taken, no delay slot
+  run_branch_case(0x8B80U, 0x0018U, 0x0006U, false, false); // BF -128, not taken
+  run_branch_case(0x8D7FU, 0x0018U, 0x0104U, true, true);   // BT/S +127, taken with delay slot
+  run_branch_case(0x8F80U, 0x0018U, 0x0006U, true, true);   // BF/S -128, not taken still executes delay-slot instruction deterministically
+}
+
+void test_p0_sh2_branch_delay_slot_matrix_alu_vs_memory_ops_is_deterministic() {
+  struct Case {
+    std::uint16_t setup;
+    std::uint16_t branch;
+    std::uint16_t slot_alu;
+    std::uint16_t slot_mem;
+    bool mem_slot;
+  };
+
+  const std::array<Case, 6> cases{{
+      {0x0009U, 0xA001U, 0x7001U, 0x2122U, false}, // BRA
+      {0x0009U, 0xB001U, 0x7001U, 0x2122U, false}, // BSR
+      {0xE108U, 0x412BU, 0x7001U, 0x2122U, false}, // JMP @R1
+      {0xE108U, 0x410BU, 0x7001U, 0x2122U, false}, // JSR @R1
+      {0x0018U, 0x8D01U, 0x7001U, 0x2122U, false}, // BT/S taken
+      {0x0008U, 0x8F01U, 0x7001U, 0x2122U, false}, // BF/S taken
+  }};
+
+  for (const auto &c : cases) {
+    for (int slot_kind = 0; slot_kind < 2; ++slot_kind) {
+      auto init_mem = [&](saturnis::mem::CommittedMemory &mem_x) {
+        mem_x.write(0x0000U, 2U, c.setup);
+        mem_x.write(0x0002U, 2U, c.branch);
+        mem_x.write(0x0004U, 2U, (slot_kind == 0) ? c.slot_alu : c.slot_mem);
+        mem_x.write(0x0006U, 2U, 0x0009U);
+        mem_x.write(0x0008U, 2U, 0x7001U); // branch target payload
+        mem_x.write(0x000AU, 2U, 0x0009U);
+        mem_x.write(0x0040U, 4U, 0x00000000U);
+      };
+
+      saturnis::core::TraceLog trace_a;
+      saturnis::mem::CommittedMemory mem_a;
+      init_mem(mem_a);
+      saturnis::dev::DeviceHub dev_a;
+      saturnis::bus::BusArbiter arbiter_a(mem_a, dev_a, trace_a);
+
+      saturnis::cpu::SH2Core core_a(0);
+      core_a.reset(0U, 0x0001FFF0U);
+      core_a.set_pr(0x0008U);
+      core_a.step(arbiter_a, trace_a, 0U);
+      core_a.step(arbiter_a, trace_a, 1U);
+      core_a.step(arbiter_a, trace_a, 2U);
+      core_a.step(arbiter_a, trace_a, 3U);
+
+      saturnis::core::TraceLog trace_b;
+      saturnis::mem::CommittedMemory mem_b;
+      init_mem(mem_b);
+      saturnis::dev::DeviceHub dev_b;
+      saturnis::bus::BusArbiter arbiter_b(mem_b, dev_b, trace_b);
+      saturnis::cpu::SH2Core core_b(0);
+      core_b.reset(0U, 0x0001FFF0U);
+      core_b.set_pr(0x0008U);
+      core_b.step(arbiter_b, trace_b, 0U);
+      core_b.step(arbiter_b, trace_b, 1U);
+      core_b.step(arbiter_b, trace_b, 2U);
+      core_b.step(arbiter_b, trace_b, 3U);
+
+      check(core_a.pc() == core_b.pc() && core_a.reg(0) == core_b.reg(0) && core_a.pr() == core_b.pr(),
+            "branch delay-slot matrix should be deterministic across repeated runs for ALU and memory slot variants");
+      check(trace_a.to_jsonl() == trace_b.to_jsonl(),
+            "branch delay-slot matrix traces should remain byte-identical across repeated runs");
+
+      if (slot_kind == 0) {
+        check(core_a.reg(0) >= 1U,
+              "ALU delay-slot branch matrix case should execute deterministic arithmetic in the slot");
+      } else {
+        check(mem_a.read(0x0040U, 4U) == 0x00000000U,
+              "memory-op delay-slot matrix case should commit deterministic bus-visible slot effects");
+      }
+    }
+  }
+}
+
 void test_p0_sh2_bsr_and_jmp_delay_slot_control_flow() {
   saturnis::core::TraceLog trace;
   saturnis::mem::CommittedMemory mem;
@@ -4748,6 +5674,148 @@ void test_p0_sh2_ext_and_neg_register_ops() {
   check(core.reg(5) == 0xFFFFFF80U, "EXTS.B should sign-extend low byte");
   check(core.reg(6) == 0xFFFFFF80U, "EXTS.W should sign-extend low word");
   check(core.reg(7) == 0xFFFF0080U, "NEG should compute two's complement 0 - Rm");
+}
+
+void test_p0_sh2_pc_relative_word_long_and_mova_forms() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0x0009U); // NOP to guarantee cache line fill before memory forms
+  mem.write(0x0002U, 2U, 0x9101U); // MOV.W @(1,PC),R1 -> read @0x0008
+  mem.write(0x0004U, 2U, 0xD202U); // MOV.L @(2,PC),R2 -> read @0x0010 (aligned base)
+  mem.write(0x0006U, 2U, 0xC703U); // MOVA @(3,PC),R0 -> ((pc+4)&~3)+3*4 = 0x0014
+  mem.write(0x0008U, 2U, 0xFF80U); // sign-ext word source
+  mem.write(0x0010U, 4U, 0x12345678U); // long source
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(core.reg(1) == 0xFFFFFF80U,
+        "MOV.W @(disp,PC),Rn should sign-extend loaded word using pc+4 base plus disp*2 (actual=" +
+            std::to_string(static_cast<unsigned>(core.reg(1))) + ")");
+  check(core.reg(2) == 0x12345678U,
+        "MOV.L @(disp,PC),Rn should load longword from aligned ((pc+4)&~3)+disp*4 base");
+  check(core.reg(0) == 0x00000014U,
+        "MOVA @(disp,PC),R0 should compute deterministic aligned PC-relative address");
+}
+
+void test_p0_sh2_r0_indexed_load_store_forms_cover_all_widths() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE004U); // MOV #4,R0
+  mem.write(0x0002U, 2U, 0xE130U); // MOV #0x30,R1 base
+  mem.write(0x0004U, 2U, 0xE2AAU); // MOV #-86,R2
+  mem.write(0x0006U, 2U, 0xE380U); // MOV #-128,R3
+  mem.write(0x0008U, 2U, 0xE410U); // MOV #0x10,R4
+  mem.write(0x000AU, 2U, 0x0124U); // MOV.B R2,@(R0,R1)
+  mem.write(0x000CU, 2U, 0x0135U); // MOV.W R3,@(R0,R1)
+  mem.write(0x000EU, 2U, 0x0146U); // MOV.L R4,@(R0,R1)
+  mem.write(0x0010U, 2U, 0x051CU); // MOV.B @(R0,R1),R5
+  mem.write(0x0012U, 2U, 0x061DU); // MOV.W @(R0,R1),R6
+  mem.write(0x0014U, 2U, 0x071EU); // MOV.L @(R0,R1),R7
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0034U, 4U) == 0x00000010U,
+        "indexed store forms should target address (R0+Rn) and preserve width semantics deterministically");
+  check(core.reg(5) == 0x00000000U && core.reg(6) == 0x00000000U && core.reg(7) == 0x00000010U,
+        "indexed load forms should reflect deterministic byte/word/long interpretation from shared address contents");
+}
+
+void test_p0_sh2_gbr_displacement_scaling_and_sign_extension_matrix() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE340U); // MOV #0x40,R3
+  mem.write(0x0002U, 2U, 0x431EU); // LDC R3,GBR
+  mem.write(0x0004U, 2U, 0xE0FFU); // MOV #-1,R0
+  mem.write(0x0006U, 2U, 0xC001U); // MOV.B R0,@(1,GBR) -> 0x41
+  mem.write(0x0008U, 2U, 0xC101U); // MOV.W R0,@(1,GBR) -> 0x42
+  mem.write(0x000AU, 2U, 0xC201U); // MOV.L R0,@(1,GBR) -> 0x44
+  mem.write(0x000CU, 2U, 0xC401U); // MOV.B @(1,GBR),R0
+  mem.write(0x000EU, 2U, 0xC501U); // MOV.W @(1,GBR),R0
+  mem.write(0x0010U, 2U, 0xC601U); // MOV.L @(1,GBR),R0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 20U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0041U, 1U) == 0xFFU,
+        "GBR byte displacement should use disp*1 scaling");
+  check(mem.read(0x0042U, 2U) == 0xFFFFU,
+        "GBR word displacement should use disp*2 scaling");
+  check(mem.read(0x0044U, 4U) == 0xFFFFFFFFU,
+        "GBR long displacement should use disp*4 scaling");
+  check(core.reg(0) == 0xFFFFFFFFU,
+        "GBR displacement load matrix should deterministically return last longword load value");
+}
+
+void test_p0_sh2_new_addressing_forms_unaligned_long_access_is_deterministic() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE001U); // MOV #1,R0
+  mem.write(0x0002U, 2U, 0xE131U); // MOV #0x31,R1 (unaligned base for long)
+  mem.write(0x0004U, 2U, 0xE212U); // MOV #0x12,R2
+  mem.write(0x0006U, 2U, 0x0126U); // MOV.L R2,@(R0,R1) -> addr 0x32 (unaligned)
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core.step(arbiter, trace, i);
+  }
+
+  check(mem.read(0x0032U, 4U) == 0x00000012U,
+        "new indexed long addressing form should preserve deterministic modeled unaligned-RAM long write behavior");
+
+  saturnis::core::TraceLog trace2;
+  saturnis::mem::CommittedMemory mem2;
+  saturnis::dev::DeviceHub dev2;
+  saturnis::bus::BusArbiter arbiter2(mem2, dev2, trace2);
+  mem2.write(0x0000U, 2U, 0xE001U);
+  mem2.write(0x0002U, 2U, 0xE131U);
+  mem2.write(0x0004U, 2U, 0xE212U);
+  mem2.write(0x0006U, 2U, 0x0126U);
+  saturnis::cpu::SH2Core core2(0);
+  core2.reset(0U, 0x0001FFF0U);
+  for (std::uint64_t i = 0U; i < 8U; ++i) {
+    core2.step(arbiter2, trace2, i);
+  }
+  check(trace.to_jsonl() == trace2.to_jsonl(),
+        "unaligned indexed long addressing behavior should remain byte-identical across repeated runs");
+}
+
+void test_p0_sh2_decode_collision_audit_for_new_addressing_forms() {
+  check(saturnis::cpu::decode::decode_match_count(0x051CU) <= 1U,
+        "decode collision audit: MOV.B @(R0,Rm),Rn encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x061DU) <= 1U,
+        "decode collision audit: MOV.W @(R0,Rm),Rn encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x071EU) <= 1U,
+        "decode collision audit: MOV.L @(R0,Rm),Rn encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x0124U) <= 1U,
+        "decode collision audit: MOV.B Rm,@(R0,Rn) encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x0135U) <= 1U,
+        "decode collision audit: MOV.W Rm,@(R0,Rn) encoding should remain exclusive");
+  check(saturnis::cpu::decode::decode_match_count(0x0146U) <= 1U,
+        "decode collision audit: MOV.L Rm,@(R0,Rn) encoding should remain exclusive");
 }
 
 void test_p0_sh2_gbr_displacement_load_store_forms() {
@@ -4933,6 +6001,24 @@ int main() {
   test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
   test_sh2_add_immediate_updates_register_with_signed_imm();
+  test_p1_sh2_shift_family_shlln_shlrn_vectors();
+  test_p1_sh2_shal_shar_and_rotc_t_bit_behavior();
+  test_p1_sh2_shad_shld_variable_shift_vectors();
+  test_p1_sh2_system_transfer_stack_forms_sr_gbr_vbr_mach_macl();
+  test_p1_sh2_system_transfer_reset_and_non_target_invariance_suite();
+  test_p1_sh2_group9_mixed_width_overwrite_matrix_for_system_stack_forms();
+  test_p1_sh2_group9_aliasing_post_inc_pre_dec_forms();
+  test_p1_sh2_group9_dual_cpu_overlapping_write_contention_determinism();
+  test_p1_sh2_group9_stall_distribution_for_new_stack_transfer_reads_is_deterministic();
+  test_p1_sh2_group9_trace_stability_for_new_system_transfer_paths();
+  test_p1_sh2_group9_long_prefix_commit_stability_for_transfer_stress_fixture();
+  test_p1_sh2_mul_family_muls_mulu_and_dmul_pairs();
+  test_p1_sh2_div0u_div0s_div1_semantics();
+  test_p1_sh2_mac_w_l_are_explicit_illegal_with_todo_guard();
+  test_p1_sh2_addc_addv_negc_semantics();
+  test_p1_sh2_subc_subv_borrow_and_overflow_chains();
+  test_p1_sh2_sr_t_bit_side_effect_audit_for_core_alu_ops();
+  test_p1_sh2_alu_reference_vector_scaffold();
   test_sh2_illegal_opcode_faults_deterministically_without_silent_progress();
   test_enqueue_contract_fault_is_deterministic_under_interleaved_batch_contention();
   test_bus_arbiter_non_monotonic_req_time_contract_violation_is_deterministic();
@@ -4960,20 +6046,34 @@ int main() {
   test_sh2_synthetic_rte_without_context_trace_is_stable_across_runs();
   test_sh2_ifetch_cache_fill_mismatch_faults_deterministically();
   test_p0_sh2_imm8_sign_extension_semantics();
+  test_p0_sh2_decode_field_helpers_extract_expected_nibbles();
+  test_p0_sh2_decode_adjacent_encoding_corpus_is_stable();
+  test_p0_sh2_decode_patterns_are_exclusive_for_full_opcode_space();
+  test_p0_sh2_decode_family_table_has_corpus_coverage();
+  test_p0_sh2_illegal_opcode_does_not_fallback_to_nop();
   test_p0_sh2_movbw_load_sign_extension();
   test_p0_sh2_post_increment_load_updates_source_register();
   test_p0_sh2_post_increment_self_load_skips_increment_when_m_equals_n();
   test_p0_sh2_load_to_r15_does_not_clobber_pr();
   test_p0_sh2_sub_register_uses_0x3nm8_encoding();
   test_p0_sh2_displacement_addressing_load_store_roundtrip();
+  test_p0_sh2_sr_and_pr_stack_forms_cover_handler_prologue_epilogue();
   test_p0_sh2_trapa_and_rte_restore_with_real_delay_slot();
   test_p0_sh2_rte_memory_delay_slot_executes_before_restore();
   test_p0_sh2_rte_stack_pop_order_restores_pc_and_sr_pair();
   test_p0_sh2_nested_exception_entry_counts_two_markers();
   test_p0_sh2_trapa_multi_vector_handlers_are_distinct();
   test_p0_sh2_exception_paths_do_not_emit_legacy_synthetic_markers();
+  test_p0_sh2_jsr_non_r0_decode_and_delay_slot_control_flow();
+  test_p0_sh2_branch_boundary_displacements_bt_bf_bsrs();
+  test_p0_sh2_branch_delay_slot_matrix_alu_vs_memory_ops_is_deterministic();
   test_p0_sh2_bsr_and_jmp_delay_slot_control_flow();
   test_p0_sh2_ext_and_neg_register_ops();
+  test_p0_sh2_pc_relative_word_long_and_mova_forms();
+  test_p0_sh2_r0_indexed_load_store_forms_cover_all_widths();
+  test_p0_sh2_gbr_displacement_scaling_and_sign_extension_matrix();
+  test_p0_sh2_new_addressing_forms_unaligned_long_access_is_deterministic();
+  test_p0_sh2_decode_collision_audit_for_new_addressing_forms();
   test_p0_sh2_gbr_displacement_load_store_forms();
   std::cout << "saturnis kernel tests passed\n";
   return 0;

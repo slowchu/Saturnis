@@ -1,0 +1,18 @@
+{
+  "first_illegal_op": {
+    "opcode": 4660,
+    "pc": 4096
+  },
+  "format_version": 1,
+  "illegal_op_count": 3,
+  "top_illegal_opcodes": [
+    {
+      "count": 2,
+      "opcode": 4660
+    },
+    {
+      "count": 1,
+      "opcode": 65535
+    }
+  ]
+}
