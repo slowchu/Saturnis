@@ -34,6 +34,7 @@ add_library(saturnis_core
   src/mem/memory.cpp
   src/cpu/scripted_cpu.cpp
   src/cpu/sh2_core.cpp
+  src/cpu/sh2_decode.cpp
   src/dev/devices.cpp
   src/platform/file_io.cpp
   src/platform/sdl_window.cpp
@@ -67,4 +68,12 @@ if(BUILD_TESTING)
   add_executable(saturnis_trace_regression tests/test_trace_regression.cpp)
   target_link_libraries(saturnis_trace_regression PRIVATE saturnis_core)
   add_test(NAME saturnis_trace_regression COMMAND saturnis_trace_regression)
+
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME saturnis_bios_metrics_scripts
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bios_metrics_scripts.py
+    )
+  endif()
 endif()
