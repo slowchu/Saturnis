@@ -240,12 +240,12 @@
 
 ### Group 10 (P2): BIOS Forward-Progress Instrumentation
 
-59. [ ] Add local script to run BIOS trace and capture first `ILLEGAL_OP` metrics. (`M`, `D-DOC`)
-60. [ ] Define local baseline artifact format (`count/opcode/pc`). (`S`, `D-DOC`)
-61. [ ] Add diff script to compare latest BIOS metric against baseline. (`S`, `D-DOC`)
-62. [ ] Add local report summarizing top unsupported opcodes encountered in trace. (`M`, `D-DOC`)
-63. [ ] Add developer note clarifying local-only nature (no BIOS in CI/artifacts). (`S`, `D-DOC`)
-64. [ ] Add deterministic parser tests for BIOS metric scripts (fixture-driven). (`S`, `D-TEST`)
+59. [x] Add local script to run BIOS trace and capture first `ILLEGAL_OP` metrics. (`M`, `D-DOC`)
+60. [x] Define local baseline artifact format (`count/opcode/pc`). (`S`, `D-DOC`)
+61. [x] Add diff script to compare latest BIOS metric against baseline. (`S`, `D-DOC`)
+62. [x] Add local report summarizing top unsupported opcodes encountered in trace. (`M`, `D-DOC`)
+63. [x] Add developer note clarifying local-only nature (no BIOS in CI/artifacts). (`S`, `D-DOC`)
+64. [x] Add deterministic parser tests for BIOS metric scripts (fixture-driven). (`S`, `D-TEST`)
 
 ---
 

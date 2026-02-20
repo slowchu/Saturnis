@@ -68,4 +68,12 @@ if(BUILD_TESTING)
   add_executable(saturnis_trace_regression tests/test_trace_regression.cpp)
   target_link_libraries(saturnis_trace_regression PRIVATE saturnis_core)
   add_test(NAME saturnis_trace_regression COMMAND saturnis_trace_regression)
+
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME saturnis_bios_metrics_scripts
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bios_metrics_scripts.py
+    )
+  endif()
 endif()
