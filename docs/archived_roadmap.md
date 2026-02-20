@@ -120,21 +120,21 @@ Legend:
 
 ## Group 10 (P2): BIOS Forward-Progress Instrumentation (6)
 
-59. [ ] Add local script to run BIOS trace and capture first `ILLEGAL_OP` metrics. (`M`, deps: D-DOC)
-60. [ ] Define local baseline artifact format (`count/opcode/pc`). (`S`, deps: D-DOC)
-61. [ ] Add diff script to compare latest BIOS metric against baseline. (`S`, deps: D-DOC)
-62. [ ] Add local report summarizing top unsupported opcodes encountered in trace. (`M`, deps: D-DOC)
-63. [ ] Add developer note clarifying local-only nature (no BIOS in CI/artifacts). (`S`, deps: D-DOC)
-64. [ ] Add deterministic parser tests for BIOS metric scripts (fixture-driven). (`S`, deps: D-TEST)
+59. [x] Add local script to run BIOS trace and capture first `ILLEGAL_OP` metrics. (`M`, deps: D-DOC)
+60. [x] Define local baseline artifact format (`count/opcode/pc`). (`S`, deps: D-DOC)
+61. [x] Add diff script to compare latest BIOS metric against baseline. (`S`, deps: D-DOC)
+62. [x] Add local report summarizing top unsupported opcodes encountered in trace. (`M`, deps: D-DOC)
+63. [x] Add developer note clarifying local-only nature (no BIOS in CI/artifacts). (`S`, deps: D-DOC)
+64. [x] Add deterministic parser tests for BIOS metric scripts (fixture-driven). (`S`, deps: D-TEST)
 
 ## Group 11 (P2): Testing Infrastructure Upgrades (6)
 
-65. [ ] Introduce SH-2 opcode microtest harness with declarative vectors. (`L`, deps: D-TEST)
-66. [ ] Add helper assertions for bus op sequence shape (read/write order, addr, size). (`S`, deps: D-TEST)
-67. [ ] Add helper assertions for SR `T`-bit transitions. (`S`, deps: D-TEST)
-68. [ ] Split monolithic SH-2 tests into themed clusters (alu/branch/mem/exception). (`M`, deps: D-TEST)
-69. [ ] Add deterministic “golden state” checkpoints for longer control-flow fixtures. (`M`, deps: D-TEST)
-70. [ ] Add microtest naming convention + template in docs for future contributors. (`S`, deps: D-DOC)
+65. [x] Introduce SH-2 opcode microtest harness with declarative vectors. (`L`, deps: D-TEST)
+66. [x] Add helper assertions for bus op sequence shape (read/write order, addr, size). (`S`, deps: D-TEST)
+67. [x] Add helper assertions for SR `T`-bit transitions. (`S`, deps: D-TEST)
+68. [x] Split monolithic SH-2 tests into themed clusters (alu/branch/mem/exception). (`M`, deps: D-TEST)
+69. [x] Add deterministic “golden state” checkpoints for longer control-flow fixtures. (`M`, deps: D-TEST)
+70. [x] Add microtest naming convention + template in docs for future contributors. (`S`, deps: D-DOC)
 
 ## Group 12 (P2): Documentation and Coverage Tracking (6)
 

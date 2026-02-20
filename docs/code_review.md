@@ -4,6 +4,24 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Group 11 (testing infrastructure upgrades) implementation review
+- Added reusable SH-2 test infrastructure helpers:
+  - declarative micro-vector harness (`Sh2MicroVector` + `run_sh2_micro_vectors`),
+  - bus sequence shape assertions (kind/address/size order),
+  - SR `T`-bit transition helper assertions.
+- Added deterministic micro-harness and helper coverage tests, plus a golden checkpoint test for a longer control-flow fixture.
+- Introduced themed SH-2 cluster runners in the kernel test entrypoint (memory/control-flow) to reduce monolithic call sprawl while preserving deterministic execution order.
+- Added contributor-facing naming convention and template documentation for future SH-2 microtests.
+
+### 2026-02-19 Group 10 (BIOS forward-progress instrumentation) implementation review
+- Added local-only BIOS forward-progress tooling under `tools/bios_metrics/`:
+  - local runner to execute `saturnemu` BIOS traces and capture `ILLEGAL_OP` metrics,
+  - parser/formatter library for deterministic metrics extraction,
+  - baseline-vs-latest diff tool with regression exit semantics.
+- Defined and documented the local baseline artifact format (`illegal_op_count`, first `opcode/pc`, and top-opcode histogram).
+- Added deterministic fixture-driven parser tests (`tests/test_bios_metrics_scripts.py`) and wired them into CTest when Python is available.
+- Added explicit developer guidance that BIOS assets are local-only and must not be committed or used in CI artifacts.
+
 ### 2026-02-19 Group 9 (memory ordering + determinism validation) implementation review
 - Added deterministic mixed-width same-address overwrite regressions for newly added system-transfer stack paths (`STC.L` payload overwritten by byte/word stores before `LDC.L` restore).
 - Added focused aliasing coverage for post-increment and pre-decrement edge cases, including `MOV.B/W/L @Rm+,Rn (m==n)` and explicit current-model behavior for `MOV.L Rn,@-Rn` aliasing.

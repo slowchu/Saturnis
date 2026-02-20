@@ -23,6 +23,60 @@ void check(bool cond, const std::string &msg) {
   }
 }
 
+
+void check_bus_sequence_shape(const std::vector<saturnis::bus::CommitResult> &committed,
+                              const std::vector<saturnis::bus::BusKind> &kinds,
+                              const std::vector<std::uint32_t> &addrs,
+                              const std::vector<std::uint8_t> &sizes,
+                              const std::string &context) {
+  check(committed.size() == kinds.size() && committed.size() == addrs.size() && committed.size() == sizes.size(),
+        context + ": expected shape vector sizes must match committed op count");
+  for (std::size_t i = 0; i < committed.size(); ++i) {
+    check(committed[i].op.kind == kinds[i], context + ": unexpected bus kind at index " + std::to_string(i));
+    check(committed[i].op.phys_addr == addrs[i], context + ": unexpected bus address at index " + std::to_string(i));
+    check(committed[i].op.size == sizes[i], context + ": unexpected bus access size at index " + std::to_string(i));
+  }
+}
+
+void check_t_bit(const saturnis::cpu::SH2Core &core, bool expected_t, const std::string &context) {
+  const bool got_t = (core.sr() & 1U) != 0U;
+  check(got_t == expected_t, context + ": SR T-bit expectation mismatch");
+}
+
+struct Sh2MicroVector {
+  const char *name;
+  std::vector<std::uint16_t> program;
+  std::uint64_t steps;
+  std::uint32_t reg_index;
+  std::uint32_t expected_reg;
+  bool expected_t;
+};
+
+void run_sh2_micro_vectors(const std::vector<Sh2MicroVector> &vectors) {
+  for (const auto &vec : vectors) {
+    saturnis::core::TraceLog trace;
+    saturnis::mem::CommittedMemory mem;
+    saturnis::dev::DeviceHub dev;
+    saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+    std::uint32_t pc = 0U;
+    for (const auto op : vec.program) {
+      mem.write(pc, 2U, op);
+      pc += 2U;
+    }
+
+    saturnis::cpu::SH2Core core(0);
+    core.reset(0U, 0x0001FFF0U);
+    for (std::uint64_t i = 0U; i < vec.steps; ++i) {
+      core.step(arbiter, trace, i);
+    }
+
+    check(core.reg(vec.reg_index) == vec.expected_reg,
+          std::string("micro-vector register mismatch: ") + vec.name);
+    check_t_bit(core, vec.expected_t, std::string("micro-vector T-bit mismatch: ") + vec.name);
+  }
+}
+
 std::string first_line_containing(const std::string &haystack, const std::string &needle) {
   std::size_t line_start = 0;
   while (line_start < haystack.size()) {
@@ -5852,6 +5906,109 @@ void test_p0_sh2_gbr_displacement_load_store_forms() {
 
 } // namespace
 
+
+void test_p2_sh2_micro_vector_harness_add_and_tbit_cases() {
+  const std::vector<Sh2MicroVector> vectors{{
+      {"add-imm-positive", {0x7001U}, 1U, 0U, 1U, false},
+      {"cmp-eq-sets-t", {0xE101U, 0xE001U, 0x3100U}, 3U, 0U, 1U, true},
+      {"cmp-eq-clears-t", {0xE102U, 0xE001U, 0x3100U}, 3U, 0U, 1U, false},
+  }};
+  run_sh2_micro_vectors(vectors);
+}
+
+void test_p2_bus_shape_helper_validates_order_addr_and_size() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  const saturnis::bus::BusOp write_word{0, 1U, 0U, saturnis::bus::BusKind::Write, 0x20000010U, 2U, 0xABCDU};
+  const saturnis::bus::BusOp read_word{0, 2U, 1U, saturnis::bus::BusKind::Read, 0x20000010U, 2U, 0U};
+  const auto committed = arbiter.commit_batch({write_word, read_word});
+
+  check_bus_sequence_shape(committed,
+                           {saturnis::bus::BusKind::Write, saturnis::bus::BusKind::Read},
+                           {0x20000010U, 0x20000010U},
+                           {2U, 2U},
+                           "bus shape helper should validate read/write order and geometry");
+}
+
+void test_p2_sh2_t_bit_helper_tracks_cmp_eq_transitions() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xE101U); // MOV #1,R1
+  mem.write(0x0002U, 2U, 0xE001U); // MOV #1,R0
+  mem.write(0x0004U, 2U, 0x3100U); // CMP/EQ R0,R1 -> T=1
+  mem.write(0x0006U, 2U, 0x7001U); // ADD #1,R0
+  mem.write(0x0008U, 2U, 0x3100U); // CMP/EQ R0,R1 -> T=0
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+  core.step(arbiter, trace, 0U);
+  core.step(arbiter, trace, 1U);
+  core.step(arbiter, trace, 2U);
+  check_t_bit(core, true, "T-bit helper should observe CMP/EQ set transition");
+  core.step(arbiter, trace, 3U);
+  core.step(arbiter, trace, 4U);
+  check_t_bit(core, false, "T-bit helper should observe CMP/EQ clear transition");
+}
+
+void test_p2_sh2_golden_state_checkpoints_for_long_control_flow_fixture() {
+  saturnis::core::TraceLog trace;
+  saturnis::mem::CommittedMemory mem;
+  saturnis::dev::DeviceHub dev;
+  saturnis::bus::BusArbiter arbiter(mem, dev, trace);
+
+  mem.write(0x0000U, 2U, 0xB002U); // BSR +2 -> 0x0008
+  mem.write(0x0002U, 2U, 0x7001U); // delay-slot add
+  mem.write(0x0004U, 2U, 0x7001U); // return point add
+  mem.write(0x0006U, 2U, 0x0009U); // NOP
+  mem.write(0x0008U, 2U, 0x7001U); // subroutine add
+  mem.write(0x000AU, 2U, 0x000BU); // RTS
+  mem.write(0x000CU, 2U, 0x7001U); // RTS delay-slot add
+
+  saturnis::cpu::SH2Core core(0);
+  core.reset(0U, 0x0001FFF0U);
+
+  struct Checkpoint { std::uint32_t pc; std::uint32_t r0; std::uint32_t pr; };
+  const std::array<Checkpoint, 6> checkpoints{{
+      {0x0002U, 0U, 0x0004U},
+      {0x0008U, 1U, 0x0004U},
+      {0x000AU, 2U, 0x0004U},
+      {0x000CU, 2U, 0x0004U},
+      {0x0004U, 3U, 0x0004U},
+      {0x0006U, 4U, 0x0004U},
+  }};
+
+  for (std::size_t i = 0; i < checkpoints.size(); ++i) {
+    core.step(arbiter, trace, static_cast<std::uint64_t>(i));
+    check(core.pc() == checkpoints[i].pc,
+          "golden checkpoint PC mismatch at step " + std::to_string(i));
+    check(core.reg(0) == checkpoints[i].r0,
+          "golden checkpoint R0 mismatch at step " + std::to_string(i));
+    check(core.pr() == checkpoints[i].pr,
+          "golden checkpoint PR mismatch at step " + std::to_string(i));
+  }
+}
+
+void run_sh2_memory_cluster_tests() {
+  test_sh2_movw_memory_read_executes_via_bus_with_sign_extend();
+  test_sh2_movw_memory_write_executes_via_bus_low_halfword_only();
+  test_sh2_movl_memory_read_executes_via_bus();
+  test_sh2_movl_memory_write_executes_via_bus();
+}
+
+void run_sh2_control_flow_cluster_tests() {
+  test_sh2_bra_uses_delay_slot_deterministically();
+  test_sh2_rts_uses_delay_slot_deterministically();
+  test_sh2_rts_branches_to_pr_not_sp();
+  test_sh2_branch_in_delay_slot_uses_first_branch_target_policy();
+  test_p2_sh2_golden_state_checkpoints_for_long_control_flow_fixture();
+}
+
 int main() {
   test_committed_memory_uses_big_endian_multibyte_layout();
   test_tiny_cache_uses_big_endian_multibyte_layout();
@@ -5955,14 +6112,8 @@ int main() {
   test_vdp2_tvmd_register_masks_to_low_16_bits();
   test_vdp2_tvstat_register_is_read_only_with_deterministic_status();
   test_scsp_mcier_register_masks_to_low_11_bits();
-  test_sh2_movl_memory_read_executes_via_bus();
-  test_sh2_movw_memory_read_executes_via_bus_with_sign_extend();
-  test_sh2_movw_memory_write_executes_via_bus_low_halfword_only();
-  test_sh2_movl_memory_write_executes_via_bus();
-  test_sh2_bra_uses_delay_slot_deterministically();
-  test_sh2_rts_uses_delay_slot_deterministically();
-  test_sh2_rts_branches_to_pr_not_sp();
-  test_sh2_branch_in_delay_slot_uses_first_branch_target_policy();
+  run_sh2_memory_cluster_tests();
+  run_sh2_control_flow_cluster_tests();
   test_sh2_bra_with_movw_delay_slot_applies_branch_after_memory_slot();
   test_sh2_rts_with_movw_delay_slot_applies_branch_after_memory_slot();
   test_sh2_bra_with_movl_delay_slot_applies_branch_after_memory_slot();
@@ -6000,6 +6151,9 @@ int main() {
   test_sh2_rts_both_negative_overwrite_with_target_mov_add_add_before_store_is_deterministic();
   test_commit_horizon_fairness_when_cpu_and_dma_contend_same_mmio_address();
   test_dma_produced_bus_op_path_emits_dma_tagged_commits_deterministically();
+  test_p2_bus_shape_helper_validates_order_addr_and_size();
+  test_p2_sh2_t_bit_helper_tracks_cmp_eq_transitions();
+  test_p2_sh2_micro_vector_harness_add_and_tbit_cases();
   test_sh2_add_immediate_updates_register_with_signed_imm();
   test_p1_sh2_shift_family_shlln_shlrn_vectors();
   test_p1_sh2_shal_shar_and_rotc_t_bit_behavior();
