@@ -4,6 +4,13 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Track A (libbusarb extraction + Ymir seam) implementation review
+- Added standalone `libbusarb` static library with public API under `include/busarb/` and implementation in `src/busarb/`.
+- Implemented timing callback seam (`TimingCallbacks::access_cycles`) and public POD request/wait structs (`BusRequest`, `BusWaitResult`, `BusMasterId`).
+- Implemented non-mutating `query_wait(...)` + mutating `commit_grant(...)` API and deterministic fixed-priority winner selection (`DMA > SH2_A > SH2_B`) via `pick_winner(...)`.
+- Added deterministic unit tests for query order-independence, commit determinism, callback-driven service timing, and tie-break policy.
+- Added handoff documentation for Ymir integration and a local `docs/Roadmap.md` copy to anchor the refocused plan in-repo.
+
 ### 2026-02-19 Group 11 (testing infrastructure upgrades) implementation review
 - Added reusable SH-2 test infrastructure helpers:
   - declarative micro-vector harness (`Sh2MicroVector` + `run_sh2_micro_vectors`),

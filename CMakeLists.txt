@@ -27,6 +27,12 @@ endif()
 
 find_package(SDL2 QUIET)
 
+
+add_library(busarb STATIC
+  src/busarb/busarb.cpp
+)
+target_include_directories(busarb PUBLIC include)
+
 add_library(saturnis_core
   src/core/trace.cpp
   src/core/time.cpp
@@ -68,6 +74,10 @@ if(BUILD_TESTING)
   add_executable(saturnis_trace_regression tests/test_trace_regression.cpp)
   target_link_libraries(saturnis_trace_regression PRIVATE saturnis_core)
   add_test(NAME saturnis_trace_regression COMMAND saturnis_trace_regression)
+
+  add_executable(busarb_tests tests/test_busarb.cpp)
+  target_link_libraries(busarb_tests PRIVATE busarb)
+  add_test(NAME busarb_tests COMMAND busarb_tests)
 
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
