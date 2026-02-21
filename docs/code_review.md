@@ -4,6 +4,111 @@ Date: 2026-02-17 (challenge session update)
 
 ## Review summary
 
+### 2026-02-19 Track A (libbusarb extraction + Ymir seam) implementation review
+- Added standalone `libbusarb` static library with public API under `include/busarb/` and implementation in `src/busarb/`.
+- Implemented timing callback seam (`TimingCallbacks::access_cycles`) and public POD request/wait structs (`BusRequest`, `BusWaitResult`, `BusMasterId`).
+- Implemented non-mutating `query_wait(...)` + mutating `commit_grant(...)` API and deterministic fixed-priority winner selection (`DMA > SH2_A > SH2_B`) via `pick_winner(...)`.
+- Added deterministic unit tests for query order-independence, commit determinism, callback-driven service timing, and tie-break policy.
+- Added handoff documentation for Ymir integration and a local `docs/Roadmap.md` copy to anchor the refocused plan in-repo.
+
+### 2026-02-19 Group 11 (testing infrastructure upgrades) implementation review
+- Added reusable SH-2 test infrastructure helpers:
+  - declarative micro-vector harness (`Sh2MicroVector` + `run_sh2_micro_vectors`),
+  - bus sequence shape assertions (kind/address/size order),
+  - SR `T`-bit transition helper assertions.
+- Added deterministic micro-harness and helper coverage tests, plus a golden checkpoint test for a longer control-flow fixture.
+- Introduced themed SH-2 cluster runners in the kernel test entrypoint (memory/control-flow) to reduce monolithic call sprawl while preserving deterministic execution order.
+- Added contributor-facing naming convention and template documentation for future SH-2 microtests.
+
+### 2026-02-19 Group 10 (BIOS forward-progress instrumentation) implementation review
+- Added local-only BIOS forward-progress tooling under `tools/bios_metrics/`:
+  - local runner to execute `saturnemu` BIOS traces and capture `ILLEGAL_OP` metrics,
+  - parser/formatter library for deterministic metrics extraction,
+  - baseline-vs-latest diff tool with regression exit semantics.
+- Defined and documented the local baseline artifact format (`illegal_op_count`, first `opcode/pc`, and top-opcode histogram).
+- Added deterministic fixture-driven parser tests (`tests/test_bios_metrics_scripts.py`) and wired them into CTest when Python is available.
+- Added explicit developer guidance that BIOS assets are local-only and must not be committed or used in CI artifacts.
+
+### 2026-02-19 Group 9 (memory ordering + determinism validation) implementation review
+- Added deterministic mixed-width same-address overwrite regressions for newly added system-transfer stack paths (`STC.L` payload overwritten by byte/word stores before `LDC.L` restore).
+- Added focused aliasing coverage for post-increment and pre-decrement edge cases, including `MOV.B/W/L @Rm+,Rn (m==n)` and explicit current-model behavior for `MOV.L Rn,@-Rn` aliasing.
+- Added deterministic contention/stall validations for overlapping long accesses and dual-CPU overlapping-width writes.
+- Added trace-stability checks for new Group 8 transfer paths and a long-prefix (64-line) stability check over a transfer stress fixture.
+
+### 2026-02-19 Group 8 (system/register transfer completeness) implementation review
+- Implemented stack-form system and accumulator transfers in SH-2 pipeline:
+  1. `STC.L SR/GBR/VBR,@-Rn`.
+  2. `LDC.L @Rm+,SR/GBR/VBR`.
+  3. `STS.L MACH/MACL,@-Rn` and `LDS.L @Rm+,MACH/MACL`.
+- Reused pending memory-op sequencing with explicit special-register load destinations to preserve deterministic bus-order semantics.
+- Added deterministic regressions for stack roundtrip behavior and a reset/non-target invariance suite covering system and accumulator transfer operations.
+- Follow-up review found and fixed a runahead hazard where consecutive stack-form writes could overwrite `pending_mem_op_`; stack-form write bus-op generation now covers `STC.L`/`STS.L` families consistently to preserve write ordering.
+
+### 2026-02-19 Group 7 (multiply/divide family) implementation review
+- Implemented multiply/divide instruction coverage in the SH-2 execute path:
+  1. `MULS.W` / `MULU.W` into `MACL`.
+  2. `DMULS.L` / `DMULU.L` into `MACH:MACL`.
+  3. `DIV0U`, `DIV0S`, and deterministic `DIV1` step semantics with SR `Q/M/T` interaction.
+- Added deterministic regression vectors for multiply family outputs and divide status behavior.
+- Added explicit TODO-backed guard test asserting unsupported `MAC.W/MAC.L` paths remain loud `ILLEGAL_OP` faults until full deterministic semantics are implemented.
+
+### 2026-02-19 Group 6 (shift/bit expansion) implementation review
+- Implemented and reviewed shift/bit families in SH-2 execute path:
+  1. `SHLL2/SHLL8/SHLL16` and `SHLR2/SHLR8/SHLR16` fixed-shift groups.
+  2. `SHAL`/`SHAR` with explicit `T`-bit behavior.
+  3. `ROTCL`/`ROTCR` (rotate through carry) with deterministic carry propagation.
+  4. `SHAD`/`SHLD` variable-shift semantics for signed shift-count interpretation.
+- Added vector regressions for fixed-shift families, arithmetic/rotate-through-carry `T`-bit transitions, and variable-shift positive/negative count handling.
+- Review note: all new shift paths are pure register transformations with deterministic bit-level behavior and no timing/random dependencies.
+
+### 2026-02-19 Group 5 (ALU coverage) implementation review
+- Implemented and reviewed ALU flag-sensitive instructions: `ADDC`, `ADDV`, and `NEGC`.
+- Added focused deterministic regressions for multi-step `SUBC/SUBV` borrow/overflow chains.
+- Added deterministic `T`-bit side-effect audit coverage for core logical/compare ops (`AND/OR/XOR/TST/CMP`).
+- Added a fixed-corpus ALU reference-vector scaffold to reuse for future arithmetic task groups while preserving deterministic expectations.
+- Review outcome: all new ALU paths operate on register state only, avoid host-time dependence, and remain trace-stable across repeated runs.
+
+### 2026-02-19 Group 4 (addressing-mode breadth) implementation review
+- Added/validated SH-2 addressing-mode coverage for real firmware-style data paths:
+  1. PC-relative forms: `MOV.W @(disp,PC),Rn`, `MOV.L @(disp,PC),Rn`, and `MOVA @(disp,PC),R0`.
+  2. Indexed `@(R0,Rn)` load/store families for `MOV.B/W/L`.
+  3. Expanded `@(disp,GBR)` scaling/sign-extension matrix assertions across byte/word/long variants.
+- Added deterministic robustness checks for this batch:
+  1. Unaligned indexed long access behavior is now pinned by deterministic modeled-RAM behavior + repeated-run trace parity assertions.
+  2. Decode-collision audit vectors for new addressing encodings remain exclusive under decode pattern matching.
+- Reviewed bus sequencing impact: all new memory forms continue through the existing pending memory-op and arbiter commit pipeline.
+
+### 2026-02-19 Group 3 (decode hardening) implementation review
+- Added a shared decode helper module with:
+  1. Centralized nibble/immediate/displacement extraction helpers.
+  2. Canonical decode family pattern table for currently modeled SH-2 families.
+  3. Deterministic `decode_match_count` auditing path for overlap/exclusivity checks.
+- Added decode-focused regressions for:
+  1. Adjacent-encoding corpus around control-flow opcodes (`JSR`/`JMP`/`BSR` boundaries).
+  2. Full 65536-opcode exclusivity assertion over decode patterns.
+  3. Decode-family corpus coverage (each pattern family has at least one vector).
+  4. Unknown opcode behavior pinned to deterministic `ILLEGAL_OP` (no implicit NOP fallback).
+- Refactoring note: extracted branch/system register field reads in SH-2 execute path to shared decode field helpers to reduce nibble-extraction drift risk.
+
+### 2026-02-19 Group 2 (control-flow blockers) implementation review
+- Reviewed SH-2 control-flow behavior against Group 2 roadmap goals with emphasis on decode correctness and delayed-branch determinism.
+- Added/validated coverage for:
+  1. `JSR @Rn` non-R0 decode path (`@R3`) with PR link and delay-slot behavior.
+  2. Boundary displacement semantics for `BSR`, `BT/BF`, and `BT/S`/`BF/S` forms.
+  3. Branch delay-slot matrix coverage across `{BRA, BSR, JMP, JSR, BT/S, BF/S}` with both ALU-slot and memory-slot variants.
+- Determinism/code-quality review outcome:
+  1. Repeated-run branch matrix traces are byte-identical.
+  2. Control-flow state (`PC/PR/register side effects`) matches across repeated executions.
+  3. Delay-slot memory paths remain routed through existing bus-commit sequencing.
+
+### 2026-02-19 Group 1 (exception handler prologue/epilogue) implementation review
+- Reviewed SH-2 decode/execute changes for `STS.L PR,@-Rn`, `LDS.L @Rm+,PR`, `LDC Rm,SR`, and `STC SR,Rn`.
+- Verified each new instruction path keeps deterministic semantics:
+  1. Stack-address updates are register-derived only (no wall-clock/random inputs).
+  2. Memory forms use existing pending-bus operation pipeline to preserve commit ordering.
+  3. SR/PR register state transitions are explicit and trace-visible through existing snapshots.
+- Added a focused regression that exercises all four forms together and validates SR readback, PR roundtrip, and stack pointer invariants.
+
 ### 2026-02-19 TODO/PR documentation reconciliation
 - Reviewed the latest non-merge PR commit span (`5c33242`..`a6a13a0`) against the tracked TODO backlog to ensure completed work is captured in project docs.
 - Confirmed recently landed ISA/control-flow fixes are now explicitly tracked in `docs/todo.md`:
