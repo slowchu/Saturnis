@@ -1,380 +1,398 @@
-Saturnis → Ymir Roadmap (Corrected)
-North Star (Rewritten)
-Primary Deliverable (Ymir-facing)
+# Saturnis → Ymir Roadmap (Corrected)
 
-A small, reusable, deterministic libbusarb library that Ymir can call from its existing bus-wait hook to answer:
+## North Star (Rewritten)
 
-“Should this bus master stall right now, and if so for how long?”
+### Primary Deliverable (Ymir-facing)
 
-Explicitly Not the Deliverable (for now)
+A small, reusable, deterministic `libbusarb` library that Ymir can call from its existing bus-wait hook to answer:
 
-A full SH-2 executor
+> “Should this bus master stall right now, and if so for how long?”
 
-Full ISA decode/dispatch refactor
+### Explicitly Not the Deliverable (for now)
 
-MA/IF pipeline-stage modeling inside Saturnis
+- A full SH-2 executor
+- Full ISA decode/dispatch refactor
+- MA/IF pipeline-stage modeling inside Saturnis
+- A running Saturn emulator
 
-A running Saturn emulator
+Those are valid future goals, but they are **not** on the critical path to helping Ymir.
 
-Those are valid future goals, but they are not on the critical path to helping Ymir.
+---
 
-Guiding Principle
+## Guiding Principle
 
-Separate “timing/arbitration infrastructure” from “CPU execution correctness.”
+Separate **timing/arbitration infrastructure** from **CPU execution correctness**.
 
-Ymir already has CPU execution.
+Ymir already has CPU execution.  
 What it lacks (and what Saturnis can contribute) is a deterministic arbitration/timing mechanism with a testable integration seam.
 
-Roadmap Structure
-Track A (P0/P1): Ymir Integration Deliverable
+---
 
-This is the only track that should be considered active / priority right now.
+## Roadmap Structure
 
-Track B (P2+): Deeper Hardware Modeling (MA/IF, stage-aware)
+### Track A (P0/P1): Ymir Integration Deliverable
+
+This is the **only** track that should be considered active / priority right now.
+
+### Track B (P2+): Deeper Hardware Modeling (MA/IF, stage-aware)
 
 This depends on Striker’s answer and Ymir-side instrumentation.
 
-Track C (Optional Future): Saturnis as Full Emulator
+### Track C (Optional Future): Saturnis as Full Emulator
 
-This is explicitly decoupled and should not block Track A.
+This is explicitly decoupled and should **not** block Track A.
 
-Track A — P0/P1 (Active): libbusarb Extraction + Ymir Seam
-Gate A1 — Extract libbusarb as a standalone static library
-Goal
+---
+
+# Track A — P0/P1 (Active): libbusarb Extraction + Ymir Seam
+
+## Gate A1 — Extract `libbusarb` as a standalone static library
+
+### Goal
 
 Turn Saturnis’s arbiter into a small reusable library with no Saturnis-specific memory/router dependencies.
 
-Deliverables
+### Deliverables
 
-New build target: busarb / libbusarb (static lib)
+- New build target: `busarb` / `libbusarb` (static lib)
+- Public headers under `include/busarb/...`
+- No dependency on Saturnis device router / memory implementation
+- Minimal public API surface
 
-Public headers under include/busarb/...
+### Acceptance Criteria
 
-No dependency on Saturnis device router / memory implementation
+- Builds independently in Saturnis repo
+- Unit tests run without BIOS/ROM/device graph
+- Public headers do not include Saturnis internal types
 
-Minimal public API surface
+---
 
-Acceptance Criteria
+## Gate A2 — Define stable callback interface (timing source abstraction)
 
-Builds independently in Saturnis repo
+### Goal
 
-Unit tests run without BIOS/ROM/device graph
+Let Ymir supply timing (`GetAccessCycles`) without Saturnis duplicating Ymir’s timing tables.
 
-Public headers do not include Saturnis internal types
+### Required API (minimal)
 
-Gate A2 — Define stable callback interface (timing source abstraction)
-Goal
-
-Let Ymir supply timing (GetAccessCycles) without Saturnis duplicating Ymir’s timing tables.
-
-Required API (minimal)
+```cpp
 struct TimingCallbacks {
   uint32_t (*access_cycles)(void* ctx, uint32_t addr, bool is_write, uint8_t size_bytes);
   void* ctx;
 };
+```
 
-(Or equivalent C++ interface / functor-based form)
+*(Or equivalent C++ interface / functor-based form.)*
 
-Notes
+### Notes
 
-Keep this plain C++ (no Ymir types)
+- Keep this plain C++ (no Ymir types)
+- `size_bytes` included even if Ymir currently ignores/normalizes it
+- Optional `is_mmio(addr)` only if you prove it’s needed
 
-size_bytes included even if Ymir currently ignores/normalizes it
+### Acceptance Criteria
 
-Optional is_mmio(addr) only if you prove it’s needed
+- `libbusarb` compiles and runs using a mock callback in tests
+- No Saturnis latency model required for core library function
 
-Acceptance Criteria
+---
 
-libbusarb compiles and runs using a mock callback in tests
+## Gate A3 — Stable request/response types (public POD API)
 
-No Saturnis latency model required for core library function
-
-Gate A3 — Stable request/response types (public POD API)
-Goal
+### Goal
 
 Expose a narrow, durable interface for Ymir to call.
 
-Required Types
+### Required Types
 
-BusMasterId (enum or integer)
+#### `BusMasterId` (enum or integer)
 
-minimum: SH2_A, SH2_B, DMA
+Minimum:
 
-extensible
+- `SH2_A`
+- `SH2_B`
+- `DMA`
 
-BusRequest
+Extensible.
 
-master_id
+#### `BusRequest`
 
-addr
+- `master_id`
+- `addr`
+- `is_write`
+- `size_bytes`
+- `now_tick`
 
-is_write
+#### `BusWaitResult`
 
-size_bytes
+- `should_wait`
+- `wait_cycles` *(stall only)*
 
-now_tick
+### Important Semantics
 
-BusWaitResult
+- `now_tick` is treated as an **opaque monotonic tick** from the caller’s timebase
+- `wait_cycles` means **stall time until request may begin**, not total service duration
 
-should_wait
+### Acceptance Criteria
 
-wait_cycles (stall only)
+- Public API documented in header comments
+- No hidden dependency on Saturnis internal tick units
 
-Important Semantics
+---
 
-now_tick is treated as an opaque monotonic tick from the caller’s timebase
+## Gate A4 — Replace one-call “oracle” with a query/commit API (critical fix)
 
-wait_cycles means stall time until request may begin, not total service duration
+> This is the biggest roadmap correction.
 
-Acceptance Criteria
+### Why this is required
 
-Public API documented in header comments
+A single mutating `bus_wait(req)` cannot reliably be both:
 
-No hidden dependency on Saturnis internal tick units
+- call-order independent, and
+- stateful
 
-Gate A4 — Replace one-call “oracle” with a query/commit API (critical fix)
-
-This is the biggest roadmap correction.
-
-Why this is required
-
-A single mutating bus_wait(req) cannot reliably be both:
-
-call-order independent, and
-
-stateful
 when two masters contend at the same tick.
 
-Correct P0 API shape
+### Correct P0 API shape
 
-Use two-phase semantics:
+Use **two-phase semantics**:
 
-1) Query (non-mutating)
+#### 1) Query (non-mutating)
+
+```cpp
 BusWaitResult query_wait(const BusRequest& req) const;
-2) Commit (mutating)
+```
+
+#### 2) Commit (mutating)
+
+```cpp
 void commit_grant(const BusRequest& req, uint32_t tick_start);
+```
 
-commit_grant() computes service duration via access_cycles(...) and updates bus/master availability.
+`commit_grant()` computes service duration via `access_cycles(...)` and updates bus/master availability.
 
-Tie-break policy (P0)
+### Tie-break policy (P0)
 
 Keep it simple and deterministic:
 
-fixed master priority (documented), e.g. DMA > SH2_A > SH2_B
+- fixed master priority (documented), e.g. `DMA > SH2_A > SH2_B`
+- no round-robin in P0 unless Striker specifically asks for fairness behavior
 
-no round-robin in P0 unless Striker specifically asks for fairness behavior
+### Why this solves the earlier issue
 
-Why this solves your earlier issue
+- `query_wait()` can be call-order independent because it does **not** mutate state
+- Ymir can query multiple contenders and then commit the winner
+- deterministic arbitration is preserved
 
-query_wait() can be call-order independent because it does not mutate state
+### Acceptance Criteria
 
-Ymir can query multiple contenders and then commit the winner
+- Same-tick contention queries return consistent results regardless of query order
+- State changes happen only through `commit_grant()`
 
-deterministic arbitration is preserved
+---
 
-Acceptance Criteria
+## Gate A5 — Minimal trace hooks (optional but strongly recommended)
 
-Same-tick contention queries return consistent results regardless of query order
-
-State changes happen only through commit_grant()
-
-Gate A5 — Minimal trace hooks (optional but strongly recommended)
-Goal
+### Goal
 
 Make arbitration decisions observable and replayable.
 
-API (optional callbacks)
-on_grant(master_id, addr, is_write, size_bytes, tick_start, tick_end)
+### API (optional callbacks)
+
+- `on_grant(master_id, addr, is_write, size_bytes, tick_start, tick_end)`
 
 No-op if unset.
 
-Why it matters
+### Why it matters
 
-Helps Striker debug integration quickly
+- Helps Striker debug integration quickly
+- Lets you compare behavior across runs
+- Creates the seed for a replay harness later
 
-Lets you compare behavior across runs
+### Acceptance Criteria
 
-Creates the seed for a replay harness later
+- Tracing can be enabled in tests without changing library logic
+- Zero-overhead/no-op path when disabled (or negligible)
 
-Acceptance Criteria
+---
 
-Tracing can be enabled in tests without changing library logic
+## Gate A6 — Unit tests for the seam (must-have)
 
-Zero-overhead/no-op path when disabled (or negligible)
+### Required tests
 
-Gate A6 — Unit tests for the seam (must-have)
-Required tests
+#### Determinism
 
-Determinism
+- identical request/commit sequence => identical outputs/state
 
-identical request/commit sequence => identical outputs/state
+#### Query call-order independence
 
-Query call-order independence
+- same-tick contenders queried `A→B` vs `B→A`
+- query results must not depend on order
 
-same-tick contenders queried A→B vs B→A
+#### Commit determinism
 
-query results must not depend on order
+- same winner committed => same follow-up waits
 
-Commit determinism
+#### Basic timing
 
-same winner committed => same follow-up waits
+- busy bus returns expected `wait_cycles`
+- duration matches `access_cycles(...)` callback
 
-Basic timing
+#### Tie-break policy
 
-busy bus returns expected wait_cycles
+- same-tick conflict resolves per documented priority, not caller order
 
-duration matches access_cycles(...) callback
+### Acceptance Criteria
 
-Tie-break policy
+- No BIOS/ROM required
+- Small fast tests suitable for CI
 
-same-tick conflict resolves per documented priority, not caller order
+---
 
-Acceptance Criteria
+## Gate A7 — Minimal Ymir integration notes (handoff-ready)
 
-No BIOS/ROM required
-
-Small fast tests suitable for CI
-
-Gate A7 — Minimal Ymir integration notes (handoff-ready)
-Goal
+### Goal
 
 Make adoption trivial for Striker.
 
-README section should include
+### README section should include
 
-What libbusarb does (stall oracle; not full bus simulator)
+- What `libbusarb` does (stall oracle; not full bus simulator)
+- Required callback (`access_cycles`)
+- How to map Ymir `FnBusWait` / `IsBusWait` to `query_wait()`
+- When to call `commit_grant()`
+- Current limitations (no MA/IF stage modeling yet)
 
-Required callback (access_cycles)
+### Acceptance Criteria
 
-How to map Ymir FnBusWait / IsBusWait to query_wait()
+- Striker can wire a prototype adapter without reading Saturnis internals
 
-When to call commit_grant()
+---
 
-Current limitations (no MA/IF stage modeling yet)
-
-Acceptance Criteria
-
-Striker can wire a prototype adapter without reading Saturnis internals
-
-Track B — P2 (Depends on Striker / Ymir-side changes): MA/IF Contention Modeling
+# Track B — P2 (Depends on Striker / Ymir-side changes): MA/IF Contention Modeling
 
 This is where the roadmap was previously too early and too broad.
 
-Gate B1 — Clarify requirement with Striker (required before implementation)
+## Gate B1 — Clarify requirement with Striker (required before implementation)
 
 You still need the answer to:
 
-For MA/IF contention, do you require explicit IF/MA arbitration modeling, or is correct stall timing sufficient?
+> For MA/IF contention, do you require explicit IF/MA arbitration modeling, or is correct stall timing sufficient?
 
 Without this answer, you risk overbuilding.
 
-Acceptance Criteria
+### Acceptance Criteria
 
-Written response from Striker (issue comment / DM / repo note)
+- Written response from Striker (issue comment / DM / repo note)
+- Requirement recorded in roadmap/doc
 
-Requirement recorded in roadmap/doc
+---
 
-Gate B2 — Define Ymir-side instrumentation contract
+## Gate B2 — Define Ymir-side instrumentation contract
 
-libbusarb alone cannot invent MA/IF contention if Ymir does not expose enough info.
+`libbusarb` alone cannot invent MA/IF contention if Ymir does not expose enough info.
 
-Minimum metadata (if doing timing-based MA/IF)
+### Minimum metadata (if doing timing-based MA/IF)
 
 Ymir likely needs to annotate requests or internal SH-2 timing with:
 
-ma_cycles
+- `ma_cycles`
+- `if_cycles`
+- `ifetch_hits_bus` / `is_ifetch_cache_hit` (or equivalent)
+- stage timing basis (`now_tick` semantics)
 
-if_cycles
+### Acceptance Criteria
 
-ifetch_hits_bus / is_ifetch_cache_hit (or equivalent)
+- Agreed metadata schema between Saturnis/Ymir
+- Confirmed source location in Ymir (SH-2 core vs bus layer)
 
-stage timing basis (now_tick semantics)
+---
 
-Acceptance Criteria
+## Gate B3 — Implement MA/IF policy (only after B1/B2)
 
-Agreed metadata schema between Saturnis/Ymir
+### Two possible branches
 
-Confirmed source location in Ymir (SH-2 core vs bus layer)
-
-Gate B3 — Implement MA/IF policy (only after B1/B2)
-
-Two possible branches:
-
-B3a) Outcome model (stall timing only)
+#### B3a) Outcome model (stall timing only)
 
 Use manual-derived rules:
 
-split vs no-split
+- split vs no-split
+- MA priority
+- MA + IF state accounting
+- if no-bus-cycle special case
 
-MA priority
+#### B3b) Mechanism model (explicit IF/MA contenders)
 
-MA + IF state accounting
+Represent IF and MA as separate internal requests (heavier).
 
-if no-bus-cycle special case
+### Acceptance Criteria
 
-B3b) Mechanism model (explicit IF/MA contenders)
+- Matches agreed requirement from B1
+- Covered by dedicated tests (manual example sequences)
 
-Represent IF and MA as separate internal requests (heavier)
+---
 
-Acceptance Criteria
-
-Matches agreed requirement from B1
-
-Covered by dedicated tests (manual example sequences)
-
-Track C — Optional Future (Not Blocking Ymir): Saturnis Full Emulator Build-Out
+# Track C — Optional Future (Not Blocking Ymir): Saturnis Full Emulator Build-Out
 
 This is where decode/dispatch work belongs.
 
-Gate C1 — Full decode family coverage (optional)
+## Gate C1 — Full decode family coverage (optional)
 
-Useful for Saturnis itself, trace quality, and future CPU work.
-Not required for Ymir libbusarb handoff.
+Useful for Saturnis itself, trace quality, and future CPU work.  
+**Not required** for Ymir `libbusarb` handoff.
 
-Gate C2 — Opcode enum + dispatch table (optional)
+## Gate C2 — Opcode enum + dispatch table (optional)
 
-Normal emulator architecture step.
-Not a Ymir deliverable.
+Normal emulator architecture step.  
+**Not** a Ymir deliverable.
 
-Gate C3 — SH-2 execution refactor (optional)
+## Gate C3 — SH-2 execution refactor (optional)
 
-Replace if/else chain, etc.
-Explicitly out of scope for current handoff.
+Replace `if/else` chain, etc.  
+Explicitly **out of scope** for current handoff.
 
-What to Freeze Right Now (Important)
-Freeze (until Track A lands)
+---
 
-Full SH-2 decode expansion (unless directly required for a future MA/IF metadata prototype)
+## What to Freeze Right Now (Important)
 
-OpcodeType enum / 65536 dispatch table
+### Freeze (until Track A lands)
 
-sh2_core.cpp dispatch refactor
-
-Any attempt to build Saturnis into a running emulator as part of Ymir deliverable work
+- Full SH-2 decode expansion *(unless directly required for a future MA/IF metadata prototype)*
+- `OpcodeType` enum / 65536 dispatch table
+- `sh2_core.cpp` dispatch refactor
+- Any attempt to build Saturnis into a running emulator as part of Ymir deliverable work
 
 This is how you stop roadmap drift.
 
-Rewritten Priority Order (Concrete)
-Immediate (next work)
+---
 
-libbusarb extraction (A1)
+## Rewritten Priority Order (Concrete)
 
-callback interface (A2)
+### Immediate (next work)
 
-public request/response PODs (A3)
+1. `libbusarb` extraction (A1)
+2. callback interface (A2)
+3. public request/response PODs (A3)
+4. query/commit API (A4) **← critical design correction**
+5. unit tests (A6)
+6. README integration notes (A7)
+7. optional trace hook (A5)
 
-query/commit API (A4) ← critical design correction
+### After Striker tests a prototype
 
-unit tests (A6)
+- integration feedback fixes (API polish, tie-break tweaks)
+- decide whether MA/IF is:
+  - P2a (timing rules), or
+  - P2b (explicit internal contention)
+- only then consider deeper Ymir SH-2 instrumentation
 
-README integration notes (A7)
+---
 
-optional trace hook (A5)
+## Success Criteria (Rewritten)
 
-After Striker tests a prototype
+### “We delivered to Ymir” means:
 
-integration feedback fixes (API polish, tie-break tweaks)
-
-decide whether MA/IF is P2a (timing rules) or P2b (explicit internal contention)
-
-only then consider deeper Ymir SH-2 instrumentation
+- Striker can link `libbusarb`
+- Ymir can call `query_wait()` from `IsBusWait` path
+- Ymir can call `commit_grant()` when access proceeds
+- behavior is deterministic and not query-order dependent
