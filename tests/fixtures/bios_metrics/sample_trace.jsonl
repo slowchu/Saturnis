@@ -1,0 +1,6 @@
+TRACE {"version":1}
+STATE {"t":1,"cpu":0,"pc":0,"sr":240,"r":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,131056,0]}
+FAULT {"t":2,"cpu":0,"pc":4096,"detail":4660,"reason":"ILLEGAL_OP"}
+FAULT {"t":3,"cpu":0,"pc":4100,"detail":4660,"reason":"ILLEGAL_OP"}
+FAULT {"t":4,"cpu":0,"pc":4104,"detail":65535,"reason":"ILLEGAL_OP"}
+FAULT {"t":5,"cpu":0,"pc":8192,"detail":7,"reason":"EXCEPTION_ENTRY"}
