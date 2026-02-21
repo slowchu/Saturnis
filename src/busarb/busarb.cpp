@@ -74,7 +74,8 @@ std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &s
 std::uint64_t Arbiter::bus_free_tick() const { return bus_free_tick_; }
 
 std::uint32_t Arbiter::service_cycles(const BusRequest &req) const {
-  return callbacks_.access_cycles(callbacks_.ctx, req.addr, req.is_write, req.size_bytes);
+  const std::uint32_t cycles = callbacks_.access_cycles(callbacks_.ctx, req.addr, req.is_write, req.size_bytes);
+  return std::max(1U, cycles);
 }
 
 int Arbiter::priority(BusMasterId id) {

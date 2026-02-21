@@ -14,6 +14,9 @@ enum class BusMasterId : std::uint8_t {
 };
 
 struct TimingCallbacks {
+  // Returns service duration in caller-defined tick units for a granted access.
+  // Determinism contract: identical inputs must produce identical outputs.
+  // Return value of 0 is treated as 1 tick by the arbiter.
   std::uint32_t (*access_cycles)(void *ctx, std::uint32_t addr, bool is_write, std::uint8_t size_bytes) = nullptr;
   void *ctx = nullptr;
 };
@@ -23,11 +26,15 @@ struct BusRequest {
   std::uint32_t addr = 0;
   bool is_write = false;
   std::uint8_t size_bytes = 4;
+  // Opaque monotonic caller-owned timebase. Repeated queries at the same tick are valid.
   std::uint64_t now_tick = 0;
 };
 
 struct BusWaitResult {
+  // should_wait=false implies wait_cycles=0.
   bool should_wait = false;
+  // Stall-only delay in caller tick units until a request may begin.
+  // This value is a minimum delay and does not predict future contention.
   std::uint32_t wait_cycles = 0;
 };
 
@@ -35,7 +42,10 @@ class Arbiter {
 public:
   explicit Arbiter(TimingCallbacks callbacks);
 
+  // Non-mutating wait query.
   [[nodiscard]] BusWaitResult query_wait(const BusRequest &req) const;
+  // Mutating grant commit. Does not require a prior query_wait call.
+  // duplicate commit_grant calls intentionally model duplicate grants.
   void commit_grant(const BusRequest &req, std::uint64_t tick_start);
 
   [[nodiscard]] std::optional<std::size_t> pick_winner(const std::vector<BusRequest> &same_tick_requests) const;

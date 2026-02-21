@@ -79,6 +79,10 @@ if(BUILD_TESTING)
   target_link_libraries(busarb_tests PRIVATE busarb)
   add_test(NAME busarb_tests COMMAND busarb_tests)
 
+  add_executable(busarb_link_harness tests/test_busarb_link_harness.cpp)
+  target_link_libraries(busarb_link_harness PRIVATE busarb)
+  add_test(NAME busarb_link_harness COMMAND busarb_link_harness)
+
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(
