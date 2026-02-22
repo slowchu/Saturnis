@@ -43,7 +43,7 @@ Legacy emulator scaffolding is retained as internal validation infrastructure wh
 
 The project narrowed scope to ship a concrete, high-value deliverable faster:
 
-- Ymir needs a deterministic offline timing reference to calibrate behavior safely.
+- Ymir expressed interest in a deterministic offline timing reference to calibrate behavior safely.
 - Offline-first comparative replay makes regressions measurable and reproducible.
 - A smaller scope reduces contributor ambiguity and avoids broad emulator-roadmap churn.
 - Existing Saturnis components remain useful as test harness/sandbox infrastructure.
