@@ -1,5 +1,7 @@
 # Saturnis Architecture (Vertical Slice)
 
+> Scope note: this architecture document describes Saturnis internals used as a deterministic testing scaffold for the Ymir offline timing tool roadmap. It is not a commitment to full emulator-product expansion.
+
 ## Core invariants
 
 1. **Committed memory** is owned only by the `BusArbiter`.
