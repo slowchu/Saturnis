@@ -51,6 +51,7 @@ struct ReplayResult {
 
 void print_help() {
   std::cout << "Usage: trace_replay <input.jsonl> [--annotated-output <path>] [--top <N>]\n"
+            << "Schema: Phase 1 per-successful-access JSONL records.\n"
             << "Comparative replay only: keeps recorded Ymir ticks; does not retime downstream records.\n";
 }
 
@@ -295,6 +296,7 @@ int main(int argc, char **argv) {
   std::size_t agreement_count = 0;
   std::size_t mismatch_count = 0;
   std::size_t known_gap_count = 0;
+  std::size_t known_gap_byte_access_count = 0;
   std::map<std::string, std::size_t> histogram;
 
   for (const auto &record : records) {
@@ -337,6 +339,7 @@ int main(int argc, char **argv) {
       r.classification = "known_ymir_wait_model_gap";
       r.known_gap_reason = "byte_access_wait_check_gap";
       ++known_gap_count;
+      ++known_gap_byte_access_count;
     } else if (r.delta_total == 0 && r.delta_wait == 0) {
       r.classification = "agreement";
       ++agreement_count;
@@ -389,6 +392,7 @@ int main(int argc, char **argv) {
   std::cout << "agreement_count: " << agreement_count << "\n";
   std::cout << "mismatch_count: " << mismatch_count << "\n";
   std::cout << "known_gap_count: " << known_gap_count << "\n";
+  std::cout << "known_gap_byte_access_count: " << known_gap_byte_access_count << "\n";
   std::cout << "delta_histogram:\n";
   for (const auto &[key, count] : histogram) {
     std::cout << "  " << key << " => " << count << "\n";

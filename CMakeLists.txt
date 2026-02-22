@@ -27,7 +27,6 @@ endif()
 
 find_package(SDL2 QUIET)
 
-# Active Ymir tooling targets: keep these discoverable for offline-first timing work.
 add_library(busarb STATIC
   src/busarb/busarb.cpp
   src/busarb/ymir_timing.cpp
@@ -68,7 +67,6 @@ endif()
 add_executable(saturnemu src/main.cpp)
 target_link_libraries(saturnemu PRIVATE saturnis_core)
 
-# Active comparative replay CLI for offline-first analysis.
 add_executable(trace_replay tools/trace_replay/trace_replay.cpp)
 target_link_libraries(trace_replay PRIVATE busarb)
 

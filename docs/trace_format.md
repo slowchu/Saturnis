@@ -1,7 +1,6 @@
 # Saturnis/Ymir Phase 1 Trace Format (JSONL)
 
 This document defines the Phase 1 **offline-first** trace schema used for Saturnis `trace_replay`.
-It is designed for deterministic **comparative replay** against Ymir outputs.
 
 ## Recommended schema (per-successful-access)
 
@@ -38,11 +37,9 @@ Example:
 - `tick_first_attempt` + `tick_complete` allow exact elapsed derivation when available.
 - `seq` is the authoritative deterministic tie-break when completion ticks are equal.
 
-## Known-gap classification caveat
+## Known Ymir behavior caveat
 
 Some current Ymir byte-sized load/store handlers may bypass `IsBusWait()`. In those cases traces can show `retries=0` for byte accesses even when offline arbiter predicts contention. Replay/diff tooling must classify these as a **known Ymir wait-model gap**, not an arbiter error.
-
-Comparative replay reports should keep this under explicit **known-gap classification** so parity failures remain actionable.
 
 ## Alternate mode (optional): per-attempt records
 
@@ -55,7 +52,9 @@ Tradeoff:
 
 Phase 1 recommendation remains per-successful-access records.
 
-## Questions to confirm with Striker before freezing schema
+## Phase 1 fixed assumptions
 
-1. Should Phase 1 freeze on per-successful-access records, or support per-attempt records as first-class?
-2. Is the current byte-access `IsBusWait()` omission intentional for now, or should it be corrected before calibration runs?
+1. Phase 1 is frozen on **per-successful-access** records as the primary/required schema.
+2. Per-attempt format remains optional/future and is not first-class in current tooling.
+3. Byte-size `IsBusWait()` omission in current Ymir is treated as a **known Ymir wait-model gap** in replay/diff output, not an arbiter error and not a blocker for calibration runs.
+4. Replay summaries should report known-gap frequency so impact can be measured and revisited later if needed.
