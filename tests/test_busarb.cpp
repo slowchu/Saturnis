@@ -84,7 +84,7 @@ void test_pick_winner_uses_fixed_priority_for_three_way_same_tick() {
 }
 
 void test_commit_determinism_and_wait_cycles() {
-  busarb::Arbiter arb({fixed_cycles, nullptr});
+  busarb::Arbiter arb({fixed_cycles, nullptr}, {.same_address_contention = 0, .tie_turnaround = 0});
   const busarb::BusRequest req{busarb::BusMasterId::SH2_A, 0x1000U, false, 4U, 0U};
 
   arb.commit_grant(req, 0U);
@@ -113,6 +113,59 @@ void test_callback_arguments_passthrough_and_zero_cycle_clamp() {
   check(arb.bus_free_tick() == 10U, "zero callback cycles should be clamped to one deterministic tick");
 }
 
+void test_same_address_contention_penalty_applies() {
+  busarb::Arbiter arb({fixed_cycles, nullptr}, {.same_address_contention = 2, .tie_turnaround = 0});
+  const busarb::BusRequest a{busarb::BusMasterId::SH2_A, 0x2222U, false, 4U, 0U};
+  const busarb::BusRequest b{busarb::BusMasterId::SH2_B, 0x2222U, false, 4U, 7U};
+  arb.commit_grant(a, 0U);
+  arb.commit_grant(b, 7U);
+  check(arb.bus_free_tick() == 16U, "same-address consecutive grant should add contention penalty");
+}
+
+void test_different_address_has_no_contention_penalty() {
+  busarb::Arbiter arb({fixed_cycles, nullptr}, {.same_address_contention = 2, .tie_turnaround = 0});
+  arb.commit_grant(busarb::BusRequest{busarb::BusMasterId::SH2_A, 0x2000U, false, 4U, 0U}, 0U);
+  arb.commit_grant(busarb::BusRequest{busarb::BusMasterId::SH2_B, 0x2004U, false, 4U, 7U}, 7U);
+  check(arb.bus_free_tick() == 14U, "different-address consecutive grant should not add contention penalty");
+}
+
+void test_tie_turnaround_penalty_applies_only_after_tie_pick() {
+  busarb::Arbiter arb({fixed_cycles, nullptr}, {.same_address_contention = 0, .tie_turnaround = 1});
+
+  std::vector<busarb::BusRequest> tie_requests = {
+      busarb::BusRequest{busarb::BusMasterId::SH2_A, 0x1000U, false, 4U, 10U},
+      busarb::BusRequest{busarb::BusMasterId::SH2_B, 0x2000U, false, 4U, 10U},
+  };
+  const auto winner = arb.pick_winner(tie_requests);
+  check(winner.has_value(), "winner expected for tie test");
+  arb.commit_grant(tie_requests[*winner], 10U);
+  check(arb.bus_free_tick() == 18U, "tie turnaround penalty should add one tick after tie");
+
+  arb.commit_grant(busarb::BusRequest{busarb::BusMasterId::DMA, 0x3000U, false, 4U, 18U}, 18U);
+  check(arb.bus_free_tick() == 25U, "non-tie commit should not keep tie turnaround penalty latched");
+}
+
+void test_round_robin_cpu_tie_break_alternates() {
+  busarb::Arbiter arb({fixed_cycles, nullptr});
+  std::vector<busarb::BusRequest> tie = {
+      busarb::BusRequest{busarb::BusMasterId::SH2_A, 0x1000U, false, 4U, 1U},
+      busarb::BusRequest{busarb::BusMasterId::SH2_B, 0x1004U, false, 4U, 1U},
+  };
+
+  auto first = arb.pick_winner(tie);
+  check(first.has_value() && tie[*first].master_id == busarb::BusMasterId::SH2_A, "first CPU tie should pick SH2_A");
+  arb.commit_grant(tie[*first], 1U);
+
+  auto second = arb.pick_winner(tie);
+  check(second.has_value() && tie[*second].master_id == busarb::BusMasterId::SH2_B,
+        "second CPU tie should alternate to SH2_B");
+  arb.commit_grant(tie[*second], 10U);
+
+  auto third = arb.pick_winner(tie);
+  check(third.has_value() && tie[*third].master_id == busarb::BusMasterId::SH2_A,
+        "third CPU tie should alternate back to SH2_A");
+}
+
 } // namespace
 
 int main() {
@@ -121,6 +174,10 @@ int main() {
   test_pick_winner_uses_fixed_priority_for_three_way_same_tick();
   test_commit_determinism_and_wait_cycles();
   test_callback_arguments_passthrough_and_zero_cycle_clamp();
+  test_same_address_contention_penalty_applies();
+  test_different_address_has_no_contention_penalty();
+  test_tie_turnaround_penalty_applies_only_after_tie_pick();
+  test_round_robin_cpu_tie_break_alternates();
   std::cout << "busarb tests passed\n";
   return 0;
 }
