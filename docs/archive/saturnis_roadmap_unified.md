@@ -1,3 +1,5 @@
+> Archived/Superseded: retained for historical context. Active planning lives in `docs/roadmap_ymir_tool.md`.
+
 # Saturnis Roadmap — Deterministic Sega Saturn Emulator
 *Unified document: high-level gates + executable task lists.*
 *SH-2 task groups are embedded under Gate C. All other gates will receive equivalent task expansions as execution plans are written.*
