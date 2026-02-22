@@ -1,6 +1,7 @@
 # Saturnis/Ymir Phase 1 Trace Format (JSONL)
 
 This document defines the Phase 1 **offline-first** trace schema used for Saturnis `trace_replay`.
+It is designed for deterministic **comparative replay** against Ymir outputs.
 
 ## Recommended schema (per-successful-access)
 
@@ -37,9 +38,11 @@ Example:
 - `tick_first_attempt` + `tick_complete` allow exact elapsed derivation when available.
 - `seq` is the authoritative deterministic tie-break when completion ticks are equal.
 
-## Known Ymir behavior caveat
+## Known-gap classification caveat
 
 Some current Ymir byte-sized load/store handlers may bypass `IsBusWait()`. In those cases traces can show `retries=0` for byte accesses even when offline arbiter predicts contention. Replay/diff tooling must classify these as a **known Ymir wait-model gap**, not an arbiter error.
+
+Comparative replay reports should keep this under explicit **known-gap classification** so parity failures remain actionable.
 
 ## Alternate mode (optional): per-attempt records
 

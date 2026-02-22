@@ -1,125 +1,91 @@
-# Saturnis — Determinism-First Sega Saturn Emulator Scaffold
+# Saturnis — Ymir Offline Timing Tool Host
 
-Saturnis is an **open-source Sega Saturn emulator foundation** built to answer a specific question:
+Saturnis is now focused on one deliverable: a **deterministic, offline bus-timing reference/replay toolchain for Ymir**.
 
-> Can we run two SH-2 CPUs in parallel **without lockstep**, while still producing a **bit-for-bit reproducible** global memory/device trace?
+This repository is no longer pursuing “full standalone Sega Saturn emulator” as its active product direction.
 
-This repo is currently a **research / vertical-slice scaffold**. It is not (yet) a full Saturn emulator, but it is designed so correctness and regression confidence can scale as more ISA/device behavior is added.
+## Current Scope (active)
 
----
+Saturnis currently exists to support Ymir timing validation through:
 
-## What Saturnis is doing differently
+- `libbusarb` as a Saturnis-independent arbitration seam/library
+- offline-first trace capture/replay and comparative replay diffing
+- Ymir-calibrated timing callbacks and known-gap classification
+- deterministic replay ordering and reproducible tests
+- lightweight harness/scaffold code used to generate and validate traces
 
-The Saturn has **two main CPUs (dual SH-2)** that contend for shared RAM and hardware registers. Traditional approaches often rely on lockstep scheduling or heavy synchronization.
+Start here:
 
-Saturnis instead uses **deterministic parallel producers**:
+- `docs/roadmap_ymir_tool.md`
+- `docs/trace_format.md`
+- `docs/ymir_integration_guide.md`
+- `docs/project_scope_rules.md`
 
-- Each CPU (and later DMA/devices) emits timestamped **bus operations** (`BusOp`) like RAM reads/writes and MMIO reads/writes.
-- A single **BusArbiter** is the **only authority** allowed to commit effects to global memory/device state.
-- The arbiter enforces a **deterministic total order** based on emulated time and a stable tie-break policy (not host thread timing).
-- CPUs can run in parallel and stall via back-pressure (bus occupancy / `bus_free_time`) while still producing identical committed results.
+## Active vs Frozen
 
-### Determinism is a first-class feature
-Saturnis aims for:
-- **identical traces across runs**
-- **identical traces single-thread vs multi-thread**
-- regression tests that fail loudly with minimal “heisenbugs”
+### Active
 
----
+- `libbusarb` correctness and stable interfaces
+- replay/diff tooling (`trace_replay`) and trace documentation
+- deterministic test coverage for arbitration/replay semantics
+- Ymir integration guidance and calibration workflow
 
-## Current status (high level)
+### Frozen / De-emphasized
 
-✅ Implemented / in active use
-- Deterministic BusArbiter commit ordering (thread-schedule independent)
-- Producer progress / horizon gating to avoid committing “late earlier ops”
-- Deterministic fault reporting in traces (illegal op, invalid bus op, contract violations, cache mismatch)
-- Store-buffer forwarding + tiny cache for local CPU visibility
-- Built-in dual-CPU deterministic demo
-- Basic BIOS bring-up entry points (prototype mapping / limited device behavior)
+- broad emulator-core expansion as a standalone end goal
+- large decode/dispatch growth not required for replay validation
+- full BIOS boot-path completion as a roadmap objective
+- general “run commercial games” scope
 
-🚧 In progress / next milestones
-- SH-2 control-flow correctness expansion (delay-slot edge cases, BSR/BT/BF(/S), PR semantics, exception/interrupt entry/return beyond the scaffold)
-- Device behavior growth (SCU interrupts + DMA, VDP2 timing + blanking IRQs, SMPC command/IRQ, VDP1 stepping, CD block FIFO/MMIO, SCSP MMIO front-end)
-- Stronger long-run multithread liveness/perf stress tests
+Legacy emulator scaffolding is retained as internal validation infrastructure where it helps deterministic bus/timing testing.
 
-❗ Not a goal (right now)
-- Full cycle accuracy
-- Full graphics/audio fidelity
-- “Runs every game today” expectations
+## Why the pivot?
 
----
+The project narrowed scope to ship a concrete, high-value deliverable faster:
 
-## Architecture (short version)
+- Ymir needs a deterministic offline timing reference to calibrate behavior safely.
+- Offline-first comparative replay makes regressions measurable and reproducible.
+- A smaller scope reduces contributor ambiguity and avoids broad emulator-roadmap churn.
+- Existing Saturnis components remain useful as test harness/sandbox infrastructure.
 
-- **Producers:** SH-2 cores (and later DMA/devices) generate timestamped `BusOp`s.
-- **Single commit authority:** The **BusArbiter** applies the only global writes and resolves read results.
-- **Local visibility:** CPUs may see their own pending writes via store-buffer forwarding + tiny cache, but **global visibility happens only at arbiter commit**.
-- **MMIO discipline:** Uncached/MMIO operations synchronize through the arbiter with lane/width semantics.
+## Current Deliverables
 
-If you’re contributing device work, please read:
-- `docs/architecture.md`
-- `docs/mmio_endianness.md`
+- `libbusarb` extraction/seam with Saturnis-independent public headers
+- documented trace format and known-gap classification rules
+- `trace_replay` tool for comparative replay and diff analysis
+- Ymir integration guide (Phase 1 offline workflow)
+- deterministic build/test workflow with stable regression fixtures
 
----
+## Deferred / Parked Work
 
-## Legal
+The following are intentionally parked unless directly needed for Ymir tool validation:
 
-- No BIOS/ROM content is included.
-- You must supply your own Saturn BIOS file.
+- decode expansion and interpreter breadth work
+- SH-2 execution refactors aimed at emulator completeness
+- full emulator BIOS/game boot path milestones
+- graphics/audio subsystem fidelity expansion
 
----
+Archived historical roadmap material is preserved in `docs/archive/`.
 
-## Build
+## Build and test
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
-## Run
-Deterministic built-in dual-CPU demo
-```./build/saturnemu --dual-demo --trace demo_trace.jsonl```
 
-BIOS bring-up mode (prototype mapping)
-```./build/saturnemu --bios /path/to/your/saturn_bios.bin --headless --trace bios_trace.jsonl```
+## Active tools/targets
 
+- `busarb` (library)
+- `trace_replay` (offline comparative replay tool)
+- `busarb_tests`, `ymir_timing_tests`, `saturnis_trace_regression` (deterministic validation)
 
-Note: BIOS bring-up is currently limited by incomplete SH-2 ISA coverage and incomplete device behaviors. The focus is reproducible ordering and debuggable scaffolding.
+## Scope note
 
-## Tracing & debugging
+`saturnemu` and emulator-core code are retained as scaffolding/sandbox code for deterministic timing validation. They are not the primary product deliverable in the current roadmap.
 
-Traces are intended to be stable regression fixtures.
+## Legal
 
-Faults are recorded deterministically (e.g., illegal opcode, invalid bus op, cache fill mismatch).
-
-For regression testing, prefer configurations that treat faults as test failures (fail-fast).
-
-## Contributing
-
-### Saturnis is intentionally built in layers. The most helpful contributions are:
-
-- Microtests (small SH-2 programs with expected PC/PR/reg behavior)
-
-- Arbiter/progress invariant tests (parity single vs multi-thread, property tests)
-
-- Device behavior that produces deterministic, testable effects (IRQ/timing/DMA) before fidelity
-
-### PRs that add behavior should also add:
-
-- a microtest or regression fixture
-
-- trace/checkpoint expectations that stay stable across runs
-
-## Project goals (why this exists)
-
-### Saturnis is an experiment in building a Saturn emulator that can:
-
-- run dual SH-2 work in parallel,
-
-- keep a single deterministic “truth” for memory and devices,
-
-- reduce per-game hacks by having stronger ordering/correctness semantics,
-
-- and be easy to debug using repeatable traces.
-
-If that foundation holds, the project can scale from “vertical slice” to “functional emulator” without losing determinism.
+- No BIOS/ROM content is included.
+- You must supply your own Saturn BIOS file if you exercise BIOS-related harness paths.
