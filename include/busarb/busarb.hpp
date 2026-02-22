@@ -51,7 +51,8 @@ public:
   [[nodiscard]] BusWaitResult query_wait(const BusRequest &req) const;
   // Mutating grant commit. Does not require a prior query_wait call.
   // duplicate commit_grant calls intentionally model duplicate grants.
-  void commit_grant(const BusRequest &req, std::uint64_t tick_start);
+  // had_tie indicates this request won a same-tick equal-priority tie.
+  void commit_grant(const BusRequest &req, std::uint64_t tick_start, bool had_tie = false);
 
   [[nodiscard]] std::optional<std::size_t> pick_winner(const std::vector<BusRequest> &same_tick_requests) const;
   [[nodiscard]] std::uint64_t bus_free_tick() const;
@@ -66,7 +67,6 @@ private:
   bool has_last_granted_addr_ = false;
   std::uint32_t last_granted_addr_ = 0;
   std::optional<BusMasterId> last_granted_cpu_ = std::nullopt;
-  mutable bool last_pick_had_cpu_tie_ = false;
 };
 
 } // namespace busarb

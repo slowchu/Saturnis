@@ -138,7 +138,7 @@ void test_tie_turnaround_penalty_applies_only_after_tie_pick() {
   };
   const auto winner = arb.pick_winner(tie_requests);
   check(winner.has_value(), "winner expected for tie test");
-  arb.commit_grant(tie_requests[*winner], 10U);
+  arb.commit_grant(tie_requests[*winner], 10U, true);
   check(arb.bus_free_tick() == 18U, "tie turnaround penalty should add one tick after tie");
 
   arb.commit_grant(busarb::BusRequest{busarb::BusMasterId::DMA, 0x3000U, false, 4U, 18U}, 18U);

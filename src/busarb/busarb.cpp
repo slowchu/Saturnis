@@ -17,13 +17,13 @@ BusWaitResult Arbiter::query_wait(const BusRequest &req) const {
   return BusWaitResult{true, static_cast<std::uint32_t>(std::min<std::uint64_t>(delta, 0xFFFFFFFFULL))};
 }
 
-void Arbiter::commit_grant(const BusRequest &req, std::uint64_t tick_start) {
+void Arbiter::commit_grant(const BusRequest &req, std::uint64_t tick_start, bool had_tie) {
   const std::uint64_t actual_start = std::max(tick_start, bus_free_tick_);
   std::uint64_t duration = service_cycles(req);
   if (has_last_granted_addr_ && req.addr == last_granted_addr_) {
     duration += config_.same_address_contention;
   }
-  if (last_pick_had_cpu_tie_) {
+  if (had_tie) {
     duration += config_.tie_turnaround;
   }
   bus_free_tick_ = actual_start + duration;
@@ -32,7 +32,6 @@ void Arbiter::commit_grant(const BusRequest &req, std::uint64_t tick_start) {
   if (req.master_id == BusMasterId::SH2_A || req.master_id == BusMasterId::SH2_B) {
     last_granted_cpu_ = req.master_id;
   }
-  last_pick_had_cpu_tie_ = false;
 }
 
 std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &same_tick_requests) const {
@@ -57,7 +56,6 @@ std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &s
     }
 
     if (cand.master_id != BusMasterId::DMA && cur.master_id != BusMasterId::DMA && cand.master_id != cur.master_id) {
-      had_cpu_tie = true;
       BusMasterId preferred = BusMasterId::SH2_A;
       if (last_granted_cpu_.has_value()) {
         preferred = (*last_granted_cpu_ == BusMasterId::SH2_A) ? BusMasterId::SH2_B : BusMasterId::SH2_A;
