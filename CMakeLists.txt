@@ -107,6 +107,11 @@ if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(
+      NAME trace_replay_tool_python
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_trace_replay_tool.py
+    )
+
+    add_test(
       NAME saturnis_bios_metrics_scripts
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bios_metrics_scripts.py
     )

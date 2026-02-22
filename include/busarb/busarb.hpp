@@ -7,6 +7,10 @@
 
 namespace busarb {
 
+inline constexpr std::uint32_t kApiVersionMajor = 1;
+inline constexpr std::uint32_t kApiVersionMinor = 1;
+inline constexpr std::uint32_t kApiVersionPatch = 0;
+
 enum class BusMasterId : std::uint8_t {
   SH2_A = 0,
   SH2_B = 1,

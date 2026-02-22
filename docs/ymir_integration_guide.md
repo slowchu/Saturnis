@@ -63,6 +63,9 @@ Run:
 
 ```bash
 ./build/trace_replay /path/to/bus_trace.jsonl --annotated-output /tmp/annotated.jsonl
+
+# Optional machine-readable summary for calibration scripts
+./build/trace_replay /path/to/bus_trace.jsonl --summary-output /tmp/summary.json
 ```
 
 Optional:

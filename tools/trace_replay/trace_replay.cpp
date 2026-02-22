@@ -50,7 +50,7 @@ struct ReplayResult {
 };
 
 void print_help() {
-  std::cout << "Usage: trace_replay <input.jsonl> [--annotated-output <path>] [--top <N>]\n"
+  std::cout << "Usage: trace_replay <input.jsonl> [--annotated-output <path>] [--summary-output <path>] [--top <N>]\n"
             << "Schema: Phase 1 per-successful-access JSONL records.\n"
             << "Comparative replay only: keeps recorded Ymir ticks; does not retime downstream records.\n";
 }
@@ -216,6 +216,7 @@ int main(int argc, char **argv) {
 
   std::string input_path;
   std::optional<std::string> annotated_output_path;
+  std::optional<std::string> summary_output_path;
   std::size_t top_n = 20;
 
   for (int i = 1; i < argc; ++i) {
@@ -230,6 +231,14 @@ int main(int argc, char **argv) {
         return 1;
       }
       annotated_output_path = std::string(argv[++i]);
+      continue;
+    }
+    if (arg == "--summary-output") {
+      if (i + 1 >= argc) {
+        std::cerr << "Missing value for --summary-output\n";
+        return 1;
+      }
+      summary_output_path = std::string(argv[++i]);
       continue;
     }
     if (arg == "--top") {
@@ -385,6 +394,62 @@ int main(int argc, char **argv) {
                 << "\"known_gap_reason\":\"" << r.known_gap_reason << "\""
                 << "}\n";
     }
+  }
+
+  if (summary_output_path.has_value()) {
+    std::ofstream summary(*summary_output_path);
+    if (!summary.is_open()) {
+      std::cerr << "Failed to open summary output path: " << *summary_output_path << '\n';
+      return 1;
+    }
+
+    std::vector<const ReplayResult *> sorted_for_summary;
+    sorted_for_summary.reserve(results.size());
+    for (const auto &r : results) {
+      sorted_for_summary.push_back(&r);
+    }
+    std::stable_sort(sorted_for_summary.begin(), sorted_for_summary.end(), [](const ReplayResult *a, const ReplayResult *b) {
+      return std::llabs(a->delta_total) > std::llabs(b->delta_total);
+    });
+
+    summary << "{\n";
+    summary << "  \"records_processed\": " << results.size() << ",\n";
+    summary << "  \"malformed_lines_skipped\": " << malformed_lines << ",\n";
+    summary << "  \"agreement_count\": " << agreement_count << ",\n";
+    summary << "  \"mismatch_count\": " << mismatch_count << ",\n";
+    summary << "  \"known_gap_count\": " << known_gap_count << ",\n";
+    summary << "  \"known_gap_byte_access_count\": " << known_gap_byte_access_count << ",\n";
+    summary << "  \"delta_histogram\": {\n";
+    std::size_t hist_index = 0;
+    for (const auto &[key, count] : histogram) {
+      summary << "    \"" << json_escape(key) << "\": " << count;
+      ++hist_index;
+      if (hist_index < histogram.size()) {
+        summary << ',';
+      }
+      summary << "\n";
+    }
+    summary << "  },\n";
+    summary << "  \"top_deltas\": [\n";
+    const std::size_t emit_summary = std::min(top_n, sorted_for_summary.size());
+    for (std::size_t i = 0; i < emit_summary; ++i) {
+      const auto *r = sorted_for_summary[i];
+      summary << "    {\"rank\": " << (i + 1)
+              << ", \"seq\": " << r->record.seq
+              << ", \"master\": \"" << json_escape(r->record.master) << "\""
+              << ", \"addr\": \"" << json_escape(r->record.addr_text) << "\""
+              << ", \"size\": " << static_cast<unsigned>(r->record.size)
+              << ", \"delta_wait\": " << r->delta_wait
+              << ", \"delta_total\": " << r->delta_total
+              << ", \"classification\": \"" << json_escape(r->classification) << "\""
+              << ", \"region\": \"" << json_escape(region_name(r->record.addr)) << "\"}";
+      if (i + 1 < emit_summary) {
+        summary << ',';
+      }
+      summary << "\n";
+    }
+    summary << "  ]\n";
+    summary << "}\n";
   }
 
   std::cout << "records_processed: " << results.size() << "\n";
