@@ -27,9 +27,9 @@ endif()
 
 find_package(SDL2 QUIET)
 
-
 add_library(busarb STATIC
   src/busarb/busarb.cpp
+  src/busarb/ymir_timing.cpp
 )
 target_include_directories(busarb PUBLIC include)
 
@@ -65,6 +65,9 @@ endif()
 add_executable(saturnemu src/main.cpp)
 target_link_libraries(saturnemu PRIVATE saturnis_core)
 
+add_executable(trace_replay tools/trace_replay/trace_replay.cpp)
+target_link_libraries(trace_replay PRIVATE busarb)
+
 include(CTest)
 if(BUILD_TESTING)
   add_executable(saturnis_kernel_tests tests/test_kernel.cpp)
@@ -82,6 +85,19 @@ if(BUILD_TESTING)
   add_executable(busarb_link_harness tests/test_busarb_link_harness.cpp)
   target_link_libraries(busarb_link_harness PRIVATE busarb)
   add_test(NAME busarb_link_harness COMMAND busarb_link_harness)
+
+  add_executable(ymir_timing_tests tests/test_ymir_timing.cpp)
+  target_link_libraries(ymir_timing_tests PRIVATE busarb)
+  add_test(NAME ymir_timing_tests COMMAND ymir_timing_tests)
+
+  add_test(
+    NAME trace_replay_sample
+    COMMAND trace_replay ${CMAKE_SOURCE_DIR}/tests/fixtures/trace_replay/sample_trace.jsonl
+            --annotated-output ${CMAKE_BINARY_DIR}/trace_replay_annotated.jsonl --top 5
+  )
+  set_tests_properties(trace_replay_sample PROPERTIES
+    PASS_REGULAR_EXPRESSION "records_processed: 10;malformed_lines_skipped: 1;known_gap_count:"
+  )
 
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
