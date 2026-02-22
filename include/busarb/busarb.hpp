@@ -38,9 +38,14 @@ struct BusWaitResult {
   std::uint32_t wait_cycles = 0;
 };
 
+struct ArbiterConfig {
+  std::uint32_t same_address_contention = 2;
+  std::uint32_t tie_turnaround = 1;
+};
+
 class Arbiter {
 public:
-  explicit Arbiter(TimingCallbacks callbacks);
+  explicit Arbiter(TimingCallbacks callbacks, ArbiterConfig config = {});
 
   // Non-mutating wait query.
   [[nodiscard]] BusWaitResult query_wait(const BusRequest &req) const;
@@ -56,7 +61,12 @@ private:
   [[nodiscard]] static int priority(BusMasterId id);
 
   TimingCallbacks callbacks_{};
+  ArbiterConfig config_{};
   std::uint64_t bus_free_tick_ = 0;
+  bool has_last_granted_addr_ = false;
+  std::uint32_t last_granted_addr_ = 0;
+  std::optional<BusMasterId> last_granted_cpu_ = std::nullopt;
+  mutable bool last_pick_had_cpu_tie_ = false;
 };
 
 } // namespace busarb
