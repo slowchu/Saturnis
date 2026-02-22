@@ -1,3 +1,5 @@
+> Archived/Superseded: retained for historical context. Active planning lives in `docs/roadmap_ymir_tool.md`.
+
 ARCHIVED FOR BREVITY. DO NOT PURSUE
 ## Group 1 (P0): Exception/Return Correctness Hardening (7)
 

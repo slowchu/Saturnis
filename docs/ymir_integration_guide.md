@@ -2,11 +2,12 @@
 
 ## 1) Phase 1 scope
 
-`libbusarb` is used as an **offline reference/replay tool** in Phase 1.
+`libbusarb` is used as an **offline-first reference/replay tool** in Phase 1.
 
 - Runtime Ymir integration is deferred.
 - Release builds do not need to run arbiter logic in hot paths.
 - Goal: compare Ymir timing behavior against deterministic replay output, then calibrate Ymir tables.
+- Comparative replay output should preserve deterministic replay ordering and classify expected deltas as known gaps.
 
 ## 2) Optional trace emission in Ymir
 
