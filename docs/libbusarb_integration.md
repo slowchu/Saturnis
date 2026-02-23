@@ -7,10 +7,18 @@
 - Public, standalone headers under `include/busarb/`.
 - Deterministic query/commit API:
   - `query_wait(req)` (non-mutating)
-  - `commit_grant(req, tick_start)` (mutating)
+  - `commit_grant(req, tick_start, had_tie=false)` (mutating)
 - Deterministic same-tick winner selection via fixed priority (`DMA > SH2_A > SH2_B`) using `pick_winner(...)`.
 
 ## Callback contract (`TimingCallbacks::access_cycles`)
+
+## API versioning
+
+- Public header exposes semantic API version constants:
+  - `busarb::kApiVersionMajor`
+  - `busarb::kApiVersionMinor`
+  - `busarb::kApiVersionPatch`
+- Current value: **1.1.0**.
 
 - Inputs are passed through unchanged from `BusRequest`:
   - `addr`
@@ -44,6 +52,8 @@
 - This is the only mutating API path.
 - Prior `query_wait(...)` call is not required.
 - Duplicate commit calls model duplicate grants and will advance state again.
+- `had_tie=true` applies tie-turnaround penalty using configured `ArbiterConfig::tie_turnaround`.
+- `had_tie=false` preserves non-tie commit behavior.
 
 ## Minimal Ymir adapter pattern
 
