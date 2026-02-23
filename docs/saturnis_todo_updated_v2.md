@@ -262,8 +262,4 @@ If you're working solo or in short sessions, here's the recommended sequence:
 6. Tasks **3b, 9, 10, 11, 12** (improve timing fidelity and complete the calibration loop with override/provenance support)
 7. Tasks **14–18** as time allows
 
-## A Candid Note
 
-The project has an impressive amount of internal infrastructure — the SH-2 interpreter coverage, device scaffolding, BIOS instrumentation, and test suite are all substantial engineering. But the *externally-facing deliverables* (what Ymir developers would actually touch) are still thin. The timing table is placeholder-grade, the replay tool has never seen a real trace, and there's no runnable calibration workflow.
-
-The good news is that the hardest engineering work is already done. The remaining tasks are mostly about polish, documentation, and building the last-mile tooling that connects the internal engine to an external user. That's a much shorter path than where this project started.
