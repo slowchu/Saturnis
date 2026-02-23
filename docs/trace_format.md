@@ -36,6 +36,7 @@ Example:
 - `retries * service_cycles` is a **proxy metric**, not guaranteed exact elapsed wait, because scheduler/stepping cadence influences retry timing.
 - `tick_first_attempt` + `tick_complete` allow exact elapsed derivation when available.
 - `seq` is the authoritative deterministic tie-break when completion ticks are equal.
+- `seq` is expected to be monotonic in emission order for schema quality; replay tool reports `non_monotonic_seq_count` / `duplicate_seq_count` diagnostics but continues processing.
 
 ## Known Ymir behavior caveat
 

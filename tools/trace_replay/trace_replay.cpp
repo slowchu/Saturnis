@@ -9,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -275,6 +276,10 @@ int main(int argc, char **argv) {
 
   std::vector<TraceRecord> records;
   std::size_t malformed_lines = 0;
+  std::size_t duplicate_seq_count = 0;
+  std::size_t non_monotonic_seq_count = 0;
+  std::set<std::uint64_t> seen_seq_values;
+  std::optional<std::uint64_t> previous_seq_in_input;
   std::string line;
   std::size_t line_number = 0;
   while (std::getline(input, line)) {
@@ -288,6 +293,18 @@ int main(int argc, char **argv) {
       std::cerr << "warning: malformed line " << line_number << " skipped\n";
       continue;
     }
+    if (seen_seq_values.find(rec->seq) != seen_seq_values.end()) {
+      ++duplicate_seq_count;
+      std::cerr << "warning: duplicate seq " << rec->seq << " on line " << line_number << "\n";
+    }
+    seen_seq_values.insert(rec->seq);
+
+    if (previous_seq_in_input.has_value() && rec->seq <= *previous_seq_in_input) {
+      ++non_monotonic_seq_count;
+      std::cerr << "warning: non-monotonic seq " << rec->seq << " on line " << line_number << "\n";
+    }
+    previous_seq_in_input = rec->seq;
+
     records.push_back(*rec);
   }
 
@@ -415,6 +432,8 @@ int main(int argc, char **argv) {
     summary << "{\n";
     summary << "  \"records_processed\": " << results.size() << ",\n";
     summary << "  \"malformed_lines_skipped\": " << malformed_lines << ",\n";
+    summary << "  \"duplicate_seq_count\": " << duplicate_seq_count << ",\n";
+    summary << "  \"non_monotonic_seq_count\": " << non_monotonic_seq_count << ",\n";
     summary << "  \"agreement_count\": " << agreement_count << ",\n";
     summary << "  \"mismatch_count\": " << mismatch_count << ",\n";
     summary << "  \"known_gap_count\": " << known_gap_count << ",\n";
@@ -454,6 +473,8 @@ int main(int argc, char **argv) {
 
   std::cout << "records_processed: " << results.size() << "\n";
   std::cout << "malformed_lines_skipped: " << malformed_lines << "\n";
+  std::cout << "duplicate_seq_count: " << duplicate_seq_count << "\n";
+  std::cout << "non_monotonic_seq_count: " << non_monotonic_seq_count << "\n";
   std::cout << "agreement_count: " << agreement_count << "\n";
   std::cout << "mismatch_count: " << mismatch_count << "\n";
   std::cout << "known_gap_count: " << known_gap_count << "\n";

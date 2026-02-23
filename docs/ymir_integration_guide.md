@@ -105,6 +105,13 @@ Derived Ymir values:
 
 Replay is comparative only. Downstream records keep recorded Ymir ticks even after upstream mismatches.
 
+Trace quality diagnostics in replay summaries:
+
+- `duplicate_seq_count`: number of repeated `seq` values in input order.
+- `non_monotonic_seq_count`: number of input records where `seq` does not increase.
+
+These are schema health signals for trace capture quality, not replay blockers.
+
 ## 6) What Phase 1 arbiter models / does not model
 
 Modeled:

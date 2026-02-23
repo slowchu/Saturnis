@@ -28,6 +28,8 @@ def main() -> int:
     required_keys = {
         "records_processed",
         "malformed_lines_skipped",
+        "duplicate_seq_count",
+        "non_monotonic_seq_count",
         "agreement_count",
         "mismatch_count",
         "known_gap_count",
@@ -45,6 +47,12 @@ def main() -> int:
         return 1
     if data["malformed_lines_skipped"] != 1:
         print(f"unexpected malformed_lines_skipped: {data['malformed_lines_skipped']}")
+        return 1
+    if data["duplicate_seq_count"] != 0:
+        print(f"unexpected duplicate_seq_count: {data['duplicate_seq_count']}")
+        return 1
+    if data["non_monotonic_seq_count"] == 0:
+        print("expected non_monotonic_seq_count to be non-zero for fixture")
         return 1
 
     annotated_lines = [ln for ln in annotated.read_text().splitlines() if ln.strip()]
