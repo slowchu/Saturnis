@@ -726,25 +726,22 @@ int main(int argc, char **argv) {
                 << "\"addr\":\"" << json_escape(r.record.addr_text) << "\","
                 << "\"size\":" << static_cast<unsigned>(r.record.size) << ','
                 << "\"rw\":\"" << json_escape(r.record.rw) << "\","
-                << "\"kind\":\"" << json_escape(r.record.kind) << "\","
+                << "\"kind\":\"" << json_escape(r.record.kind) << "\"," 
                 << "\"service_cycles\":" << r.record.service_cycles << ','
                 << "\"retries\":" << r.record.retries << ','
-                << "\"ymir_service_cycles\":" << r.ymir_service_cycles << ','
-                << "\"ymir_retries\":" << r.ymir_retries << ','
-                << "\"ymir_elapsed\":" << r.ymir_elapsed << ','
-                << "\"ymir_wait\":" << r.ymir_wait << ','
-                << "\"ymir_wait_metric_kind\":\"" << r.ymir_wait_metric_kind << "\"," 
+                << "\"observed_service_cycles\":" << r.ymir_service_cycles << ','
+                << "\"observed_retries\":" << r.ymir_retries << ','
+                << "\"observed_elapsed\":" << r.ymir_elapsed << ','
+                << "\"observed_wait\":" << r.ymir_wait << ','
+                << "\"observed_wait_metric_kind\":\"" << r.ymir_wait_metric_kind << "\"," 
                 << "\"classification\":\"" << r.classification << "\"";
       if (options.include_model_comparison) {
         annotated << ','
-                  << "\"arbiter_predicted_wait\":" << r.arbiter_predicted_wait << ','
-                  << "\"arbiter_predicted_service\":" << r.arbiter_predicted_service << ','
-                  << "\"arbiter_predicted_total\":" << r.arbiter_predicted_total << ','
-                  << "\"base_latency\":" << r.base_latency << ','
-                  << "\"contention_stall\":" << r.contention_stall << ','
-                  << "\"total_predicted\":" << r.total_predicted << ','
-                  << "\"normalized_delta_wait\":" << r.normalized_delta_wait << ','
-                  << "\"normalized_delta_total\":" << r.normalized_delta_total << ','
+                  << "\"model_predicted_wait\":" << r.arbiter_predicted_wait << ','
+                  << "\"model_predicted_service\":" << r.arbiter_predicted_service << ','
+                  << "\"model_predicted_total\":" << r.arbiter_predicted_total << ','
+                  << "\"model_vs_trace_wait_delta\":" << r.normalized_delta_wait << ','
+                  << "\"model_vs_trace_total_delta\":" << r.normalized_delta_total << ','
                   << "\"cumulative_drift_wait\":" << r.cumulative_drift_wait << ','
                   << "\"cumulative_drift_total\":" << r.cumulative_drift_total << ','
                   << "\"known_gap_reason\":\"" << r.known_gap_reason << "\"";

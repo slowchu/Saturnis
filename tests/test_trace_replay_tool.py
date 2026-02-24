@@ -128,24 +128,24 @@ def main() -> int:
 
     parsed_first = json.loads(annotated_lines[0])
     expected_elapsed = parsed_first["tick_complete"] - parsed_first["tick_first_attempt"]
-    if parsed_first["ymir_elapsed"] != expected_elapsed:
+    if parsed_first["observed_elapsed"] != expected_elapsed:
         print(
-            f"unexpected ymir_elapsed: {parsed_first['ymir_elapsed']} != {expected_elapsed} (exclusive tick contract)"
+            f"unexpected observed_elapsed: {parsed_first['observed_elapsed']} != {expected_elapsed} (exclusive tick contract)"
         )
         return 1
 
     for field in [
-        "ymir_service_cycles",
-        "ymir_retries",
-        "ymir_elapsed",
-        "ymir_wait",
+        "observed_service_cycles",
+        "observed_retries",
+        "observed_elapsed",
+        "observed_wait",
         "classification",
     ]:
         if field not in parsed_first:
             print(f"missing annotated field: {field}")
             return 1
 
-    if "normalized_delta_wait" in parsed_first:
+    if "model_vs_trace_wait_delta" in parsed_first:
         print("did not expect model fields without --include-model-comparison")
         return 1
 
@@ -180,6 +180,37 @@ def main() -> int:
     ]:
         if model_key not in model_data["model_comparison"]:
             print(f"expected model key with --include-model-comparison: {model_key}")
+            return 1
+
+    model_annotated = build_dir / "trace_replay_tool_annotated_model.jsonl"
+    proc_model_annotated = subprocess.run(
+        [
+            str(trace_replay),
+            str(fixture),
+            "--annotated-output",
+            str(model_annotated),
+            "--include-model-comparison",
+            "--top-k",
+            "5",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if proc_model_annotated.returncode != 0:
+        print(proc_model_annotated.stdout)
+        print(proc_model_annotated.stderr)
+        return 1
+    model_first = json.loads(model_annotated.read_text().splitlines()[0])
+    for model_field in [
+        "model_predicted_wait",
+        "model_predicted_service",
+        "model_predicted_total",
+        "model_vs_trace_wait_delta",
+        "model_vs_trace_total_delta",
+    ]:
+        if model_field not in model_first:
+            print(f"missing model annotated field: {model_field}")
             return 1
 
 

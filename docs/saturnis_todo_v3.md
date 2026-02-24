@@ -53,6 +53,11 @@ These are grounded in raw trace data and verified source inspection:
   - Added model-section field names with explicit hypothesis/model-vs-trace wording (`hypothesis_mismatch_count`, `model_vs_trace_wait_delta_by_access_kind`, `top_model_vs_trace_wait_deltas`).
   - Remaining follow-up: complete annotated output field-name migration away from legacy names.
 
+- [x] **Phase 1 (follow-up): per-record annotated naming aligned with summary terminology**
+  - Annotated trace-derived fields now use `observed_*` names (`observed_elapsed`, `observed_wait`, `observed_service_cycles`, `observed_retries`).
+  - Annotated model-derived fields now use `model_*` naming (`model_predicted_wait`, `model_predicted_total`, `model_vs_trace_wait_delta`, etc.) and are still opt-in behind `--include-model-comparison`.
+  - Remaining follow-up: add `cache_bucket` field and associated classification/bucketing work from Phase 3.
+
 ### Phase 0: Stop the Bleeding (Documentation Correction)
 
 **Priority:** Immediate — do before any code changes.
@@ -194,7 +199,26 @@ The following metric names must not appear in the default output path:
 | `contention_stall` | Implies observed contention; is arbiter prediction | `model_predicted_wait` (model section) |
 | `base_latency` | Ambiguous — is this observed or predicted? | `observed_service_cycles` (trace) or `model_predicted_service` (model) |
 
-#### E. Code changes required
+#### E. Naming consistency between summary and per-record output
+
+Field names in annotated JSONL (per-record output) must match the summary section they belong to. If the summary calls a metric `observed_wait` and `observed_elapsed`, the per-record annotated output must use the same names — not `ymir_wait` and `ymir_elapsed`. This applies in both directions:
+
+| Summary metric | Per-record annotated field | NOT this |
+|----------------|---------------------------|----------|
+| `observed_elapsed` | `observed_elapsed` | ~~`ymir_elapsed`~~ |
+| `observed_wait` | `observed_wait` | ~~`ymir_wait`~~ |
+| `observed_service_cycles` | `observed_service_cycles` | ~~`ymir_service_cycles`~~ |
+| `observed_retries` | `observed_retries` | ~~`ymir_retries`~~ |
+| `cache_bucket` | `cache_bucket` | (new field) |
+| `model_predicted_wait` | `model_predicted_wait` | ~~`arbiter_predicted_wait`~~ |
+| `model_vs_trace_wait_delta` | `model_vs_trace_wait_delta` | ~~`normalized_delta_wait`~~ |
+| `model_vs_trace_total_delta` | `model_vs_trace_total_delta` | ~~`normalized_delta_total`~~ |
+
+Model-prefixed fields in per-record output are only emitted when `--include-model-comparison` is set, matching the summary behavior.
+
+**Why this matters:** The P0-A false positive was partly enabled by field names that sounded observational (`normalized_delta_wait`) but carried model-derived values. Consistent naming across summary and per-record output closes this gap — a reader seeing `observed_wait` in annotated output knows it came from the trace, and `model_predicted_wait` knows it came from the arbiter, without needing to check the implementation.
+
+#### F. Code changes required
 
 1. **`ReplayResult` struct:** Split into `TraceObservation` (trace fields only) and `ModelComparison` (arbiter fields). The `ModelComparison` struct is optional and only populated when `--include-model-comparison` is set.
 
