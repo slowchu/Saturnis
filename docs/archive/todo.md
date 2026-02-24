@@ -1,3 +1,5 @@
+> Archived/Superseded: retained for historical context. Active planning lives in `docs/roadmap_ymir_tool.md`.
+
 # Saturnis TODO
 
 ## Completed backlog
