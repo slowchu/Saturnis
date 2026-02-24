@@ -192,6 +192,7 @@ std::string region_name(std::uint32_t addr) {
   if (addr >= 0x05E00000U && addr <= 0x05FBFFFFU) return "VDP2";
   if (addr >= 0x05FE0000U && addr <= 0x05FEFFFFU) return "SCU regs";
   if (addr >= 0x06000000U && addr <= 0x07FFFFFFU) return "High WRAM";
+  if (addr >= 0xFFFFFE00U && addr <= 0xFFFFFFFFU) return "SH-2 on-chip regs";
   return "Unmapped";
 }
 

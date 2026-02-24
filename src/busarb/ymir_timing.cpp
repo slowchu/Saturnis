@@ -28,6 +28,7 @@ constexpr RegionTiming kRegionTimings[] = {
     {0x05E00000U, 0x05FBFFFFU, 20U, 2U}, // VDP2
     {0x05FE0000U, 0x05FEFFFFU, 4U, 2U}, // SCU regs
     {0x06000000U, 0x07FFFFFFU, 2U, 2U}, // High WRAM
+    {0xFFFFFE00U, 0xFFFFFFFFU, 2U, 2U}, // SH-2 on-chip regs
 };
 
 } // namespace

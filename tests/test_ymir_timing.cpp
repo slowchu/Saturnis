@@ -24,7 +24,7 @@ void check(bool cond, const char *msg) {
 } // namespace
 
 int main() {
-  const std::array<Row, 15> rows = {{
+  const std::array<Row, 16> rows = {{
       {0x00000000U, 0x00FFFFFFU, 2U, 2U},
       {0x01000000U, 0x017FFFFFU, 4U, 2U},
       {0x01800000U, 0x01FFFFFFU, 2U, 2U},
@@ -40,6 +40,7 @@ int main() {
       {0x05E00000U, 0x05FBFFFFU, 20U, 2U},
       {0x05FE0000U, 0x05FEFFFFU, 4U, 2U},
       {0x06000000U, 0x07FFFFFFU, 2U, 2U},
+      {0xFFFFFE00U, 0xFFFFFFFFU, 2U, 2U},
   }};
 
   for (const auto &row : rows) {
@@ -49,8 +50,8 @@ int main() {
     check(busarb::ymir_access_cycles(nullptr, row.end, true, 4U) == row.write_cycles, "write end mismatch");
   }
 
-  check(busarb::ymir_access_cycles(nullptr, 0xFFFFFFFFU, false, 4U) == 4U, "unmapped read fallback mismatch");
-  check(busarb::ymir_access_cycles(nullptr, 0xFFFFFFFFU, true, 4U) == 2U, "unmapped write fallback mismatch");
+  check(busarb::ymir_access_cycles(nullptr, 0x08000000U, false, 4U) == 4U, "unmapped read fallback mismatch");
+  check(busarb::ymir_access_cycles(nullptr, 0x08000000U, true, 4U) == 2U, "unmapped write fallback mismatch");
 
   std::cout << "ymir timing tests passed\n";
   return 0;
