@@ -40,6 +40,7 @@ std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &s
   }
 
   std::size_t best = 0U;
+  bool had_cpu_tie = false;
   for (std::size_t i = 1; i < same_tick_requests.size(); ++i) {
     const auto &cand = same_tick_requests[i];
     const auto &cur = same_tick_requests[best];
@@ -90,6 +91,7 @@ std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &s
       best = i;
     }
   }
+  last_pick_had_cpu_tie_ = had_cpu_tie;
   return best;
 }
 
