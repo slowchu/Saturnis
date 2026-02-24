@@ -79,10 +79,10 @@ def main() -> int:
         return 1
 
     parsed_first = json.loads(annotated_lines[0])
-    expected_elapsed = parsed_first["tick_complete"] - parsed_first["tick_first_attempt"] + 1
+    expected_elapsed = parsed_first["tick_complete"] - parsed_first["tick_first_attempt"]
     if parsed_first["ymir_elapsed"] != expected_elapsed:
         print(
-            f"unexpected ymir_elapsed: {parsed_first['ymir_elapsed']} != {expected_elapsed} (inclusive tick contract)"
+            f"unexpected ymir_elapsed: {parsed_first['ymir_elapsed']} != {expected_elapsed} (exclusive tick contract)"
         )
         return 1
 

@@ -11,13 +11,13 @@ This document defines the timing semantics used by Phase 1 replay.
 
 ## Endpoint convention
 
-Replay treats `tick_complete` as an **inclusive endpoint** for elapsed timing.
+Replay treats `tick_complete` as an **exclusive endpoint** for elapsed timing (matching `service_cycles` in current Ymir traces).
 
-- `ymir_elapsed = tick_complete - tick_first_attempt + 1` when `tick_complete >= tick_first_attempt`
+- `ymir_elapsed = tick_complete - tick_first_attempt` when `tick_complete >= tick_first_attempt`
 - fallback proxy when ticks are inconsistent:
   - `ymir_elapsed = service_cycles + retries * service_cycles`
 
-This inclusive convention fixes the observed `delta_total = delta_wait + 1` artifact caused by mixing exclusive and inclusive formulas.
+This exclusive convention removes the observed `normalized_delta_wait = -1` systematic offset caused by mixing inclusive elapsed with exclusive `service_cycles`.
 
 ## Derived Ymir values
 

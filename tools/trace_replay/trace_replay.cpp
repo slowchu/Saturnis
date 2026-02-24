@@ -405,8 +405,8 @@ int main(int argc, char **argv) {
     r.ymir_retries = record.retries;
 
     if (record.tick_complete >= record.tick_first_attempt) {
-      r.ymir_elapsed = static_cast<std::uint32_t>(record.tick_complete - record.tick_first_attempt + 1U);
-      r.ymir_wait_metric_kind = "exact_tick_elapsed_inclusive";
+      r.ymir_elapsed = static_cast<std::uint32_t>(record.tick_complete - record.tick_first_attempt);
+      r.ymir_wait_metric_kind = "exact_tick_elapsed_exclusive";
     } else {
       r.ymir_elapsed = static_cast<std::uint32_t>(r.ymir_retries * r.ymir_service_cycles + r.ymir_service_cycles);
       r.ymir_wait_metric_kind = "proxy_retries_x_service";
