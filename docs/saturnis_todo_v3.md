@@ -5,7 +5,7 @@
 | Task | Status | Outcome |
 |------|--------|---------|
 | P0-C | ✅ Complete | Always-on dataset hygiene summary implemented |
-| P0-B | ⚠️ Needs revision | Timing decomposition implemented but uses arbiter-derived normalization; must be reworked to separate trace-fact from model-comparison metrics |
+| P0-B | 🔄 In progress | Phase 1 partial landed: model-comparison is now opt-in via `--include-model-comparison`, default replay is trace-only, and default annotated output omits model-derived fields. Remaining: move model metrics under a dedicated `model_comparison` JSON section and complete metric rename migration |
 | P0-A | ❌ **RETRACTED** | Prior SSH2 +1 conclusion traced to Saturnis normalization artifact. Raw trace inspection confirmed both CPUs produce identical records (`svc=1, elapsed=1, wait=0`). The arbiter model generated the asymmetry, not the trace. See `p0a_conclusion_retracted.md` and `p0a_postmortem.md` |
 | Audit | ✅ Complete | Timing table parity verified, cache symmetry confirmed, address range bug found+fixed |
 | Binary reader | ✅ Complete | Struct layout fixed, parity validated. Seq-tracking memory cap added (2M). Full streaming refactor still needed |
@@ -39,6 +39,14 @@ These are grounded in raw trace data and verified source inspection:
 ---
 
 ## Execution Order
+
+### Progress Notes (rolling)
+
+- [x] **Phase 1 (partial): opt-in model comparison gate implemented**
+  - Added `--include-model-comparison` flag to `trace_replay`; default mode is trace-only.
+  - Default annotated output now excludes arbiter/model-derived fields.
+  - Default stdout now explicitly reports `Model comparison: DISABLED (trace-only mode)`.
+  - Remaining follow-up: emit a dedicated `model_comparison` top-level section and finish deprecated metric name migration.
 
 ### Phase 0: Stop the Bleeding (Documentation Correction)
 
