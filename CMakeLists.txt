@@ -33,6 +33,7 @@ add_library(busarb STATIC
 )
 target_include_directories(busarb PUBLIC include)
 
+# Legacy/experimental scaffold target retained for harness coverage and trace generation.
 add_library(saturnis_core
   src/core/trace.cpp
   src/core/time.cpp
@@ -62,6 +63,7 @@ else()
   target_compile_definitions(saturnis_core PUBLIC SATURNIS_ENABLE_X86_MICROKERNEL=0)
 endif()
 
+# Legacy harness executable (not the primary roadmap deliverable).
 add_executable(saturnemu src/main.cpp)
 target_link_libraries(saturnemu PRIVATE saturnis_core)
 
@@ -70,6 +72,8 @@ target_link_libraries(trace_replay PRIVATE busarb)
 
 include(CTest)
 if(BUILD_TESTING)
+  # Prioritized for Ymir tool workflow: deterministic busarb/replay/timing tests.
+  # Legacy scaffold validation tests retained for deterministic harness behavior.
   add_executable(saturnis_kernel_tests tests/test_kernel.cpp)
   target_link_libraries(saturnis_kernel_tests PRIVATE saturnis_core)
   add_test(NAME saturnis_kernel_tests COMMAND saturnis_kernel_tests)
@@ -78,6 +82,7 @@ if(BUILD_TESTING)
   target_link_libraries(saturnis_trace_regression PRIVATE saturnis_core)
   add_test(NAME saturnis_trace_regression COMMAND saturnis_trace_regression)
 
+  # Active deterministic arbitration/replay correctness tests.
   add_executable(busarb_tests tests/test_busarb.cpp)
   target_link_libraries(busarb_tests PRIVATE busarb)
   add_test(NAME busarb_tests COMMAND busarb_tests)
