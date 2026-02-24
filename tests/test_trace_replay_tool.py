@@ -94,6 +94,8 @@ def main() -> int:
         "included_master_region_distribution",
         "cache_bucket_distribution",
         "master_region_access_kind_cache_bucket_distribution",
+        "observed_bucket_stats_by_master_region_access_kind_cache_bucket",
+        "symmetry_checks",
         "delta_histogram",
     }
     missing = required_keys.difference(data.keys())
@@ -120,6 +122,19 @@ def main() -> int:
 
     if data["trace_observed"]["source"] != "TRACE_ONLY":
         print("expected trace_observed.source to be TRACE_ONLY")
+        return 1
+
+    if not data["observed_bucket_stats_by_master_region_access_kind_cache_bucket"]:
+        print("expected observed bucket stats map to be non-empty")
+        return 1
+    first_bucket_stats = next(iter(data["observed_bucket_stats_by_master_region_access_kind_cache_bucket"].values()))
+    for stat_field in ["sample_size", "observed_elapsed_p90", "observed_wait_nonzero_rate", "low_sample"]:
+        if stat_field not in first_bucket_stats:
+            print(f"missing observed bucket stat field: {stat_field}")
+            return 1
+
+    if not isinstance(data["symmetry_checks"], list):
+        print("expected symmetry_checks to be a list")
         return 1
 
 

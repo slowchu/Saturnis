@@ -62,7 +62,9 @@ These are grounded in raw trace data and verified source inspection:
 - [x] **Phase 3 (partial): observed cache_bucket classification plumbed**
   - Added `cache_bucket` to per-record annotated JSONL output.
   - Added `cache_bucket_distribution` and `master_region_access_kind_cache_bucket_distribution` to summary output.
-  - Remaining follow-up: add per-bucket percentile/symmetry checks (`elapsed`/`wait`) and low-sample flagging.
+  - Added `observed_bucket_stats_by_master_region_access_kind_cache_bucket` with sample size, wait-nonzero rate/count, p50/p90/p99 for observed elapsed/wait, and `low_sample` flagging.
+  - Added `symmetry_checks` output for `region × access_kind × cache_bucket` buckets where both MSH2 and SSH2 have `N >= 100`, with explicit divergence thresholds (`elapsed_p50`, `elapsed_p99`, `wait_nonzero_rate`) and notes on mismatched metrics.
+  - Remaining follow-up: add optional threshold configurability and richer symmetry diagnostics.
 
 ### Phase 0: Stop the Bleeding (Documentation Correction)
 
