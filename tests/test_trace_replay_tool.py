@@ -40,12 +40,22 @@ def main() -> int:
         "malformed_lines_skipped",
         "duplicate_seq_count",
         "non_monotonic_seq_count",
+        "total_events",
+        "included_events",
+        "excluded_events",
+        "included_master_distribution",
+        "included_region_distribution",
+        "included_size_distribution",
+        "included_rw_distribution",
         "agreement_count",
         "mismatch_count",
         "known_gap_count",
         "known_gap_byte_access_count",
         "normalized_agreement_count",
         "normalized_mismatch_count",
+        "mean_base_latency",
+        "mean_contention_stall",
+        "mean_total_predicted",
         "delta_histogram",
         "top_cumulative_drifts",
         "top_normalized_deltas",
@@ -67,6 +77,11 @@ def main() -> int:
     if data["non_monotonic_seq_count"] == 0:
         print("expected non_monotonic_seq_count to be non-zero for fixture")
         return 1
+
+    if data["included_events"] + data["excluded_events"] != data["total_events"]:
+        print("dataset hygiene invariant failed: included + excluded != total")
+        return 1
+
 
     if data["normalized_agreement_count"] == 0:
         print("expected normalized_agreement_count to be non-zero for fixture")
@@ -94,6 +109,9 @@ def main() -> int:
         "arbiter_predicted_wait",
         "arbiter_predicted_service",
         "arbiter_predicted_total",
+        "base_latency",
+        "contention_stall",
+        "total_predicted",
         "normalized_delta_wait",
         "cumulative_drift_total",
         "classification",

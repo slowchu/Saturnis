@@ -19,7 +19,7 @@
 
 namespace {
 
-inline constexpr std::uint32_t kSummarySchemaVersion = 2;
+inline constexpr std::uint32_t kSummarySchemaVersion = 3;
 
 struct TraceRecord {
   std::uint64_t seq = 0;
@@ -48,6 +48,10 @@ struct ReplayResult {
   std::uint32_t arbiter_predicted_service = 0;
   std::uint32_t arbiter_predicted_wait = 0;
   std::uint32_t arbiter_predicted_total = 0;
+
+  std::uint32_t base_latency = 0;
+  std::uint32_t contention_stall = 0;
+  std::uint32_t total_predicted = 0;
 
   std::int64_t normalized_delta_wait = 0;
   std::int64_t normalized_delta_total = 0;
@@ -247,6 +251,13 @@ std::uint32_t estimate_local_wait_cycles(const TraceRecord &record,
   return wait;
 }
 
+std::string size_label(std::uint8_t size) {
+  if (size == 1U) return "B";
+  if (size == 2U) return "W";
+  if (size == 4U) return "L";
+  return std::to_string(size);
+}
+
 double percentile(std::vector<std::int64_t> values, double pct) {
   if (values.empty()) {
     return 0.0;
@@ -334,11 +345,13 @@ int main(int argc, char **argv) {
 
   std::string line;
   std::size_t line_number = 0;
+  std::size_t nonempty_lines = 0;
   while (std::getline(input, line)) {
     ++line_number;
     if (line.empty()) {
       continue;
     }
+    ++nonempty_lines;
     auto rec = parse_record(line, line_number);
     if (!rec.has_value()) {
       ++malformed_lines;
@@ -363,6 +376,37 @@ int main(int argc, char **argv) {
     if (a.tick_complete != b.tick_complete) return a.tick_complete < b.tick_complete;
     return a.seq < b.seq;
   });
+
+
+  std::vector<TraceRecord> filtered_records;
+  filtered_records.reserve(records.size());
+  std::map<std::string, std::size_t> included_master_distribution;
+  std::map<std::string, std::size_t> included_region_distribution;
+  std::map<std::string, std::size_t> included_size_distribution;
+  std::map<std::string, std::size_t> included_rw_distribution;
+  std::map<std::string, std::size_t> excluded_reason_counts;
+  std::map<std::string, std::size_t> known_gap_bucket_counts;
+
+  for (const auto &record : records) {
+    if (!parse_master(record.master).has_value()) {
+      ++excluded_reason_counts["invalid_master"];
+      std::cerr << "warning: invalid master on line " << record.source_line << " skipped\n";
+      continue;
+    }
+    filtered_records.push_back(record);
+    included_master_distribution[record.master] += 1;
+    included_region_distribution[region_name(record.addr)] += 1;
+    included_size_distribution[size_label(record.size)] += 1;
+    included_rw_distribution[record.rw] += 1;
+    if (record.size == 1U) {
+      known_gap_bucket_counts["byte_access_wait_check_gap_candidate"] += 1;
+    }
+  }
+
+  excluded_reason_counts["malformed_line"] += malformed_lines;
+  const std::size_t total_events = nonempty_lines;
+  const std::size_t included_events = filtered_records.size();
+  const std::size_t excluded_events = total_events >= included_events ? (total_events - included_events) : 0;
 
   const busarb::ArbiterConfig arbiter_config{};
   busarb::Arbiter arbiter({busarb::ymir_access_cycles, nullptr}, arbiter_config);
@@ -416,6 +460,9 @@ int main(int argc, char **argv) {
     r.arbiter_predicted_wait = estimate_local_wait_cycles(record, previous_record_for_normalized, arbiter_config);
     r.arbiter_predicted_service = std::max(1U, busarb::ymir_access_cycles(nullptr, record.addr, record.rw == "W", record.size));
     r.arbiter_predicted_total = r.arbiter_predicted_wait + r.arbiter_predicted_service;
+    r.base_latency = r.arbiter_predicted_service;
+    r.contention_stall = r.arbiter_predicted_wait;
+    r.total_predicted = r.arbiter_predicted_total;
 
     r.normalized_delta_wait = static_cast<std::int64_t>(r.arbiter_predicted_wait) - static_cast<std::int64_t>(r.ymir_wait);
     r.normalized_delta_total = static_cast<std::int64_t>(r.arbiter_predicted_total) - static_cast<std::int64_t>(r.ymir_elapsed);
@@ -512,6 +559,9 @@ int main(int argc, char **argv) {
                 << "\"arbiter_predicted_wait\":" << r.arbiter_predicted_wait << ','
                 << "\"arbiter_predicted_service\":" << r.arbiter_predicted_service << ','
                 << "\"arbiter_predicted_total\":" << r.arbiter_predicted_total << ','
+                << "\"base_latency\":" << r.base_latency << ','
+                << "\"contention_stall\":" << r.contention_stall << ','
+                << "\"total_predicted\":" << r.total_predicted << ','
                 << "\"normalized_delta_wait\":" << r.normalized_delta_wait << ','
                 << "\"normalized_delta_total\":" << r.normalized_delta_total << ','
                 << "\"cumulative_drift_wait\":" << r.cumulative_drift_wait << ','
@@ -520,6 +570,15 @@ int main(int argc, char **argv) {
                 << "\"known_gap_reason\":\"" << r.known_gap_reason << "\""
                 << "}\n";
     }
+  }
+
+  std::uint64_t sum_base_latency = 0;
+  std::uint64_t sum_contention_stall = 0;
+  std::uint64_t sum_total_predicted = 0;
+  for (const auto &r : results) {
+    sum_base_latency += r.base_latency;
+    sum_contention_stall += r.contention_stall;
+    sum_total_predicted += r.total_predicted;
   }
 
   const double mean_normalized_delta_wait = normalized_wait_deltas.empty()
@@ -540,12 +599,18 @@ int main(int argc, char **argv) {
     summary << "  \"malformed_lines_skipped\": " << malformed_lines << ",\n";
     summary << "  \"duplicate_seq_count\": " << duplicate_seq_count << ",\n";
     summary << "  \"non_monotonic_seq_count\": " << non_monotonic_seq_count << ",\n";
+    summary << "  \"total_events\": " << total_events << ",\n";
+    summary << "  \"included_events\": " << included_events << ",\n";
+    summary << "  \"excluded_events\": " << excluded_events << ",\n";
     summary << "  \"agreement_count\": " << cumulative_agreement_count << ",\n";
     summary << "  \"mismatch_count\": " << cumulative_mismatch_count << ",\n";
     summary << "  \"known_gap_count\": " << known_gap_count << ",\n";
     summary << "  \"known_gap_byte_access_count\": " << known_gap_byte_access_count << ",\n";
     summary << "  \"normalized_agreement_count\": " << normalized_agreement_count << ",\n";
     summary << "  \"normalized_mismatch_count\": " << normalized_mismatch_count << ",\n";
+    summary << "  \"mean_base_latency\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_base_latency) / static_cast<double>(records_processed)) << ",\n";
+    summary << "  \"mean_contention_stall\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_contention_stall) / static_cast<double>(records_processed)) << ",\n";
+    summary << "  \"mean_total_predicted\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_total_predicted) / static_cast<double>(records_processed)) << ",\n";
     summary << "  \"mean_normalized_delta_wait\": " << mean_normalized_delta_wait << ",\n";
     summary << "  \"median_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.5) << ",\n";
     summary << "  \"max_normalized_delta_wait\": " << (normalized_wait_deltas.empty() ? 0.0 : percentile(normalized_wait_deltas, 1.0)) << ",\n";
@@ -557,16 +622,6 @@ int main(int argc, char **argv) {
             << ",\n";
     summary << "  \"drift_rate_total_per_record\": "
             << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_total) / static_cast<double>(results.size())) << ",\n";
-
-    summary << "  \"delta_histogram\": {\n";
-    std::size_t hist_index = 0;
-    for (const auto &[key, count] : histogram) {
-      summary << "    \"" << json_escape(key) << "\": " << count;
-      ++hist_index;
-      if (hist_index < histogram.size()) summary << ',';
-      summary << "\n";
-    }
-    summary << "  },\n";
 
     auto write_map = [&summary](const std::string &name, const std::map<std::string, std::size_t> &m, bool trailing_comma) {
       summary << "  \"" << name << "\": {\n";
@@ -581,6 +636,23 @@ int main(int argc, char **argv) {
       if (trailing_comma) summary << ',';
       summary << "\n";
     };
+
+    write_map("excluded_reason_counts", excluded_reason_counts, true);
+    write_map("known_gap_bucket_counts", known_gap_bucket_counts, true);
+    write_map("included_master_distribution", included_master_distribution, true);
+    write_map("included_region_distribution", included_region_distribution, true);
+    write_map("included_size_distribution", included_size_distribution, true);
+    write_map("included_rw_distribution", included_rw_distribution, true);
+
+    summary << "  \"delta_histogram\": {\n";
+    std::size_t hist_index = 0;
+    for (const auto &[key, count] : histogram) {
+      summary << "    \"" << json_escape(key) << "\": " << count;
+      ++hist_index;
+      if (hist_index < histogram.size()) summary << ',';
+      summary << "\n";
+    }
+    summary << "  },\n";
 
     write_map("normalized_mismatch_by_master", normalized_by_master, true);
     write_map("normalized_mismatch_by_region", normalized_by_region, true);
@@ -617,6 +689,31 @@ int main(int argc, char **argv) {
     summary << "  ]\n";
 
     summary << "}\n";
+  }
+
+  std::cout << "dataset_hygiene_summary:\n";
+  std::cout << "  total_events: " << total_events << "\n";
+  std::cout << "  included_events: " << included_events << "\n";
+  std::cout << "  excluded_events: " << excluded_events << "\n";
+  std::cout << "  excluded_malformed_line: " << excluded_reason_counts["malformed_line"] << "\n";
+  std::cout << "  excluded_invalid_master: " << excluded_reason_counts["invalid_master"] << "\n";
+  std::cout << "  known_gap_bucket_byte_access_wait_check_gap_candidate: "
+            << known_gap_bucket_counts["byte_access_wait_check_gap_candidate"] << "\n";
+  std::cout << "  master_distribution:\n";
+  for (const auto &[key, count] : included_master_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
+  }
+  std::cout << "  region_distribution:\n";
+  for (const auto &[key, count] : included_region_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
+  }
+  std::cout << "  size_distribution:\n";
+  for (const auto &[key, count] : included_size_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
+  }
+  std::cout << "  rw_distribution:\n";
+  for (const auto &[key, count] : included_rw_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
   }
 
   std::cout << "records_processed: " << records_processed << "\n";
