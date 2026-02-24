@@ -59,3 +59,30 @@ Phase 1 recommendation remains per-successful-access records.
 2. Per-attempt format remains optional/future and is not first-class in current tooling.
 3. Byte-size `IsBusWait()` omission in current Ymir is treated as a **known Ymir wait-model gap** in replay/diff output, not an arbiter error and not a blocker for calibration runs.
 4. Replay summaries should report known-gap frequency so impact can be measured and revisited later if needed.
+
+## Binary format (BTR1 v1)
+
+`trace_replay` now also accepts a compact binary format for large captures.
+
+- Header: 8 bytes
+  - magic: `BTR1` (4 bytes)
+  - version: little-endian `uint16` (`1`)
+  - record_size: little-endian `uint16` (`48`)
+- Record: 48 bytes, little-endian
+  - `uint64 seq`
+  - `uint64 tick_first_attempt`
+  - `uint64 tick_complete`
+  - `uint32 addr`
+  - `uint32 service_cycles`
+  - `uint32 retries`
+  - `uint8 master` (`0=MSH2`, `1=SSH2`, `2=DMA`)
+  - `uint8 rw` (`0=R`, `1=W`)
+  - `uint8 size` (`1|2|4`)
+  - `uint8 kind` (`0=ifetch`, `1=read`, `2=write`, `3=mmio_read`, `4=mmio_write`)
+  - `uint32 reserved0`
+  - `uint32 reserved1`
+
+Validation behavior:
+- invalid magic/version/record size => hard error
+- truncated header/record => hard error
+- malformed record enum/size => warning + skip record

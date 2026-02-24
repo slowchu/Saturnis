@@ -2,6 +2,7 @@
 #include "busarb/ymir_timing.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -73,7 +74,7 @@ struct Options {
 };
 
 void print_help() {
-  std::cout << "Usage: trace_replay <input.jsonl> [options]\n"
+  std::cout << "Usage: trace_replay <input.{jsonl|bin}> [options]\n"
             << "  --annotated-output <path>   Write annotated JSONL\n"
             << "  --summary-output <path>     Write machine-readable summary JSON\n"
             << "  --summary-only              Skip annotated output even if path supplied\n"
@@ -81,7 +82,7 @@ void print_help() {
             << "  --top <N>                   Legacy alias for --top-k\n"
             << "  --top-k <N>                 Number of ranked entries to emit\n"
             << "  --help                      Show this help\n"
-            << "Schema: Phase 1 per-successful-access JSONL records.\n"
+            << "Schema: Phase 1 per-successful-access JSONL records or BTR1 binary v1 records.\n"
             << "Comparative replay only: keeps recorded Ymir ticks; does not retime downstream records.\n";
 }
 
@@ -273,6 +274,191 @@ double percentile(std::vector<std::int64_t> values, double pct) {
   return static_cast<double>(values[lo]) + (static_cast<double>(values[hi]) - static_cast<double>(values[lo])) * frac;
 }
 
+
+struct InputStats {
+  std::size_t total_events = 0;
+  std::size_t malformed_lines = 0;
+  std::size_t duplicate_seq_count = 0;
+  std::size_t non_monotonic_seq_count = 0;
+};
+
+struct BinaryTraceRecordV1 {
+  std::uint64_t seq;
+  std::uint64_t tick_first_attempt;
+  std::uint64_t tick_complete;
+  std::uint32_t addr;
+  std::uint32_t service_cycles;
+  std::uint32_t retries;
+  std::uint8_t master;
+  std::uint8_t rw;
+  std::uint8_t size;
+  std::uint8_t kind;
+  std::uint32_t reserved0;
+  std::uint32_t reserved1;
+};
+static_assert(sizeof(BinaryTraceRecordV1) == 48, "BinaryTraceRecordV1 must be 48 bytes");
+
+std::string to_hex32(std::uint32_t value) {
+  static constexpr char kDigits[] = "0123456789ABCDEF";
+  std::string out = "0x00000000";
+  for (int i = 0; i < 8; ++i) {
+    out[9 - i] = kDigits[(value >> (i * 4)) & 0xF];
+  }
+  return out;
+}
+
+std::optional<std::string> decode_master(std::uint8_t value) {
+  if (value == 0) return std::string("MSH2");
+  if (value == 1) return std::string("SSH2");
+  if (value == 2) return std::string("DMA");
+  return std::nullopt;
+}
+
+std::optional<std::string> decode_rw(std::uint8_t value) {
+  if (value == 0) return std::string("R");
+  if (value == 1) return std::string("W");
+  return std::nullopt;
+}
+
+std::optional<std::string> decode_kind(std::uint8_t value) {
+  if (value == 0) return std::string("ifetch");
+  if (value == 1) return std::string("read");
+  if (value == 2) return std::string("write");
+  if (value == 3) return std::string("mmio_read");
+  if (value == 4) return std::string("mmio_write");
+  return std::nullopt;
+}
+
+bool load_jsonl_records(const std::string &path, std::vector<TraceRecord> &records, InputStats &stats) {
+  std::ifstream input(path);
+  if (!input.is_open()) {
+    std::cerr << "Failed to open input file: " << path << '\n';
+    return false;
+  }
+
+  std::set<std::uint64_t> seen_seq_values;
+  std::optional<std::uint64_t> previous_seq_in_input;
+  std::string line;
+  std::size_t line_number = 0;
+  while (std::getline(input, line)) {
+    ++line_number;
+    if (line.empty()) {
+      continue;
+    }
+    ++stats.total_events;
+    auto rec = parse_record(line, line_number);
+    if (!rec.has_value()) {
+      ++stats.malformed_lines;
+      std::cerr << "warning: malformed line " << line_number << " skipped\n";
+      continue;
+    }
+    if (seen_seq_values.find(rec->seq) != seen_seq_values.end()) {
+      ++stats.duplicate_seq_count;
+      std::cerr << "warning: duplicate seq " << rec->seq << " on line " << line_number << '\n';
+    }
+    seen_seq_values.insert(rec->seq);
+
+    if (previous_seq_in_input.has_value() && rec->seq <= *previous_seq_in_input) {
+      ++stats.non_monotonic_seq_count;
+      std::cerr << "warning: non-monotonic seq " << rec->seq << " on line " << line_number << '\n';
+    }
+    previous_seq_in_input = rec->seq;
+    records.push_back(*rec);
+  }
+  return true;
+}
+
+bool load_binary_records(const std::string &path, std::vector<TraceRecord> &records, InputStats &stats) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input.is_open()) {
+    std::cerr << "Failed to open input file: " << path << '\n';
+    return false;
+  }
+
+  std::array<char, 8> header{};
+  input.read(header.data(), static_cast<std::streamsize>(header.size()));
+  if (input.gcount() != static_cast<std::streamsize>(header.size())) {
+    std::cerr << "error: truncated binary header\n";
+    return false;
+  }
+  if (!(header[0] == 'B' && header[1] == 'T' && header[2] == 'R' && header[3] == '1')) {
+    std::cerr << "error: invalid binary magic (expected BTR1)\n";
+    return false;
+  }
+  const std::uint16_t version = static_cast<std::uint8_t>(header[4]) | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(header[5])) << 8);
+  const std::uint16_t record_size = static_cast<std::uint8_t>(header[6]) | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(header[7])) << 8);
+  if (version != 1) {
+    std::cerr << "error: unsupported binary trace version " << version << " (expected 1)\n";
+    return false;
+  }
+  if (record_size != sizeof(BinaryTraceRecordV1)) {
+    std::cerr << "error: unsupported binary record size " << record_size << " (expected " << sizeof(BinaryTraceRecordV1) << ")\n";
+    return false;
+  }
+
+  std::set<std::uint64_t> seen_seq_values;
+  std::optional<std::uint64_t> previous_seq;
+  std::size_t index = 0;
+  while (true) {
+    BinaryTraceRecordV1 raw{};
+    input.read(reinterpret_cast<char *>(&raw), sizeof(raw));
+    const auto got = input.gcount();
+    if (got == 0) {
+      break;
+    }
+    if (got != static_cast<std::streamsize>(sizeof(raw))) {
+      std::cerr << "error: truncated binary record at index " << index << "\n";
+      return false;
+    }
+    ++stats.total_events;
+
+    auto master = decode_master(raw.master);
+    auto rw = decode_rw(raw.rw);
+    auto kind = decode_kind(raw.kind);
+    if (!master.has_value() || !rw.has_value() || !kind.has_value() || !(raw.size == 1 || raw.size == 2 || raw.size == 4)) {
+      ++stats.malformed_lines;
+      std::cerr << "warning: malformed binary record at index " << index << " skipped\n";
+      ++index;
+      continue;
+    }
+
+    TraceRecord rec{};
+    rec.seq = raw.seq;
+    rec.master = *master;
+    rec.tick_first_attempt = raw.tick_first_attempt;
+    rec.tick_complete = raw.tick_complete;
+    rec.addr = raw.addr;
+    rec.addr_text = to_hex32(raw.addr);
+    rec.size = raw.size;
+    rec.rw = *rw;
+    rec.kind = *kind;
+    rec.service_cycles = raw.service_cycles;
+    rec.retries = raw.retries;
+    rec.source_line = index + 1;
+
+    if (seen_seq_values.find(rec.seq) != seen_seq_values.end()) {
+      ++stats.duplicate_seq_count;
+      std::cerr << "warning: duplicate seq " << rec.seq << " in binary record " << index << '\n';
+    }
+    seen_seq_values.insert(rec.seq);
+    if (previous_seq.has_value() && rec.seq <= *previous_seq) {
+      ++stats.non_monotonic_seq_count;
+      std::cerr << "warning: non-monotonic seq " << rec.seq << " in binary record " << index << '\n';
+    }
+    previous_seq = rec.seq;
+    records.push_back(std::move(rec));
+    ++index;
+  }
+  return true;
+}
+
+bool load_input_records(const std::string &path, std::vector<TraceRecord> &records, InputStats &stats) {
+  if (path.size() >= 4 && path.substr(path.size() - 4) == ".bin") {
+    return load_binary_records(path, records, stats);
+  }
+  return load_jsonl_records(path, records, stats);
+}
+
 bool parse_options(int argc, char **argv, Options &opts) {
   if (argc < 2) {
     return false;
@@ -330,47 +516,16 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::ifstream input(options.input_path);
-  if (!input.is_open()) {
-    std::cerr << "Failed to open input file: " << options.input_path << '\n';
+  std::vector<TraceRecord> records;
+  InputStats input_stats{};
+  if (!load_input_records(options.input_path, records, input_stats)) {
     return 1;
   }
 
-  std::vector<TraceRecord> records;
-  std::size_t malformed_lines = 0;
-  std::size_t duplicate_seq_count = 0;
-  std::size_t non_monotonic_seq_count = 0;
-  std::set<std::uint64_t> seen_seq_values;
-  std::optional<std::uint64_t> previous_seq_in_input;
-
-  std::string line;
-  std::size_t line_number = 0;
-  std::size_t nonempty_lines = 0;
-  while (std::getline(input, line)) {
-    ++line_number;
-    if (line.empty()) {
-      continue;
-    }
-    ++nonempty_lines;
-    auto rec = parse_record(line, line_number);
-    if (!rec.has_value()) {
-      ++malformed_lines;
-      std::cerr << "warning: malformed line " << line_number << " skipped\n";
-      continue;
-    }
-    if (seen_seq_values.find(rec->seq) != seen_seq_values.end()) {
-      ++duplicate_seq_count;
-      std::cerr << "warning: duplicate seq " << rec->seq << " on line " << line_number << '\n';
-    }
-    seen_seq_values.insert(rec->seq);
-
-    if (previous_seq_in_input.has_value() && rec->seq <= *previous_seq_in_input) {
-      ++non_monotonic_seq_count;
-      std::cerr << "warning: non-monotonic seq " << rec->seq << " on line " << line_number << '\n';
-    }
-    previous_seq_in_input = rec->seq;
-    records.push_back(*rec);
-  }
+  const std::size_t malformed_lines = input_stats.malformed_lines;
+  const std::size_t duplicate_seq_count = input_stats.duplicate_seq_count;
+  const std::size_t non_monotonic_seq_count = input_stats.non_monotonic_seq_count;
+  const std::size_t nonempty_lines = input_stats.total_events;
 
   std::stable_sort(records.begin(), records.end(), [](const TraceRecord &a, const TraceRecord &b) {
     if (a.tick_complete != b.tick_complete) return a.tick_complete < b.tick_complete;
