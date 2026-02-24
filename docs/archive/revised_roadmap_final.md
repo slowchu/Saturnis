@@ -1,3 +1,5 @@
+> Archived/Superseded: retained for historical context. Active planning lives in `docs/roadmap_ymir_tool.md`.
+
 # Saturnis Revised Roadmap — libbusarb as Reference Tool
 
 **Revision date:** 2026-02-22

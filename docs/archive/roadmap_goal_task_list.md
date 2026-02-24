@@ -1,3 +1,5 @@
+> Archived/Superseded: retained for historical context. Active planning lives in `docs/roadmap_ymir_tool.md`.
+
 # Saturnis → Ymir Roadmap Goal Task List (Revised)
 
 This checklist translates the updated roadmap into concrete execution steps for delivering a **Ymir-usable bus arbitration tool** (not a full emulator core).
