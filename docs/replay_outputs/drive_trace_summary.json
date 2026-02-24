@@ -1,0 +1,37 @@
+{
+  "records_processed": 200000,
+  "malformed_lines_skipped": 0,
+  "duplicate_seq_count": 0,
+  "non_monotonic_seq_count": 0,
+  "agreement_count": 0,
+  "mismatch_count": 175356,
+  "known_gap_count": 24644,
+  "known_gap_byte_access_count": 24644,
+  "delta_histogram": {
+    "High WRAM | known_ymir_wait_model_gap": 8532,
+    "High WRAM | mismatch": 175356,
+    "SH-2 on-chip regs | known_ymir_wait_model_gap": 16112
+  },
+  "top_deltas": [
+    {"rank": 1, "seq": 199998, "master": "MSH2", "addr": "0x0600FCB6", "size": 2, "delta_wait": 254965, "delta_total": 254966, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 2, "seq": 199997, "master": "MSH2", "addr": "0x0600FCB4", "size": 2, "delta_wait": 254964, "delta_total": 254965, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 3, "seq": 199996, "master": "MSH2", "addr": "0x0604B690", "size": 1, "delta_wait": 254963, "delta_total": 254964, "classification": "known_ymir_wait_model_gap", "region": "High WRAM"},
+    {"rank": 4, "seq": 199995, "master": "MSH2", "addr": "0x0600FCB2", "size": 2, "delta_wait": 254961, "delta_total": 254962, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 5, "seq": 199994, "master": "MSH2", "addr": "0x0600FCE8", "size": 4, "delta_wait": 254960, "delta_total": 254961, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 6, "seq": 199990, "master": "MSH2", "addr": "0x06006150", "size": 2, "delta_wait": 254958, "delta_total": 254959, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 7, "seq": 199993, "master": "MSH2", "addr": "0x0600FCB0", "size": 2, "delta_wait": 254958, "delta_total": 254959, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 8, "seq": 199989, "master": "MSH2", "addr": "0x0600614E", "size": 2, "delta_wait": 254957, "delta_total": 254958, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 9, "seq": 199991, "master": "MSH2", "addr": "0x06006148", "size": 2, "delta_wait": 254957, "delta_total": 254958, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 10, "seq": 199992, "master": "MSH2", "addr": "0x0600614A", "size": 2, "delta_wait": 254957, "delta_total": 254958, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 11, "seq": 199988, "master": "MSH2", "addr": "0x0604BC84", "size": 4, "delta_wait": 254956, "delta_total": 254957, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 12, "seq": 199984, "master": "MSH2", "addr": "0x0600FCB6", "size": 2, "delta_wait": 254954, "delta_total": 254955, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 13, "seq": 199987, "master": "MSH2", "addr": "0x0600614C", "size": 2, "delta_wait": 254954, "delta_total": 254955, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 14, "seq": 199983, "master": "MSH2", "addr": "0x0600FCB4", "size": 2, "delta_wait": 254953, "delta_total": 254954, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 15, "seq": 199985, "master": "MSH2", "addr": "0x0600FCAC", "size": 2, "delta_wait": 254953, "delta_total": 254954, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 16, "seq": 199986, "master": "MSH2", "addr": "0x0600FCAE", "size": 2, "delta_wait": 254953, "delta_total": 254954, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 17, "seq": 199982, "master": "MSH2", "addr": "0x0604B690", "size": 1, "delta_wait": 254952, "delta_total": 254953, "classification": "known_ymir_wait_model_gap", "region": "High WRAM"},
+    {"rank": 18, "seq": 199981, "master": "MSH2", "addr": "0x0600FCB2", "size": 2, "delta_wait": 254950, "delta_total": 254951, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 19, "seq": 199980, "master": "MSH2", "addr": "0x0600FCE8", "size": 4, "delta_wait": 254949, "delta_total": 254950, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 20, "seq": 199976, "master": "MSH2", "addr": "0x06006150", "size": 2, "delta_wait": 254947, "delta_total": 254948, "classification": "mismatch", "region": "High WRAM"}
+  ]
+}
