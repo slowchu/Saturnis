@@ -170,8 +170,15 @@ def main() -> int:
         print(proc_model.stderr)
         return 1
     model_data = json.loads(model_summary.read_text())
-    for model_key in ["normalized_mismatch_count", "normalized_delta_by_access_kind", "top_normalized_deltas"]:
-        if model_key not in model_data:
+    if "model_comparison" not in model_data:
+        print("expected model_comparison section with --include-model-comparison")
+        return 1
+    for model_key in [
+        "hypothesis_mismatch_count",
+        "model_vs_trace_wait_delta_by_access_kind",
+        "top_model_vs_trace_wait_deltas",
+    ]:
+        if model_key not in model_data["model_comparison"]:
             print(f"expected model key with --include-model-comparison: {model_key}")
             return 1
 

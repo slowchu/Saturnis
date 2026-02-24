@@ -5,7 +5,7 @@
 | Task | Status | Outcome |
 |------|--------|---------|
 | P0-C | ✅ Complete | Always-on dataset hygiene summary implemented |
-| P0-B | 🔄 In progress | Phase 1 partial landed: model-comparison is now opt-in via `--include-model-comparison`, default replay is trace-only, and default annotated output omits model-derived fields. Remaining: move model metrics under a dedicated `model_comparison` JSON section and complete metric rename migration |
+| P0-B | 🔄 In progress | Phase 1 advanced: model-comparison is opt-in via `--include-model-comparison`, default replay is trace-only, and summary now emits model metrics under a dedicated `model_comparison` section when enabled. Remaining: finish full metric-name migration in annotated output and eliminate legacy model-field names there |
 | P0-A | ❌ **RETRACTED** | Prior SSH2 +1 conclusion traced to Saturnis normalization artifact. Raw trace inspection confirmed both CPUs produce identical records (`svc=1, elapsed=1, wait=0`). The arbiter model generated the asymmetry, not the trace. See `p0a_conclusion_retracted.md` and `p0a_postmortem.md` |
 | Audit | ✅ Complete | Timing table parity verified, cache symmetry confirmed, address range bug found+fixed |
 | Binary reader | ✅ Complete | Struct layout fixed, parity validated. Seq-tracking memory cap added (2M). Full streaming refactor still needed |
@@ -47,6 +47,11 @@ These are grounded in raw trace data and verified source inspection:
   - Default annotated output now excludes arbiter/model-derived fields.
   - Default stdout now explicitly reports `Model comparison: DISABLED (trace-only mode)`.
   - Remaining follow-up: emit a dedicated `model_comparison` top-level section and finish deprecated metric name migration.
+
+- [x] **Phase 1 (follow-up): summary JSON model section split implemented**
+  - Model-derived summary metrics now live under `model_comparison` and are emitted only when `--include-model-comparison` is provided.
+  - Added model-section field names with explicit hypothesis/model-vs-trace wording (`hypothesis_mismatch_count`, `model_vs_trace_wait_delta_by_access_kind`, `top_model_vs_trace_wait_deltas`).
+  - Remaining follow-up: complete annotated output field-name migration away from legacy names.
 
 ### Phase 0: Stop the Bleeding (Documentation Correction)
 
