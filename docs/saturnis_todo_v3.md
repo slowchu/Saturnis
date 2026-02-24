@@ -6,6 +6,7 @@
 |------|--------|---------|
 | P0-C | ✅ Complete | Always-on dataset hygiene summary implemented |
 | P0-B | 🔄 In progress | Phase 1 advanced: model-comparison is opt-in via `--include-model-comparison`, default replay is trace-only, and summary now emits model metrics under a dedicated `model_comparison` section when enabled. Remaining: finish full metric-name migration in annotated output and eliminate legacy model-field names there |
+| P1-CacheBucket | 🔄 In progress | Added observed `cache_bucket` classification to annotated output and summary distributions (`cache_bucket_distribution`, `master_region_access_kind_cache_bucket_distribution`). Remaining: per-bucket percentile/symmetry analytics from full Phase 3 plan |
 | P0-A | ❌ **RETRACTED** | Prior SSH2 +1 conclusion traced to Saturnis normalization artifact. Raw trace inspection confirmed both CPUs produce identical records (`svc=1, elapsed=1, wait=0`). The arbiter model generated the asymmetry, not the trace. See `p0a_conclusion_retracted.md` and `p0a_postmortem.md` |
 | Audit | ✅ Complete | Timing table parity verified, cache symmetry confirmed, address range bug found+fixed |
 | Binary reader | ✅ Complete | Struct layout fixed, parity validated. Seq-tracking memory cap added (2M). Full streaming refactor still needed |
@@ -57,6 +58,11 @@ These are grounded in raw trace data and verified source inspection:
   - Annotated trace-derived fields now use `observed_*` names (`observed_elapsed`, `observed_wait`, `observed_service_cycles`, `observed_retries`).
   - Annotated model-derived fields now use `model_*` naming (`model_predicted_wait`, `model_predicted_total`, `model_vs_trace_wait_delta`, etc.) and are still opt-in behind `--include-model-comparison`.
   - Remaining follow-up: add `cache_bucket` field and associated classification/bucketing work from Phase 3.
+
+- [x] **Phase 3 (partial): observed cache_bucket classification plumbed**
+  - Added `cache_bucket` to per-record annotated JSONL output.
+  - Added `cache_bucket_distribution` and `master_region_access_kind_cache_bucket_distribution` to summary output.
+  - Remaining follow-up: add per-bucket percentile/symmetry checks (`elapsed`/`wait`) and low-sample flagging.
 
 ### Phase 0: Stop the Bleeding (Documentation Correction)
 
