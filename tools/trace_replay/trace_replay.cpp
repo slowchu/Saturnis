@@ -1010,13 +1010,13 @@ int main(int argc, char **argv) {
     for (std::size_t i = 0; i < std::min(options.top_k, top_cumulative.size()); ++i) {
       const auto *r = top_cumulative[i];
       std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " cumulative_drift_total=" << r->cumulative_drift_total
-                << " normalized_delta_wait=" << r->model_vs_trace_wait_delta << " class=" << r->classification << "\n";
+                << " model_vs_trace_wait_delta=" << r->model_vs_trace_wait_delta << " class=" << r->classification << "\n";
     }
 
     std::cout << "top_normalized_deltas:\n";
     for (std::size_t i = 0; i < std::min(options.top_k, top_normalized.size()); ++i) {
       const auto *r = top_normalized[i];
-      std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " normalized_delta_wait=" << r->model_vs_trace_wait_delta
+      std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " model_vs_trace_wait_delta=" << r->model_vs_trace_wait_delta
                 << " cumulative_drift_total=" << r->cumulative_drift_total << " class=" << r->classification << "\n";
     }
   }
