@@ -286,15 +286,13 @@ struct BinaryTraceRecordV1 {
   std::uint64_t seq;
   std::uint64_t tick_first_attempt;
   std::uint64_t tick_complete;
+  std::uint64_t service_cycles;
+  std::uint64_t retries;
   std::uint32_t addr;
-  std::uint32_t service_cycles;
-  std::uint32_t retries;
+  std::uint8_t size;
   std::uint8_t master;
   std::uint8_t rw;
-  std::uint8_t size;
   std::uint8_t kind;
-  std::uint32_t reserved0;
-  std::uint32_t reserved1;
 };
 static_assert(sizeof(BinaryTraceRecordV1) == 48, "BinaryTraceRecordV1 must be 48 bytes");
 
@@ -432,8 +430,8 @@ bool load_binary_records(const std::string &path, std::vector<TraceRecord> &reco
     rec.size = raw.size;
     rec.rw = *rw;
     rec.kind = *kind;
-    rec.service_cycles = raw.service_cycles;
-    rec.retries = raw.retries;
+    rec.service_cycles = static_cast<std::uint32_t>(raw.service_cycles);
+    rec.retries = static_cast<std::uint32_t>(raw.retries);
     rec.source_line = index + 1;
 
     if (seen_seq_values.find(rec.seq) != seen_seq_values.end()) {
