@@ -47,16 +47,16 @@ struct ReplayResult {
   std::string ymir_wait_metric_kind;
   std::string cache_bucket;
 
-  std::uint32_t arbiter_predicted_service = 0;
-  std::uint32_t arbiter_predicted_wait = 0;
-  std::uint32_t arbiter_predicted_total = 0;
+  std::uint32_t model_predicted_service = 0;
+  std::uint32_t model_predicted_wait = 0;
+  std::uint32_t model_predicted_total = 0;
 
   std::uint32_t base_latency = 0;
   std::uint32_t contention_stall = 0;
   std::uint32_t total_predicted = 0;
 
-  std::int64_t normalized_delta_wait = 0;
-  std::int64_t normalized_delta_total = 0;
+  std::int64_t model_vs_trace_wait_delta = 0;
+  std::int64_t model_vs_trace_total_delta = 0;
 
   std::int64_t cumulative_drift_wait = 0;
   std::int64_t cumulative_drift_total = 0;
@@ -649,8 +649,8 @@ int main(int argc, char **argv) {
 
     ReplayResult r{};
     r.record = record;
-    r.ymir_service_cycles = record.service_cycles;
-    r.ymir_retries = record.retries;
+    r.observed_service_cycles = record.service_cycles;
+    r.observed_retries = record.retries;
 
     if (record.tick_complete >= record.tick_first_attempt) {
       r.ymir_elapsed = static_cast<std::uint32_t>(record.tick_complete - record.tick_first_attempt);
@@ -758,7 +758,7 @@ int main(int argc, char **argv) {
     return std::llabs(a->cumulative_drift_total) > std::llabs(b->cumulative_drift_total);
   });
   std::stable_sort(top_normalized.begin(), top_normalized.end(), [](const ReplayResult *a, const ReplayResult *b) {
-    return std::llabs(a->normalized_delta_wait) > std::llabs(b->normalized_delta_wait);
+    return std::llabs(a->model_vs_trace_wait_delta) > std::llabs(b->model_vs_trace_wait_delta);
   });
 
   if (!options.summary_only && options.annotated_output_path.has_value()) {
@@ -910,6 +910,30 @@ int main(int argc, char **argv) {
       if (trailing_comma) summary << ',';
       summary << "\n";
     };
+
+    if (options.include_model_comparison) {
+      summary << "  \"agreement_count\": " << cumulative_agreement_count << ",\n";
+      summary << "  \"mismatch_count\": " << cumulative_mismatch_count << ",\n";
+      summary << "  \"known_gap_count\": " << known_gap_count << ",\n";
+      summary << "  \"known_gap_byte_access_count\": " << known_gap_byte_access_count << ",\n";
+      summary << "  \"normalized_agreement_count\": " << normalized_agreement_count << ",\n";
+      summary << "  \"normalized_mismatch_count\": " << normalized_mismatch_count << ",\n";
+      summary << "  \"mean_base_latency\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_base_latency) / static_cast<double>(records_processed)) << ",\n";
+      summary << "  \"mean_contention_stall\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_contention_stall) / static_cast<double>(records_processed)) << ",\n";
+      summary << "  \"mean_total_predicted\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_total_predicted) / static_cast<double>(records_processed)) << ",\n";
+      summary << "  \"mean_normalized_delta_wait\": " << mean_normalized_delta_wait << ",\n";
+      summary << "  \"median_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.5) << ",\n";
+      summary << "  \"max_normalized_delta_wait\": " << (normalized_wait_deltas.empty() ? 0.0 : percentile(normalized_wait_deltas, 1.0)) << ",\n";
+      summary << "  \"p90_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.9) << ",\n";
+      summary << "  \"p99_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.99) << ",\n";
+      summary << "  \"final_cumulative_drift_wait\": " << (results.empty() ? 0 : results.back().cumulative_drift_wait) << ",\n";
+      summary << "  \"final_cumulative_drift_total\": " << (results.empty() ? 0 : results.back().cumulative_drift_total) << ",\n";
+      summary << "  \"drift_rate_wait_per_record\": " << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_wait) / static_cast<double>(results.size()))
+              << ",\n";
+      summary << "  \"drift_rate_total_per_record\": "
+              << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_total) / static_cast<double>(results.size())) << ",\n";
+
+    }
 
     write_map("excluded_reason_counts", excluded_reason_counts, true);
     write_map("known_gap_bucket_counts", known_gap_bucket_counts, true);
