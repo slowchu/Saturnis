@@ -27,7 +27,7 @@ This inclusive convention fixes the observed `delta_total = delta_wait + 1` arti
 
 For each record in comparative replay:
 
-- `arbiter_predicted_wait = query_wait(req).wait_cycles`
+- `arbiter_predicted_wait = local contention estimate` using only immediate neighboring access context (same-address and SH-2 tie-turnaround heuristics), intentionally decoupled from long-run arbiter backlog
 - `arbiter_predicted_service = max(1, ymir_access_cycles(...))`
 - `arbiter_predicted_total = arbiter_predicted_wait + arbiter_predicted_service`
 

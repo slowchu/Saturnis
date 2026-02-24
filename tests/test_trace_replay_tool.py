@@ -68,12 +68,24 @@ def main() -> int:
         print("expected non_monotonic_seq_count to be non-zero for fixture")
         return 1
 
+    if data["normalized_agreement_count"] == 0:
+        print("expected normalized_agreement_count to be non-zero for fixture")
+        return 1
+
+
     annotated_lines = [ln for ln in annotated.read_text().splitlines() if ln.strip()]
     if len(annotated_lines) != 10:
         print(f"unexpected annotated line count: {len(annotated_lines)}")
         return 1
 
     parsed_first = json.loads(annotated_lines[0])
+    expected_elapsed = parsed_first["tick_complete"] - parsed_first["tick_first_attempt"] + 1
+    if parsed_first["ymir_elapsed"] != expected_elapsed:
+        print(
+            f"unexpected ymir_elapsed: {parsed_first['ymir_elapsed']} != {expected_elapsed} (inclusive tick contract)"
+        )
+        return 1
+
     for field in [
         "ymir_service_cycles",
         "ymir_retries",

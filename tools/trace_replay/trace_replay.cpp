@@ -221,6 +221,32 @@ std::string json_escape(const std::string &input) {
   return out;
 }
 
+
+std::uint32_t estimate_local_wait_cycles(const TraceRecord &record,
+                                        const std::optional<TraceRecord> &previous_record,
+                                        const busarb::ArbiterConfig &config) {
+  if (!previous_record.has_value()) {
+    return 0U;
+  }
+
+  std::uint32_t wait = 0U;
+  if (previous_record->addr == record.addr) {
+    wait += config.same_address_contention;
+  }
+
+  const auto prev_master = parse_master(previous_record->master);
+  const auto cur_master = parse_master(record.master);
+  const bool sh2_tie = prev_master.has_value() && cur_master.has_value() &&
+                       previous_record->tick_first_attempt == record.tick_first_attempt &&
+                       *prev_master != busarb::BusMasterId::DMA && *cur_master != busarb::BusMasterId::DMA &&
+                       *prev_master != *cur_master;
+  if (sh2_tie) {
+    wait += config.tie_turnaround;
+  }
+
+  return wait;
+}
+
 double percentile(std::vector<std::int64_t> values, double pct) {
   if (values.empty()) {
     return 0.0;
@@ -338,7 +364,9 @@ int main(int argc, char **argv) {
     return a.seq < b.seq;
   });
 
-  busarb::Arbiter arbiter({busarb::ymir_access_cycles, nullptr});
+  const busarb::ArbiterConfig arbiter_config{};
+  busarb::Arbiter arbiter({busarb::ymir_access_cycles, nullptr}, arbiter_config);
+  std::optional<TraceRecord> previous_record_for_normalized;
 
   std::vector<ReplayResult> results;
   results.reserve(records.size());
@@ -367,7 +395,6 @@ int main(int argc, char **argv) {
     }
 
     const busarb::BusRequest req{*master, record.addr, record.rw == "W", record.size, record.tick_first_attempt};
-    const auto wait = arbiter.query_wait(req);
     const std::uint64_t bus_before_commit = arbiter.bus_free_tick();
     arbiter.commit_grant(req, record.tick_first_attempt);
     const std::uint64_t bus_after_commit = arbiter.bus_free_tick();
@@ -386,7 +413,7 @@ int main(int argc, char **argv) {
     }
     r.ymir_wait = (r.ymir_elapsed > r.ymir_service_cycles) ? (r.ymir_elapsed - r.ymir_service_cycles) : 0U;
 
-    r.arbiter_predicted_wait = wait.wait_cycles;
+    r.arbiter_predicted_wait = estimate_local_wait_cycles(record, previous_record_for_normalized, arbiter_config);
     r.arbiter_predicted_service = std::max(1U, busarb::ymir_access_cycles(nullptr, record.addr, record.rw == "W", record.size));
     r.arbiter_predicted_total = r.arbiter_predicted_wait + r.arbiter_predicted_service;
 
@@ -426,6 +453,7 @@ int main(int argc, char **argv) {
     normalized_wait_deltas.push_back(r.normalized_delta_wait);
 
     results.push_back(r);
+    previous_record_for_normalized = record;
   }
 
   const std::size_t records_processed = results.size();
