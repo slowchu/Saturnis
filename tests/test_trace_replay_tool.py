@@ -92,6 +92,8 @@ def main() -> int:
         "included_rw_distribution",
         "included_access_kind_distribution",
         "included_master_region_distribution",
+        "cache_bucket_distribution",
+        "master_region_access_kind_cache_bucket_distribution",
         "delta_histogram",
     }
     missing = required_keys.difference(data.keys())
@@ -139,6 +141,7 @@ def main() -> int:
         "observed_retries",
         "observed_elapsed",
         "observed_wait",
+        "cache_bucket",
         "classification",
     ]:
         if field not in parsed_first:

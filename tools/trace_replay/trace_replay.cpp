@@ -216,6 +216,29 @@ std::string region_name(std::uint32_t addr) {
   return "Unmapped";
 }
 
+bool is_high_wram(std::uint32_t addr) {
+  return addr >= 0x06000000U && addr <= 0x07FFFFFFU;
+}
+
+std::string classify_cache_bucket(std::uint32_t addr, std::uint32_t service_cycles) {
+  if (!is_high_wram(addr)) {
+    return "not_applicable";
+  }
+  if (service_cycles == 1U) {
+    return "cache_hit";
+  }
+  if (service_cycles == 2U) {
+    return "uncached_or_through";
+  }
+  if (service_cycles == 4U) {
+    return "cache_miss_half";
+  }
+  if (service_cycles == 8U) {
+    return "cache_miss_full";
+  }
+  return "anomaly";
+}
+
 std::string json_escape(const std::string &input) {
   std::string out;
   out.reserve(input.size());
@@ -545,6 +568,8 @@ int main(int argc, char **argv) {
   std::map<std::string, std::size_t> included_rw_distribution;
   std::map<std::string, std::size_t> included_access_kind_distribution;
   std::map<std::string, std::size_t> included_master_region_distribution;
+  std::map<std::string, std::size_t> included_cache_bucket_distribution;
+  std::map<std::string, std::size_t> included_master_region_access_kind_cache_bucket_distribution;
   std::map<std::string, std::size_t> excluded_reason_counts;
   std::map<std::string, std::size_t> known_gap_bucket_counts;
 
@@ -561,6 +586,9 @@ int main(int argc, char **argv) {
     included_rw_distribution[record.rw] += 1;
     included_access_kind_distribution[record.kind] += 1;
     included_master_region_distribution[record.master + " | " + region_name(record.addr)] += 1;
+    const std::string bucket = classify_cache_bucket(record.addr, record.service_cycles);
+    included_cache_bucket_distribution[bucket] += 1;
+    included_master_region_access_kind_cache_bucket_distribution[record.master + " | " + region_name(record.addr) + " | " + record.kind + " | " + bucket] += 1;
     if (record.size == 1U) {
       known_gap_bucket_counts["byte_access_wait_check_gap_candidate"] += 1;
     }
@@ -832,6 +860,8 @@ int main(int argc, char **argv) {
     write_map("included_rw_distribution", included_rw_distribution, true);
     write_map("included_access_kind_distribution", included_access_kind_distribution, true);
     write_map("included_master_region_distribution", included_master_region_distribution, true);
+    write_map("cache_bucket_distribution", included_cache_bucket_distribution, true);
+    write_map("master_region_access_kind_cache_bucket_distribution", included_master_region_access_kind_cache_bucket_distribution, true);
 
     summary << "  \"delta_histogram\": {\n";
     std::size_t hist_index = 0;
@@ -982,6 +1012,10 @@ int main(int argc, char **argv) {
   }
   std::cout << "  access_kind_distribution:\n";
   for (const auto &[key, count] : included_access_kind_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
+  }
+  std::cout << "  cache_bucket_distribution:\n";
+  for (const auto &[key, count] : included_cache_bucket_distribution) {
     std::cout << "    " << key << " => " << count << "\n";
   }
 
