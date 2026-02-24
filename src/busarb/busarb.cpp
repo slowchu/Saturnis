@@ -5,7 +5,7 @@
 
 namespace busarb {
 
-Arbiter::Arbiter(TimingCallbacks callbacks) : callbacks_(callbacks) {
+Arbiter::Arbiter(TimingCallbacks callbacks, ArbiterConfig config) : callbacks_(callbacks), config_(config) {
   assert(callbacks_.access_cycles != nullptr && "TimingCallbacks.access_cycles must be non-null");
 }
 
@@ -17,10 +17,21 @@ BusWaitResult Arbiter::query_wait(const BusRequest &req) const {
   return BusWaitResult{true, static_cast<std::uint32_t>(std::min<std::uint64_t>(delta, 0xFFFFFFFFULL))};
 }
 
-void Arbiter::commit_grant(const BusRequest &req, std::uint64_t tick_start) {
+void Arbiter::commit_grant(const BusRequest &req, std::uint64_t tick_start, bool had_tie) {
   const std::uint64_t actual_start = std::max(tick_start, bus_free_tick_);
-  const std::uint64_t duration = service_cycles(req);
+  std::uint64_t duration = service_cycles(req);
+  if (has_last_granted_addr_ && req.addr == last_granted_addr_) {
+    duration += config_.same_address_contention;
+  }
+  if (had_tie) {
+    duration += config_.tie_turnaround;
+  }
   bus_free_tick_ = actual_start + duration;
+  has_last_granted_addr_ = true;
+  last_granted_addr_ = req.addr;
+  if (req.master_id == BusMasterId::SH2_A || req.master_id == BusMasterId::SH2_B) {
+    last_granted_cpu_ = req.master_id;
+  }
 }
 
 std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &same_tick_requests) const {
@@ -40,6 +51,17 @@ std::optional<std::size_t> Arbiter::pick_winner(const std::vector<BusRequest> &s
       continue;
     }
     if (cprio < bprio) {
+      continue;
+    }
+
+    if (cand.master_id != BusMasterId::DMA && cur.master_id != BusMasterId::DMA && cand.master_id != cur.master_id) {
+      BusMasterId preferred = BusMasterId::SH2_A;
+      if (last_granted_cpu_.has_value()) {
+        preferred = (*last_granted_cpu_ == BusMasterId::SH2_A) ? BusMasterId::SH2_B : BusMasterId::SH2_A;
+      }
+      if (cand.master_id == preferred) {
+        best = i;
+      }
       continue;
     }
 
@@ -85,7 +107,7 @@ int Arbiter::priority(BusMasterId id) {
   case BusMasterId::SH2_A:
     return 1;
   case BusMasterId::SH2_B:
-    return 0;
+    return 1;
   }
   return 0;
 }
