@@ -1,0 +1,27 @@
+{
+  "records_processed": 2000,
+  "malformed_lines_skipped": 1,
+  "duplicate_seq_count": 0,
+  "non_monotonic_seq_count": 0,
+  "agreement_count": 0,
+  "mismatch_count": 1754,
+  "known_gap_count": 246,
+  "known_gap_byte_access_count": 246,
+  "delta_histogram": {
+    "High WRAM | known_ymir_wait_model_gap": 86,
+    "High WRAM | mismatch": 1754,
+    "SH-2 on-chip regs | known_ymir_wait_model_gap": 160
+  },
+  "top_deltas": [
+    {"rank": 1, "seq": 998, "master": "MSH2", "addr": "0x06006150", "size": 2, "delta_wait": 1268, "delta_total": 1269, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 2, "seq": 997, "master": "MSH2", "addr": "0x0600614E", "size": 2, "delta_wait": 1267, "delta_total": 1268, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 3, "seq": 999, "master": "MSH2", "addr": "0x06006148", "size": 2, "delta_wait": 1267, "delta_total": 1268, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 4, "seq": 996, "master": "MSH2", "addr": "0x0604BC84", "size": 4, "delta_wait": 1266, "delta_total": 1267, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 5, "seq": 992, "master": "MSH2", "addr": "0x0600FCB6", "size": 2, "delta_wait": 1264, "delta_total": 1265, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 6, "seq": 995, "master": "MSH2", "addr": "0x0600614C", "size": 2, "delta_wait": 1264, "delta_total": 1265, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 7, "seq": 991, "master": "MSH2", "addr": "0x0600FCB4", "size": 2, "delta_wait": 1263, "delta_total": 1264, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 8, "seq": 993, "master": "MSH2", "addr": "0x0600FCAC", "size": 2, "delta_wait": 1263, "delta_total": 1264, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 9, "seq": 994, "master": "MSH2", "addr": "0x0600FCAE", "size": 2, "delta_wait": 1263, "delta_total": 1264, "classification": "mismatch", "region": "High WRAM"},
+    {"rank": 10, "seq": 990, "master": "MSH2", "addr": "0x0604B690", "size": 1, "delta_wait": 1262, "delta_total": 1263, "classification": "known_ymir_wait_model_gap", "region": "High WRAM"}
+  ]
+}
