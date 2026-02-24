@@ -14,18 +14,28 @@ def main() -> int:
     summary = build_dir / "trace_replay_tool_summary.json"
 
     proc = subprocess.run(
-        [str(trace_replay), str(fixture), "--annotated-output", str(annotated), "--summary-output", str(summary), "--top", "5"],
+        [
+            str(trace_replay),
+            str(fixture),
+            "--annotated-output",
+            str(annotated),
+            "--summary-output",
+            str(summary),
+            "--top-k",
+            "5",
+        ],
         check=False,
         text=True,
         capture_output=True,
     )
     if proc.returncode != 0:
-      print(proc.stdout)
-      print(proc.stderr)
-      return 1
+        print(proc.stdout)
+        print(proc.stderr)
+        return 1
 
     data = json.loads(summary.read_text())
     required_keys = {
+        "summary_schema_version",
         "records_processed",
         "malformed_lines_skipped",
         "duplicate_seq_count",
@@ -34,8 +44,11 @@ def main() -> int:
         "mismatch_count",
         "known_gap_count",
         "known_gap_byte_access_count",
+        "normalized_agreement_count",
+        "normalized_mismatch_count",
         "delta_histogram",
-        "top_deltas",
+        "top_cumulative_drifts",
+        "top_normalized_deltas",
     }
     missing = required_keys.difference(data.keys())
     if missing:
@@ -64,11 +77,13 @@ def main() -> int:
     for field in [
         "ymir_service_cycles",
         "ymir_retries",
-        "ymir_effective_wait",
-        "ymir_effective_total",
-        "arbiter_wait",
-        "arbiter_service_cycles",
-        "arbiter_total",
+        "ymir_elapsed",
+        "ymir_wait",
+        "arbiter_predicted_wait",
+        "arbiter_predicted_service",
+        "arbiter_predicted_total",
+        "normalized_delta_wait",
+        "cumulative_drift_total",
         "classification",
     ]:
         if field not in parsed_first:
