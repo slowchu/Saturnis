@@ -40,22 +40,22 @@ struct TraceRecord {
 struct ReplayResult {
   TraceRecord record{};
 
-  std::uint32_t ymir_service_cycles = 0;
-  std::uint32_t ymir_retries = 0;
-  std::uint32_t ymir_elapsed = 0;
-  std::uint32_t ymir_wait = 0;
-  std::string ymir_wait_metric_kind;
+  std::uint32_t observed_service_cycles = 0;
+  std::uint32_t observed_retries = 0;
+  std::uint32_t observed_elapsed = 0;
+  std::uint32_t observed_wait = 0;
+  std::string observed_wait_metric_kind;
 
-  std::uint32_t arbiter_predicted_service = 0;
-  std::uint32_t arbiter_predicted_wait = 0;
-  std::uint32_t arbiter_predicted_total = 0;
+  std::uint32_t model_predicted_service = 0;
+  std::uint32_t model_predicted_wait = 0;
+  std::uint32_t model_predicted_total = 0;
 
   std::uint32_t base_latency = 0;
   std::uint32_t contention_stall = 0;
   std::uint32_t total_predicted = 0;
 
-  std::int64_t normalized_delta_wait = 0;
-  std::int64_t normalized_delta_total = 0;
+  std::int64_t model_vs_trace_wait_delta = 0;
+  std::int64_t model_vs_trace_total_delta = 0;
 
   std::int64_t cumulative_drift_wait = 0;
   std::int64_t cumulative_drift_total = 0;
@@ -604,17 +604,17 @@ int main(int argc, char **argv) {
 
     ReplayResult r{};
     r.record = record;
-    r.ymir_service_cycles = record.service_cycles;
-    r.ymir_retries = record.retries;
+    r.observed_service_cycles = record.service_cycles;
+    r.observed_retries = record.retries;
 
     if (record.tick_complete >= record.tick_first_attempt) {
-      r.ymir_elapsed = static_cast<std::uint32_t>(record.tick_complete - record.tick_first_attempt);
-      r.ymir_wait_metric_kind = "exact_tick_elapsed_exclusive";
+      r.observed_elapsed = static_cast<std::uint32_t>(record.tick_complete - record.tick_first_attempt);
+      r.observed_wait_metric_kind = "exact_tick_elapsed_exclusive";
     } else {
-      r.ymir_elapsed = static_cast<std::uint32_t>(r.ymir_retries * r.ymir_service_cycles + r.ymir_service_cycles);
-      r.ymir_wait_metric_kind = "proxy_retries_x_service";
+      r.observed_elapsed = static_cast<std::uint32_t>(r.observed_retries * r.observed_service_cycles + r.observed_service_cycles);
+      r.observed_wait_metric_kind = "proxy_retries_x_service";
     }
-    r.ymir_wait = (r.ymir_elapsed > r.ymir_service_cycles) ? (r.ymir_elapsed - r.ymir_service_cycles) : 0U;
+    r.observed_wait = (r.observed_elapsed > r.observed_service_cycles) ? (r.observed_elapsed - r.observed_service_cycles) : 0U;
 
     if (options.include_model_comparison) {
       const busarb::BusRequest req{*master, record.addr, record.rw == "W", record.size, record.tick_first_attempt};
@@ -622,15 +622,15 @@ int main(int argc, char **argv) {
       arbiter->commit_grant(req, record.tick_first_attempt);
       const std::uint64_t bus_after_commit = arbiter->bus_free_tick();
 
-      r.arbiter_predicted_wait = estimate_local_wait_cycles(record, previous_record_for_normalized, arbiter_config);
-      r.arbiter_predicted_service = std::max(1U, busarb::ymir_access_cycles(nullptr, record.addr, record.rw == "W", record.size));
-      r.arbiter_predicted_total = r.arbiter_predicted_wait + r.arbiter_predicted_service;
-      r.base_latency = r.arbiter_predicted_service;
-      r.contention_stall = r.arbiter_predicted_wait;
-      r.total_predicted = r.arbiter_predicted_total;
+      r.model_predicted_wait = estimate_local_wait_cycles(record, previous_record_for_normalized, arbiter_config);
+      r.model_predicted_service = std::max(1U, busarb::ymir_access_cycles(nullptr, record.addr, record.rw == "W", record.size));
+      r.model_predicted_total = r.model_predicted_wait + r.model_predicted_service;
+      r.base_latency = r.model_predicted_service;
+      r.contention_stall = r.model_predicted_wait;
+      r.total_predicted = r.model_predicted_total;
 
-      r.normalized_delta_wait = static_cast<std::int64_t>(r.arbiter_predicted_wait) - static_cast<std::int64_t>(r.ymir_wait);
-      r.normalized_delta_total = static_cast<std::int64_t>(r.arbiter_predicted_total) - static_cast<std::int64_t>(r.ymir_elapsed);
+      r.model_vs_trace_wait_delta = static_cast<std::int64_t>(r.model_predicted_wait) - static_cast<std::int64_t>(r.observed_wait);
+      r.model_vs_trace_total_delta = static_cast<std::int64_t>(r.model_predicted_total) - static_cast<std::int64_t>(r.observed_elapsed);
 
       const std::uint64_t ymir_start = record.tick_first_attempt;
       const std::uint64_t ymir_end_exclusive = record.tick_complete + 1U;
@@ -638,7 +638,7 @@ int main(int argc, char **argv) {
       r.cumulative_drift_wait = static_cast<std::int64_t>(arbiter_start) - static_cast<std::int64_t>(ymir_start);
       r.cumulative_drift_total = static_cast<std::int64_t>(bus_after_commit) - static_cast<std::int64_t>(ymir_end_exclusive);
 
-      const bool known_byte_gap = (record.size == 1U && r.ymir_retries == 0U && r.normalized_delta_wait > 0);
+      const bool known_byte_gap = (record.size == 1U && r.observed_retries == 0U && r.model_vs_trace_wait_delta > 0);
       if (known_byte_gap) {
         r.classification = "known_ymir_wait_model_gap";
         r.known_gap_reason = "byte_access_wait_check_gap";
@@ -652,25 +652,25 @@ int main(int argc, char **argv) {
         ++cumulative_mismatch_count;
       }
 
-      if (r.normalized_delta_wait == 0) {
+      if (r.model_vs_trace_wait_delta == 0) {
         ++normalized_agreement_count;
       } else {
         ++normalized_mismatch_count;
       }
 
       histogram[region_name(record.addr) + " | " + r.classification] += 1;
-      normalized_by_master[record.master] += (r.normalized_delta_wait == 0 ? 0U : 1U);
-      normalized_by_region[region_name(record.addr)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
-      normalized_by_size[std::to_string(record.size)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
+      normalized_by_master[record.master] += (r.model_vs_trace_wait_delta == 0 ? 0U : 1U);
+      normalized_by_region[region_name(record.addr)] += (r.model_vs_trace_wait_delta == 0 ? 0U : 1U);
+      normalized_by_size[std::to_string(record.size)] += (r.model_vs_trace_wait_delta == 0 ? 0U : 1U);
       const std::string mk = record.master + " | " + region_name(record.addr) + " | " + record.kind;
       sample_size_by_master_region_access_kind[mk] += 1;
-      if (r.normalized_delta_wait != 0) {
+      if (r.model_vs_trace_wait_delta != 0) {
         normalized_mismatch_by_master_region_access_kind[mk] += 1;
       }
-      normalized_delta_by_access_kind[record.kind].push_back(r.normalized_delta_wait);
-      normalized_wait_deltas.push_back(r.normalized_delta_wait);
+      normalized_delta_by_access_kind[record.kind].push_back(r.model_vs_trace_wait_delta);
+      normalized_wait_deltas.push_back(r.model_vs_trace_wait_delta);
     } else {
-      r.classification = (r.ymir_wait > 0U) ? "wait_nonzero" : "wait_zero";
+      r.classification = (r.observed_wait > 0U) ? "wait_nonzero" : "wait_zero";
       histogram[region_name(record.addr) + " | " + r.classification] += 1;
       ++cumulative_agreement_count;
     }
@@ -705,7 +705,7 @@ int main(int argc, char **argv) {
     return std::llabs(a->cumulative_drift_total) > std::llabs(b->cumulative_drift_total);
   });
   std::stable_sort(top_normalized.begin(), top_normalized.end(), [](const ReplayResult *a, const ReplayResult *b) {
-    return std::llabs(a->normalized_delta_wait) > std::llabs(b->normalized_delta_wait);
+    return std::llabs(a->model_vs_trace_wait_delta) > std::llabs(b->model_vs_trace_wait_delta);
   });
 
   if (!options.summary_only && options.annotated_output_path.has_value()) {
@@ -729,19 +729,19 @@ int main(int argc, char **argv) {
                 << "\"kind\":\"" << json_escape(r.record.kind) << "\"," 
                 << "\"service_cycles\":" << r.record.service_cycles << ','
                 << "\"retries\":" << r.record.retries << ','
-                << "\"observed_service_cycles\":" << r.ymir_service_cycles << ','
-                << "\"observed_retries\":" << r.ymir_retries << ','
-                << "\"observed_elapsed\":" << r.ymir_elapsed << ','
-                << "\"observed_wait\":" << r.ymir_wait << ','
-                << "\"observed_wait_metric_kind\":\"" << r.ymir_wait_metric_kind << "\"," 
+                << "\"observed_service_cycles\":" << r.observed_service_cycles << ','
+                << "\"observed_retries\":" << r.observed_retries << ','
+                << "\"observed_elapsed\":" << r.observed_elapsed << ','
+                << "\"observed_wait\":" << r.observed_wait << ','
+                << "\"observed_wait_metric_kind\":\"" << r.observed_wait_metric_kind << "\"," 
                 << "\"classification\":\"" << r.classification << "\"";
       if (options.include_model_comparison) {
         annotated << ','
-                  << "\"model_predicted_wait\":" << r.arbiter_predicted_wait << ','
-                  << "\"model_predicted_service\":" << r.arbiter_predicted_service << ','
-                  << "\"model_predicted_total\":" << r.arbiter_predicted_total << ','
-                  << "\"model_vs_trace_wait_delta\":" << r.normalized_delta_wait << ','
-                  << "\"model_vs_trace_total_delta\":" << r.normalized_delta_total << ','
+                  << "\"model_predicted_wait\":" << r.model_predicted_wait << ','
+                  << "\"model_predicted_service\":" << r.model_predicted_service << ','
+                  << "\"model_predicted_total\":" << r.model_predicted_total << ','
+                  << "\"model_vs_trace_wait_delta\":" << r.model_vs_trace_wait_delta << ','
+                  << "\"model_vs_trace_total_delta\":" << r.model_vs_trace_total_delta << ','
                   << "\"cumulative_drift_wait\":" << r.cumulative_drift_wait << ','
                   << "\"cumulative_drift_total\":" << r.cumulative_drift_total << ','
                   << "\"known_gap_reason\":\"" << r.known_gap_reason << "\"";
@@ -783,7 +783,7 @@ int main(int argc, char **argv) {
     summary << "  \"trace_observed\": {\n";
     summary << "    \"source\": \"TRACE_ONLY\",\n";
     summary << "    \"records_processed\": " << records_processed << ",\n";
-    summary << "    \"observed_wait_nonzero_count\": " << std::count_if(results.begin(), results.end(), [](const ReplayResult &r) { return r.ymir_wait > 0U; }) << "\n";
+    summary << "    \"observed_wait_nonzero_count\": " << std::count_if(results.begin(), results.end(), [](const ReplayResult &r) { return r.observed_wait > 0U; }) << "\n";
     summary << "  },\n";
 
     auto write_map = [&summary](const std::string &name, const std::map<std::string, std::size_t> &m, bool trailing_comma) {
@@ -926,7 +926,7 @@ int main(int argc, char **argv) {
         summary << "      {\"rank\": " << (i + 1) << ", \"seq\": " << r->record.seq << ", \"master\": \"" << json_escape(r->record.master)
                 << "\", \"addr\": \"" << json_escape(r->record.addr_text) << "\", \"size\": " << static_cast<unsigned>(r->record.size)
                 << ", \"cumulative_drift_wait\": " << r->cumulative_drift_wait << ", \"cumulative_drift_total\": " << r->cumulative_drift_total
-                << ", \"model_vs_trace_wait_delta\": " << r->normalized_delta_wait << ", \"model_vs_trace_total_delta\": " << r->normalized_delta_total
+                << ", \"model_vs_trace_wait_delta\": " << r->model_vs_trace_wait_delta << ", \"model_vs_trace_total_delta\": " << r->model_vs_trace_total_delta
                 << ", \"classification\": \"" << json_escape(r->classification) << "\", \"region\": \"" << json_escape(region_name(r->record.addr))
                 << "\"}";
         if (i + 1 < emit) summary << ',';
@@ -940,7 +940,7 @@ int main(int argc, char **argv) {
         const auto *r = top_normalized[i];
         summary << "      {\"rank\": " << (i + 1) << ", \"seq\": " << r->record.seq << ", \"master\": \"" << json_escape(r->record.master)
                 << "\", \"addr\": \"" << json_escape(r->record.addr_text) << "\", \"size\": " << static_cast<unsigned>(r->record.size)
-                << ", \"model_vs_trace_wait_delta\": " << r->normalized_delta_wait << ", \"model_vs_trace_total_delta\": " << r->normalized_delta_total
+                << ", \"model_vs_trace_wait_delta\": " << r->model_vs_trace_wait_delta << ", \"model_vs_trace_total_delta\": " << r->model_vs_trace_total_delta
                 << ", \"cumulative_drift_wait\": " << r->cumulative_drift_wait << ", \"cumulative_drift_total\": " << r->cumulative_drift_total
                 << ", \"classification\": \"" << json_escape(r->classification) << "\", \"region\": \"" << json_escape(region_name(r->record.addr))
                 << "\"}";
@@ -1010,13 +1010,13 @@ int main(int argc, char **argv) {
     for (std::size_t i = 0; i < std::min(options.top_k, top_cumulative.size()); ++i) {
       const auto *r = top_cumulative[i];
       std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " cumulative_drift_total=" << r->cumulative_drift_total
-                << " normalized_delta_wait=" << r->normalized_delta_wait << " class=" << r->classification << "\n";
+                << " normalized_delta_wait=" << r->model_vs_trace_wait_delta << " class=" << r->classification << "\n";
     }
 
     std::cout << "top_normalized_deltas:\n";
     for (std::size_t i = 0; i < std::min(options.top_k, top_normalized.size()); ++i) {
       const auto *r = top_normalized[i];
-      std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " normalized_delta_wait=" << r->normalized_delta_wait
+      std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " normalized_delta_wait=" << r->model_vs_trace_wait_delta
                 << " cumulative_drift_total=" << r->cumulative_drift_total << " class=" << r->classification << "\n";
     }
   }
