@@ -30,19 +30,17 @@ def _write_binary_fixture_from_jsonl(src: pathlib.Path, dst: pathlib.Path) -> No
             addr = int(rec["addr"], 16)
             rw = 1 if rec["rw"] == "W" else 0
             packed = struct.pack(
-                "<QQQIIIBBBBII",
+                "<QQQQQI4B",
                 rec["seq"],
                 rec["tick_first_attempt"],
                 rec["tick_complete"],
-                addr,
                 rec["service_cycles"],
                 rec["retries"],
+                addr,
+                rec["size"],
                 _encode_master(rec["master"]),
                 rw,
-                rec["size"],
                 _encode_kind(rec["kind"]),
-                0,
-                0,
             )
             assert len(packed) == 48
             f.write(packed)
@@ -80,6 +78,7 @@ def main() -> int:
     data = json.loads(summary.read_text())
     required_keys = {
         "summary_schema_version",
+        "trace_observed",
         "records_processed",
         "malformed_lines_skipped",
         "duplicate_seq_count",
@@ -93,20 +92,7 @@ def main() -> int:
         "included_rw_distribution",
         "included_access_kind_distribution",
         "included_master_region_distribution",
-        "agreement_count",
-        "mismatch_count",
-        "known_gap_count",
-        "known_gap_byte_access_count",
-        "normalized_agreement_count",
-        "normalized_mismatch_count",
-        "mean_base_latency",
-        "mean_contention_stall",
-        "mean_total_predicted",
-        "normalized_mismatch_by_master_region_access_kind",
-        "normalized_delta_by_access_kind",
         "delta_histogram",
-        "top_cumulative_drifts",
-        "top_normalized_deltas",
     }
     missing = required_keys.difference(data.keys())
     if missing:
@@ -130,13 +116,8 @@ def main() -> int:
         print("dataset hygiene invariant failed: included + excluded != total")
         return 1
 
-    if "ifetch" not in data["normalized_delta_by_access_kind"] and "read" not in data["normalized_delta_by_access_kind"]:
-        print("expected normalized_delta_by_access_kind to contain at least one access kind bucket")
-        return 1
-
-
-    if data["normalized_agreement_count"] == 0:
-        print("expected normalized_agreement_count to be non-zero for fixture")
+    if data["trace_observed"]["source"] != "TRACE_ONLY":
+        print("expected trace_observed.source to be TRACE_ONLY")
         return 1
 
 
@@ -158,18 +139,47 @@ def main() -> int:
         "ymir_retries",
         "ymir_elapsed",
         "ymir_wait",
-        "arbiter_predicted_wait",
-        "arbiter_predicted_service",
-        "arbiter_predicted_total",
-        "base_latency",
-        "contention_stall",
-        "total_predicted",
-        "normalized_delta_wait",
-        "cumulative_drift_total",
         "classification",
     ]:
         if field not in parsed_first:
             print(f"missing annotated field: {field}")
+            return 1
+
+    if "normalized_delta_wait" in parsed_first:
+        print("did not expect model fields without --include-model-comparison")
+        return 1
+
+    model_summary = build_dir / "trace_replay_tool_summary_model.json"
+    proc_model = subprocess.run(
+        [
+            str(trace_replay),
+            str(fixture),
+            "--summary-output",
+            str(model_summary),
+            "--summary-only",
+            "--include-model-comparison",
+            "--top-k",
+            "5",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if proc_model.returncode != 0:
+        print(proc_model.stdout)
+        print(proc_model.stderr)
+        return 1
+    model_data = json.loads(model_summary.read_text())
+    if "model_comparison" not in model_data:
+        print("expected model_comparison section with --include-model-comparison")
+        return 1
+    for model_key in [
+        "hypothesis_mismatch_count",
+        "model_vs_trace_wait_delta_by_access_kind",
+        "top_model_vs_trace_wait_deltas",
+    ]:
+        if model_key not in model_data["model_comparison"]:
+            print(f"expected model key with --include-model-comparison: {model_key}")
             return 1
 
 
