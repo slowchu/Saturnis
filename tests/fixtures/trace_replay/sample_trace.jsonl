@@ -1,11 +1,11 @@
-{"seq":3,"master":"DMA","tick_first_attempt":12,"tick_complete":14,"addr":"0x5FE00020","size":4,"rw":"R","kind":"mmio_read","service_cycles":4,"retries":0}
+{"seq":3,"master":"DMA","tick_first_attempt":12,"tick_complete":14,"addr":"0x05FE0020","size":4,"rw":"R","kind":"mmio_read","service_cycles":4,"retries":0}
 {"seq":1,"master":"MSH2","tick_first_attempt":10,"tick_complete":12,"addr":"0x02000000","size":4,"rw":"R","kind":"ifetch","service_cycles":2,"retries":0}
 {"seq":2,"master":"SSH2","tick_first_attempt":10,"tick_complete":12,"addr":"0x02000000","size":1,"rw":"R","kind":"read","service_cycles":2,"retries":0}
-{"seq":4,"master":"MSH2","tick_first_attempt":15,"tick_complete":17,"addr":"0x5C000100","size":2,"rw":"W","kind":"write","service_cycles":2,"retries":0}
-{"seq":5,"master":"SSH2","tick_first_attempt":15,"tick_complete":18,"addr":"0x5C000100","size":4,"rw":"R","kind":"read","service_cycles":22,"retries":0}
-{"seq":6,"master":"DMA","tick_first_attempt":19,"tick_complete":21,"addr":"0x58000010","size":4,"rw":"R","kind":"read","service_cycles":40,"retries":0}
-{"seq":7,"master":"MSH2","tick_first_attempt":22,"tick_complete":26,"addr":"0x5E000100","size":4,"rw":"R","kind":"mmio_read","service_cycles":20,"retries":1}
+{"seq":4,"master":"MSH2","tick_first_attempt":15,"tick_complete":17,"addr":"0x05C00100","size":2,"rw":"W","kind":"write","service_cycles":2,"retries":0}
+{"seq":5,"master":"SSH2","tick_first_attempt":15,"tick_complete":18,"addr":"0x05C00100","size":4,"rw":"R","kind":"read","service_cycles":22,"retries":0}
+{"seq":6,"master":"DMA","tick_first_attempt":19,"tick_complete":21,"addr":"0x05800010","size":4,"rw":"R","kind":"read","service_cycles":40,"retries":0}
+{"seq":7,"master":"MSH2","tick_first_attempt":22,"tick_complete":26,"addr":"0x05E00100","size":4,"rw":"R","kind":"mmio_read","service_cycles":20,"retries":1}
 MALFORMED-LINE
 {"seq":8,"master":"SSH2","tick_first_attempt":27,"tick_complete":29,"addr":"0x01000010","size":1,"rw":"W","kind":"write","service_cycles":2,"retries":0}
-{"seq":9,"master":"DMA","tick_first_attempt":30,"tick_complete":32,"addr":"0x70000000","size":4,"rw":"W","kind":"write","service_cycles":2,"retries":0}
+{"seq":9,"master":"DMA","tick_first_attempt":30,"tick_complete":32,"addr":"0x07000000","size":4,"rw":"W","kind":"write","service_cycles":2,"retries":0}
 {"seq":10,"master":"MSH2","tick_first_attempt":33,"tick_complete":34,"addr":"0x90000000","size":4,"rw":"R","kind":"read","service_cycles":4,"retries":0}

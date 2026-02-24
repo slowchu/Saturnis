@@ -183,15 +183,16 @@ std::string region_name(std::uint32_t addr) {
   if (addr >= 0x02000000U && addr <= 0x02FFFFFFU) return "Low WRAM";
   if (addr >= 0x10000000U && addr <= 0x1FFFFFFFU) return "MINIT/SINIT";
   if (addr >= 0x20000000U && addr <= 0x4FFFFFFFU) return "A-Bus CS0/CS1";
-  if (addr >= 0x50000000U && addr <= 0x57FFFFFFU) return "A-Bus dummy";
-  if (addr >= 0x58000000U && addr <= 0x58FFFFFFU) return "CD Block CS2";
-  if (addr >= 0x5A000000U && addr <= 0x5BFFFFFFU) return "SCSP";
-  if (addr >= 0x5C000000U && addr <= 0x5C7FFFFFU) return "VDP1 VRAM";
-  if (addr >= 0x5C800000U && addr <= 0x5CFFFFFFU) return "VDP1 FB";
-  if (addr >= 0x5D000000U && addr <= 0x5D7FFFFFU) return "VDP1 regs";
-  if (addr >= 0x5E000000U && addr <= 0x5FBFFFFFU) return "VDP2";
-  if (addr >= 0x5FE00000U && addr <= 0x5FEFFFFFU) return "SCU regs";
-  if (addr >= 0x60000000U && addr <= 0x7FFFFFFFU) return "High WRAM";
+  if (addr >= 0x05000000U && addr <= 0x057FFFFFU) return "A-Bus dummy";
+  if (addr >= 0x05800000U && addr <= 0x058FFFFFU) return "CD Block CS2";
+  if (addr >= 0x05A00000U && addr <= 0x05BFFFFFU) return "SCSP";
+  if (addr >= 0x05C00000U && addr <= 0x05C7FFFFU) return "VDP1 VRAM";
+  if (addr >= 0x05C80000U && addr <= 0x05CFFFFFU) return "VDP1 FB";
+  if (addr >= 0x05D00000U && addr <= 0x05D7FFFFU) return "VDP1 regs";
+  if (addr >= 0x05E00000U && addr <= 0x05FBFFFFU) return "VDP2";
+  if (addr >= 0x05FE0000U && addr <= 0x05FEFFFFU) return "SCU regs";
+  if (addr >= 0x06000000U && addr <= 0x07FFFFFFU) return "High WRAM";
+  if (addr >= 0xFFFFFE00U && addr <= 0xFFFFFFFFU) return "SH-2 on-chip regs";
   return "Unmapped";
 }
 
