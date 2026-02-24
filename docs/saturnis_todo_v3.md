@@ -5,7 +5,8 @@
 | Task | Status | Outcome |
 |------|--------|---------|
 | P0-C | ✅ Complete | Always-on dataset hygiene summary implemented |
-| P0-B | ⚠️ Needs revision | Timing decomposition implemented but uses arbiter-derived normalization; must be reworked to separate trace-fact from model-comparison metrics |
+| P0-B | 🔄 In progress | Phase 1 advanced: model-comparison is opt-in via `--include-model-comparison`, default replay is trace-only, and summary now emits model metrics under a dedicated `model_comparison` section when enabled. Remaining: finish full metric-name migration in annotated output and eliminate legacy model-field names there |
+| P1-CacheBucket | 🔄 In progress | Added observed `cache_bucket` classification to annotated output and summary distributions (`cache_bucket_distribution`, `master_region_access_kind_cache_bucket_distribution`). Remaining: per-bucket percentile/symmetry analytics from full Phase 3 plan |
 | P0-A | ❌ **RETRACTED** | Prior SSH2 +1 conclusion traced to Saturnis normalization artifact. Raw trace inspection confirmed both CPUs produce identical records (`svc=1, elapsed=1, wait=0`). The arbiter model generated the asymmetry, not the trace. See `p0a_conclusion_retracted.md` and `p0a_postmortem.md` |
 | Audit | ✅ Complete | Timing table parity verified, cache symmetry confirmed, address range bug found+fixed |
 | Binary reader | ✅ Complete | Struct layout fixed, parity validated. Seq-tracking memory cap added (2M). Full streaming refactor still needed |
@@ -39,6 +40,31 @@ These are grounded in raw trace data and verified source inspection:
 ---
 
 ## Execution Order
+
+### Progress Notes (rolling)
+
+- [x] **Phase 1 (partial): opt-in model comparison gate implemented**
+  - Added `--include-model-comparison` flag to `trace_replay`; default mode is trace-only.
+  - Default annotated output now excludes arbiter/model-derived fields.
+  - Default stdout now explicitly reports `Model comparison: DISABLED (trace-only mode)`.
+  - Remaining follow-up: emit a dedicated `model_comparison` top-level section and finish deprecated metric name migration.
+
+- [x] **Phase 1 (follow-up): summary JSON model section split implemented**
+  - Model-derived summary metrics now live under `model_comparison` and are emitted only when `--include-model-comparison` is provided.
+  - Added model-section field names with explicit hypothesis/model-vs-trace wording (`hypothesis_mismatch_count`, `model_vs_trace_wait_delta_by_access_kind`, `top_model_vs_trace_wait_deltas`).
+  - Remaining follow-up: complete annotated output field-name migration away from legacy names.
+
+- [x] **Phase 1 (follow-up): per-record annotated naming aligned with summary terminology**
+  - Annotated trace-derived fields now use `observed_*` names (`observed_elapsed`, `observed_wait`, `observed_service_cycles`, `observed_retries`).
+  - Annotated model-derived fields now use `model_*` naming (`model_predicted_wait`, `model_predicted_total`, `model_vs_trace_wait_delta`, etc.) and are still opt-in behind `--include-model-comparison`.
+  - Remaining follow-up: add `cache_bucket` field and associated classification/bucketing work from Phase 3.
+
+- [x] **Phase 3 (partial): observed cache_bucket classification plumbed**
+  - Added `cache_bucket` to per-record annotated JSONL output.
+  - Added `cache_bucket_distribution` and `master_region_access_kind_cache_bucket_distribution` to summary output.
+  - Added `observed_bucket_stats_by_master_region_access_kind_cache_bucket` with sample size, wait-nonzero rate/count, p50/p90/p99 for observed elapsed/wait, and `low_sample` flagging.
+  - Added `symmetry_checks` output for `region × access_kind × cache_bucket` buckets where both MSH2 and SSH2 have `N >= 100`, with explicit divergence thresholds (`elapsed_p50`, `elapsed_p99`, `wait_nonzero_rate`) and notes on mismatched metrics.
+  - Remaining follow-up: add optional threshold configurability and richer symmetry diagnostics.
 
 ### Phase 0: Stop the Bleeding (Documentation Correction)
 
@@ -181,7 +207,26 @@ The following metric names must not appear in the default output path:
 | `contention_stall` | Implies observed contention; is arbiter prediction | `model_predicted_wait` (model section) |
 | `base_latency` | Ambiguous — is this observed or predicted? | `observed_service_cycles` (trace) or `model_predicted_service` (model) |
 
-#### E. Code changes required
+#### E. Naming consistency between summary and per-record output
+
+Field names in annotated JSONL (per-record output) must match the summary section they belong to. If the summary calls a metric `observed_wait` and `observed_elapsed`, the per-record annotated output must use the same names — not `ymir_wait` and `ymir_elapsed`. This applies in both directions:
+
+| Summary metric | Per-record annotated field | NOT this |
+|----------------|---------------------------|----------|
+| `observed_elapsed` | `observed_elapsed` | ~~`ymir_elapsed`~~ |
+| `observed_wait` | `observed_wait` | ~~`ymir_wait`~~ |
+| `observed_service_cycles` | `observed_service_cycles` | ~~`ymir_service_cycles`~~ |
+| `observed_retries` | `observed_retries` | ~~`ymir_retries`~~ |
+| `cache_bucket` | `cache_bucket` | (new field) |
+| `model_predicted_wait` | `model_predicted_wait` | ~~`arbiter_predicted_wait`~~ |
+| `model_vs_trace_wait_delta` | `model_vs_trace_wait_delta` | ~~`normalized_delta_wait`~~ |
+| `model_vs_trace_total_delta` | `model_vs_trace_total_delta` | ~~`normalized_delta_total`~~ |
+
+Model-prefixed fields in per-record output are only emitted when `--include-model-comparison` is set, matching the summary behavior.
+
+**Why this matters:** The P0-A false positive was partly enabled by field names that sounded observational (`normalized_delta_wait`) but carried model-derived values. Consistent naming across summary and per-record output closes this gap — a reader seeing `observed_wait` in annotated output knows it came from the trace, and `model_predicted_wait` knows it came from the arbiter, without needing to check the implementation.
+
+#### F. Code changes required
 
 1. **`ReplayResult` struct:** Split into `TraceObservation` (trace fields only) and `ModelComparison` (arbiter fields). The `ModelComparison` struct is optional and only populated when `--include-model-comparison` is set.
 

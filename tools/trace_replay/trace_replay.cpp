@@ -20,7 +20,7 @@
 
 namespace {
 
-inline constexpr std::uint32_t kSummarySchemaVersion = 3;
+inline constexpr std::uint32_t kSummarySchemaVersion = 4;
 
 struct TraceRecord {
   std::uint64_t seq = 0;
@@ -45,6 +45,7 @@ struct ReplayResult {
   std::uint32_t ymir_elapsed = 0;
   std::uint32_t ymir_wait = 0;
   std::string ymir_wait_metric_kind;
+  std::string cache_bucket;
 
   std::uint32_t arbiter_predicted_service = 0;
   std::uint32_t arbiter_predicted_wait = 0;
@@ -70,6 +71,7 @@ struct Options {
   std::optional<std::string> summary_output_path;
   std::size_t top_k = 20;
   bool summary_only = false;
+  bool include_model_comparison = false;
   std::optional<std::size_t> annotated_limit;
 };
 
@@ -78,6 +80,7 @@ void print_help() {
             << "  --annotated-output <path>   Write annotated JSONL\n"
             << "  --summary-output <path>     Write machine-readable summary JSON\n"
             << "  --summary-only              Skip annotated output even if path supplied\n"
+            << "  --include-model-comparison  Enable arbiter/model-comparison metrics (hypothesis-only)\n"
             << "  --annotated-limit <N>       Emit first N annotated rows\n"
             << "  --top <N>                   Legacy alias for --top-k\n"
             << "  --top-k <N>                 Number of ranked entries to emit\n"
@@ -214,6 +217,29 @@ std::string region_name(std::uint32_t addr) {
   return "Unmapped";
 }
 
+bool is_high_wram(std::uint32_t addr) {
+  return addr >= 0x06000000U && addr <= 0x07FFFFFFU;
+}
+
+std::string classify_cache_bucket(std::uint32_t addr, std::uint32_t service_cycles) {
+  if (!is_high_wram(addr)) {
+    return "not_applicable";
+  }
+  if (service_cycles == 1U) {
+    return "cache_hit";
+  }
+  if (service_cycles == 2U) {
+    return "uncached_or_through";
+  }
+  if (service_cycles == 4U) {
+    return "cache_miss_half";
+  }
+  if (service_cycles == 8U) {
+    return "cache_miss_full";
+  }
+  return "anomaly";
+}
+
 std::string json_escape(const std::string &input) {
   std::string out;
   out.reserve(input.size());
@@ -280,6 +306,21 @@ struct InputStats {
   std::size_t malformed_lines = 0;
   std::size_t duplicate_seq_count = 0;
   std::size_t non_monotonic_seq_count = 0;
+};
+
+struct ObservedBucketStats {
+  std::size_t sample_size = 0;
+  std::size_t observed_wait_nonzero_count = 0;
+  std::vector<std::int64_t> observed_elapsed_values;
+  std::vector<std::int64_t> observed_wait_values;
+};
+
+struct SymmetryCheckEntry {
+  std::string bucket;
+  ObservedBucketStats msh2;
+  ObservedBucketStats ssh2;
+  bool symmetric = true;
+  std::string notes;
 };
 
 struct BinaryTraceRecordV1 {
@@ -482,6 +523,10 @@ bool parse_options(int argc, char **argv, Options &opts) {
       opts.summary_only = true;
       continue;
     }
+    if (arg == "--include-model-comparison") {
+      opts.include_model_comparison = true;
+      continue;
+    }
     if (arg == "--annotated-limit") {
       if (i + 1 >= argc) return false;
       const auto parsed = parse_u64(argv[++i]);
@@ -539,6 +584,8 @@ int main(int argc, char **argv) {
   std::map<std::string, std::size_t> included_rw_distribution;
   std::map<std::string, std::size_t> included_access_kind_distribution;
   std::map<std::string, std::size_t> included_master_region_distribution;
+  std::map<std::string, std::size_t> included_cache_bucket_distribution;
+  std::map<std::string, std::size_t> included_master_region_access_kind_cache_bucket_distribution;
   std::map<std::string, std::size_t> excluded_reason_counts;
   std::map<std::string, std::size_t> known_gap_bucket_counts;
 
@@ -555,6 +602,9 @@ int main(int argc, char **argv) {
     included_rw_distribution[record.rw] += 1;
     included_access_kind_distribution[record.kind] += 1;
     included_master_region_distribution[record.master + " | " + region_name(record.addr)] += 1;
+    const std::string bucket = classify_cache_bucket(record.addr, record.service_cycles);
+    included_cache_bucket_distribution[bucket] += 1;
+    included_master_region_access_kind_cache_bucket_distribution[record.master + " | " + region_name(record.addr) + " | " + record.kind + " | " + bucket] += 1;
     if (record.size == 1U) {
       known_gap_bucket_counts["byte_access_wait_check_gap_candidate"] += 1;
     }
@@ -566,7 +616,10 @@ int main(int argc, char **argv) {
   const std::size_t excluded_events = total_events >= included_events ? (total_events - included_events) : 0;
 
   const busarb::ArbiterConfig arbiter_config{};
-  busarb::Arbiter arbiter({busarb::ymir_access_cycles, nullptr}, arbiter_config);
+  std::optional<busarb::Arbiter> arbiter;
+  if (options.include_model_comparison) {
+    arbiter.emplace(busarb::TimingCallbacks{busarb::ymir_access_cycles, nullptr}, arbiter_config);
+  }
   std::optional<TraceRecord> previous_record_for_normalized;
 
   std::vector<ReplayResult> results;
@@ -586,17 +639,13 @@ int main(int argc, char **argv) {
   std::map<std::string, std::size_t> normalized_mismatch_by_master_region_access_kind;
   std::map<std::string, std::size_t> sample_size_by_master_region_access_kind;
   std::map<std::string, std::vector<std::int64_t>> normalized_delta_by_access_kind;
+  std::map<std::string, ObservedBucketStats> observed_bucket_stats_by_master_region_access_kind_cache_bucket;
 
   std::vector<std::int64_t> normalized_wait_deltas;
   normalized_wait_deltas.reserve(records.size());
 
   for (const auto &record : filtered_records) {
     const auto master = parse_master(record.master);
-
-    const busarb::BusRequest req{*master, record.addr, record.rw == "W", record.size, record.tick_first_attempt};
-    const std::uint64_t bus_before_commit = arbiter.bus_free_tick();
-    arbiter.commit_grant(req, record.tick_first_attempt);
-    const std::uint64_t bus_after_commit = arbiter.bus_free_tick();
 
     ReplayResult r{};
     r.record = record;
@@ -611,57 +660,78 @@ int main(int argc, char **argv) {
       r.ymir_wait_metric_kind = "proxy_retries_x_service";
     }
     r.ymir_wait = (r.ymir_elapsed > r.ymir_service_cycles) ? (r.ymir_elapsed - r.ymir_service_cycles) : 0U;
+    r.cache_bucket = classify_cache_bucket(record.addr, r.ymir_service_cycles);
 
-    r.arbiter_predicted_wait = estimate_local_wait_cycles(record, previous_record_for_normalized, arbiter_config);
-    r.arbiter_predicted_service = std::max(1U, busarb::ymir_access_cycles(nullptr, record.addr, record.rw == "W", record.size));
-    r.arbiter_predicted_total = r.arbiter_predicted_wait + r.arbiter_predicted_service;
-    r.base_latency = r.arbiter_predicted_service;
-    r.contention_stall = r.arbiter_predicted_wait;
-    r.total_predicted = r.arbiter_predicted_total;
+    const std::string observed_bucket_key = record.master + " | " + region_name(record.addr) + " | " + record.kind + " | " + r.cache_bucket;
+    auto &observed_bucket_stats = observed_bucket_stats_by_master_region_access_kind_cache_bucket[observed_bucket_key];
+    observed_bucket_stats.sample_size += 1;
+    observed_bucket_stats.observed_wait_nonzero_count += (r.ymir_wait > 0U ? 1U : 0U);
+    observed_bucket_stats.observed_elapsed_values.push_back(static_cast<std::int64_t>(r.ymir_elapsed));
+    observed_bucket_stats.observed_wait_values.push_back(static_cast<std::int64_t>(r.ymir_wait));
 
-    r.normalized_delta_wait = static_cast<std::int64_t>(r.arbiter_predicted_wait) - static_cast<std::int64_t>(r.ymir_wait);
-    r.normalized_delta_total = static_cast<std::int64_t>(r.arbiter_predicted_total) - static_cast<std::int64_t>(r.ymir_elapsed);
+    if (options.include_model_comparison) {
+      const busarb::BusRequest req{*master, record.addr, record.rw == "W", record.size, record.tick_first_attempt};
+      const std::uint64_t bus_before_commit = arbiter->bus_free_tick();
+      arbiter->commit_grant(req, record.tick_first_attempt);
+      const std::uint64_t bus_after_commit = arbiter->bus_free_tick();
 
-    const std::uint64_t ymir_start = record.tick_first_attempt;
-    const std::uint64_t ymir_end_exclusive = record.tick_complete + 1U;
-    const std::uint64_t arbiter_start = std::max(bus_before_commit, ymir_start);
-    r.cumulative_drift_wait = static_cast<std::int64_t>(arbiter_start) - static_cast<std::int64_t>(ymir_start);
-    r.cumulative_drift_total = static_cast<std::int64_t>(bus_after_commit) - static_cast<std::int64_t>(ymir_end_exclusive);
+      r.arbiter_predicted_wait = estimate_local_wait_cycles(record, previous_record_for_normalized, arbiter_config);
+      r.arbiter_predicted_service = std::max(1U, busarb::ymir_access_cycles(nullptr, record.addr, record.rw == "W", record.size));
+      r.arbiter_predicted_total = r.arbiter_predicted_wait + r.arbiter_predicted_service;
+      r.base_latency = r.arbiter_predicted_service;
+      r.contention_stall = r.arbiter_predicted_wait;
+      r.total_predicted = r.arbiter_predicted_total;
 
-    const bool known_byte_gap = (record.size == 1U && r.ymir_retries == 0U && r.normalized_delta_wait > 0);
-    if (known_byte_gap) {
-      r.classification = "known_ymir_wait_model_gap";
-      r.known_gap_reason = "byte_access_wait_check_gap";
-      ++known_gap_count;
-      ++known_gap_byte_access_count;
-    } else if (r.cumulative_drift_wait == 0 && r.cumulative_drift_total == 0) {
-      r.classification = "agreement";
+      r.normalized_delta_wait = static_cast<std::int64_t>(r.arbiter_predicted_wait) - static_cast<std::int64_t>(r.ymir_wait);
+      r.normalized_delta_total = static_cast<std::int64_t>(r.arbiter_predicted_total) - static_cast<std::int64_t>(r.ymir_elapsed);
+
+      const std::uint64_t ymir_start = record.tick_first_attempt;
+      const std::uint64_t ymir_end_exclusive = record.tick_complete + 1U;
+      const std::uint64_t arbiter_start = std::max(bus_before_commit, ymir_start);
+      r.cumulative_drift_wait = static_cast<std::int64_t>(arbiter_start) - static_cast<std::int64_t>(ymir_start);
+      r.cumulative_drift_total = static_cast<std::int64_t>(bus_after_commit) - static_cast<std::int64_t>(ymir_end_exclusive);
+
+      const bool known_byte_gap = (record.size == 1U && r.ymir_retries == 0U && r.normalized_delta_wait > 0);
+      if (known_byte_gap) {
+        r.classification = "known_ymir_wait_model_gap";
+        r.known_gap_reason = "byte_access_wait_check_gap";
+        ++known_gap_count;
+        ++known_gap_byte_access_count;
+      } else if (r.cumulative_drift_wait == 0 && r.cumulative_drift_total == 0) {
+        r.classification = "agreement";
+        ++cumulative_agreement_count;
+      } else {
+        r.classification = "mismatch";
+        ++cumulative_mismatch_count;
+      }
+
+      if (r.normalized_delta_wait == 0) {
+        ++normalized_agreement_count;
+      } else {
+        ++normalized_mismatch_count;
+      }
+
+      histogram[region_name(record.addr) + " | " + r.classification] += 1;
+      normalized_by_master[record.master] += (r.normalized_delta_wait == 0 ? 0U : 1U);
+      normalized_by_region[region_name(record.addr)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
+      normalized_by_size[std::to_string(record.size)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
+      const std::string mk = record.master + " | " + region_name(record.addr) + " | " + record.kind;
+      sample_size_by_master_region_access_kind[mk] += 1;
+      if (r.normalized_delta_wait != 0) {
+        normalized_mismatch_by_master_region_access_kind[mk] += 1;
+      }
+      normalized_delta_by_access_kind[record.kind].push_back(r.normalized_delta_wait);
+      normalized_wait_deltas.push_back(r.normalized_delta_wait);
+    } else {
+      r.classification = (r.ymir_wait > 0U) ? "wait_nonzero" : "wait_zero";
+      histogram[region_name(record.addr) + " | " + r.classification] += 1;
       ++cumulative_agreement_count;
-    } else {
-      r.classification = "mismatch";
-      ++cumulative_mismatch_count;
     }
-
-    if (r.normalized_delta_wait == 0) {
-      ++normalized_agreement_count;
-    } else {
-      ++normalized_mismatch_count;
-    }
-
-    histogram[region_name(record.addr) + " | " + r.classification] += 1;
-    normalized_by_master[record.master] += (r.normalized_delta_wait == 0 ? 0U : 1U);
-    normalized_by_region[region_name(record.addr)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
-    normalized_by_size[std::to_string(record.size)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
-    const std::string mk = record.master + " | " + region_name(record.addr) + " | " + record.kind;
-    sample_size_by_master_region_access_kind[mk] += 1;
-    if (r.normalized_delta_wait != 0) {
-      normalized_mismatch_by_master_region_access_kind[mk] += 1;
-    }
-    normalized_delta_by_access_kind[record.kind].push_back(r.normalized_delta_wait);
-    normalized_wait_deltas.push_back(r.normalized_delta_wait);
 
     results.push_back(r);
-    previous_record_for_normalized = record;
+    if (options.include_model_comparison) {
+      previous_record_for_normalized = record;
+    }
   }
 
   const std::size_t records_processed = results.size();
@@ -670,7 +740,7 @@ int main(int argc, char **argv) {
     std::cerr << "error: classification invariant failed\n";
     return 1;
   }
-  if (normalized_agreement_count + normalized_mismatch_count != records_processed) {
+  if (options.include_model_comparison && normalized_agreement_count + normalized_mismatch_count != records_processed) {
     std::cerr << "error: normalized invariant failed\n";
     return 1;
   }
@@ -709,27 +779,28 @@ int main(int argc, char **argv) {
                 << "\"addr\":\"" << json_escape(r.record.addr_text) << "\","
                 << "\"size\":" << static_cast<unsigned>(r.record.size) << ','
                 << "\"rw\":\"" << json_escape(r.record.rw) << "\","
-                << "\"kind\":\"" << json_escape(r.record.kind) << "\","
+                << "\"kind\":\"" << json_escape(r.record.kind) << "\"," 
                 << "\"service_cycles\":" << r.record.service_cycles << ','
                 << "\"retries\":" << r.record.retries << ','
-                << "\"ymir_service_cycles\":" << r.ymir_service_cycles << ','
-                << "\"ymir_retries\":" << r.ymir_retries << ','
-                << "\"ymir_elapsed\":" << r.ymir_elapsed << ','
-                << "\"ymir_wait\":" << r.ymir_wait << ','
-                << "\"ymir_wait_metric_kind\":\"" << r.ymir_wait_metric_kind << "\","
-                << "\"arbiter_predicted_wait\":" << r.arbiter_predicted_wait << ','
-                << "\"arbiter_predicted_service\":" << r.arbiter_predicted_service << ','
-                << "\"arbiter_predicted_total\":" << r.arbiter_predicted_total << ','
-                << "\"base_latency\":" << r.base_latency << ','
-                << "\"contention_stall\":" << r.contention_stall << ','
-                << "\"total_predicted\":" << r.total_predicted << ','
-                << "\"normalized_delta_wait\":" << r.normalized_delta_wait << ','
-                << "\"normalized_delta_total\":" << r.normalized_delta_total << ','
-                << "\"cumulative_drift_wait\":" << r.cumulative_drift_wait << ','
-                << "\"cumulative_drift_total\":" << r.cumulative_drift_total << ','
-                << "\"classification\":\"" << r.classification << "\","
-                << "\"known_gap_reason\":\"" << r.known_gap_reason << "\""
-                << "}\n";
+                << "\"observed_service_cycles\":" << r.ymir_service_cycles << ','
+                << "\"observed_retries\":" << r.ymir_retries << ','
+                << "\"observed_elapsed\":" << r.ymir_elapsed << ','
+                << "\"observed_wait\":" << r.ymir_wait << ','
+                << "\"observed_wait_metric_kind\":\"" << r.ymir_wait_metric_kind << "\"," 
+                << "\"cache_bucket\":\"" << r.cache_bucket << "\"," 
+                << "\"classification\":\"" << r.classification << "\"";
+      if (options.include_model_comparison) {
+        annotated << ','
+                  << "\"model_predicted_wait\":" << r.arbiter_predicted_wait << ','
+                  << "\"model_predicted_service\":" << r.arbiter_predicted_service << ','
+                  << "\"model_predicted_total\":" << r.arbiter_predicted_total << ','
+                  << "\"model_vs_trace_wait_delta\":" << r.normalized_delta_wait << ','
+                  << "\"model_vs_trace_total_delta\":" << r.normalized_delta_total << ','
+                  << "\"cumulative_drift_wait\":" << r.cumulative_drift_wait << ','
+                  << "\"cumulative_drift_total\":" << r.cumulative_drift_total << ','
+                  << "\"known_gap_reason\":\"" << r.known_gap_reason << "\"";
+      }
+      annotated << "}\n";
     }
   }
 
@@ -763,26 +834,68 @@ int main(int argc, char **argv) {
     summary << "  \"total_events\": " << total_events << ",\n";
     summary << "  \"included_events\": " << included_events << ",\n";
     summary << "  \"excluded_events\": " << excluded_events << ",\n";
-    summary << "  \"agreement_count\": " << cumulative_agreement_count << ",\n";
-    summary << "  \"mismatch_count\": " << cumulative_mismatch_count << ",\n";
-    summary << "  \"known_gap_count\": " << known_gap_count << ",\n";
-    summary << "  \"known_gap_byte_access_count\": " << known_gap_byte_access_count << ",\n";
-    summary << "  \"normalized_agreement_count\": " << normalized_agreement_count << ",\n";
-    summary << "  \"normalized_mismatch_count\": " << normalized_mismatch_count << ",\n";
-    summary << "  \"mean_base_latency\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_base_latency) / static_cast<double>(records_processed)) << ",\n";
-    summary << "  \"mean_contention_stall\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_contention_stall) / static_cast<double>(records_processed)) << ",\n";
-    summary << "  \"mean_total_predicted\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_total_predicted) / static_cast<double>(records_processed)) << ",\n";
-    summary << "  \"mean_normalized_delta_wait\": " << mean_normalized_delta_wait << ",\n";
-    summary << "  \"median_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.5) << ",\n";
-    summary << "  \"max_normalized_delta_wait\": " << (normalized_wait_deltas.empty() ? 0.0 : percentile(normalized_wait_deltas, 1.0)) << ",\n";
-    summary << "  \"p90_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.9) << ",\n";
-    summary << "  \"p99_normalized_delta_wait\": " << percentile(normalized_wait_deltas, 0.99) << ",\n";
-    summary << "  \"final_cumulative_drift_wait\": " << (results.empty() ? 0 : results.back().cumulative_drift_wait) << ",\n";
-    summary << "  \"final_cumulative_drift_total\": " << (results.empty() ? 0 : results.back().cumulative_drift_total) << ",\n";
-    summary << "  \"drift_rate_wait_per_record\": " << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_wait) / static_cast<double>(results.size()))
-            << ",\n";
-    summary << "  \"drift_rate_total_per_record\": "
-            << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_total) / static_cast<double>(results.size())) << ",\n";
+    summary << "  \"trace_observed\": {\n";
+    summary << "    \"source\": \"TRACE_ONLY\",\n";
+    summary << "    \"records_processed\": " << records_processed << ",\n";
+    summary << "    \"observed_wait_nonzero_count\": " << std::count_if(results.begin(), results.end(), [](const ReplayResult &r) { return r.ymir_wait > 0U; }) << "\n";
+    summary << "  },\n";
+
+    std::map<std::string, std::pair<std::optional<ObservedBucketStats>, std::optional<ObservedBucketStats>>> symmetry_candidates;
+    for (const auto &[key, stats] : observed_bucket_stats_by_master_region_access_kind_cache_bucket) {
+      const std::string delim = " | ";
+      const auto p1 = key.find(delim);
+      if (p1 == std::string::npos) continue;
+      const auto p2 = key.find(delim, p1 + delim.size());
+      if (p2 == std::string::npos) continue;
+      const auto p3 = key.find(delim, p2 + delim.size());
+      if (p3 == std::string::npos) continue;
+      const std::string master = key.substr(0, p1);
+      const std::string rest = key.substr(p1 + delim.size());
+      if (master == "MSH2") {
+        symmetry_candidates[rest].first = stats;
+      } else if (master == "SSH2") {
+        symmetry_candidates[rest].second = stats;
+      }
+    }
+    std::vector<SymmetryCheckEntry> symmetry_checks;
+    for (const auto &[bucket, pair_stats] : symmetry_candidates) {
+      if (!pair_stats.first.has_value() || !pair_stats.second.has_value()) {
+        continue;
+      }
+      const auto &msh2 = *pair_stats.first;
+      const auto &ssh2 = *pair_stats.second;
+      if (msh2.sample_size < 100U || ssh2.sample_size < 100U) {
+        continue;
+      }
+      SymmetryCheckEntry entry{};
+      entry.bucket = bucket;
+      entry.msh2 = msh2;
+      entry.ssh2 = ssh2;
+      const double msh2_elapsed_p50 = percentile(msh2.observed_elapsed_values, 0.5);
+      const double ssh2_elapsed_p50 = percentile(ssh2.observed_elapsed_values, 0.5);
+      const double msh2_elapsed_p99 = percentile(msh2.observed_elapsed_values, 0.99);
+      const double ssh2_elapsed_p99 = percentile(ssh2.observed_elapsed_values, 0.99);
+      const double msh2_wait_rate = msh2.sample_size == 0 ? 0.0 : static_cast<double>(msh2.observed_wait_nonzero_count) / static_cast<double>(msh2.sample_size);
+      const double ssh2_wait_rate = ssh2.sample_size == 0 ? 0.0 : static_cast<double>(ssh2.observed_wait_nonzero_count) / static_cast<double>(ssh2.sample_size);
+      std::vector<std::string> divergence_notes;
+      if (std::fabs(msh2_elapsed_p50 - ssh2_elapsed_p50) > 1.0) {
+        divergence_notes.push_back("elapsed_p50");
+      }
+      if (std::fabs(msh2_elapsed_p99 - ssh2_elapsed_p99) > 2.0) {
+        divergence_notes.push_back("elapsed_p99");
+      }
+      if (std::fabs(msh2_wait_rate - ssh2_wait_rate) > 0.01) {
+        divergence_notes.push_back("wait_nonzero_rate");
+      }
+      entry.symmetric = divergence_notes.empty();
+      if (!entry.symmetric) {
+        for (std::size_t i = 0; i < divergence_notes.size(); ++i) {
+          if (i > 0) entry.notes += ",";
+          entry.notes += divergence_notes[i];
+        }
+      }
+      symmetry_checks.push_back(std::move(entry));
+    }
 
     auto write_map = [&summary](const std::string &name, const std::map<std::string, std::size_t> &m, bool trailing_comma) {
       summary << "  \"" << name << "\": {\n";
@@ -806,32 +919,54 @@ int main(int argc, char **argv) {
     write_map("included_rw_distribution", included_rw_distribution, true);
     write_map("included_access_kind_distribution", included_access_kind_distribution, true);
     write_map("included_master_region_distribution", included_master_region_distribution, true);
+    write_map("cache_bucket_distribution", included_cache_bucket_distribution, true);
+    write_map("master_region_access_kind_cache_bucket_distribution", included_master_region_access_kind_cache_bucket_distribution, true);
 
-    summary << "  \"normalized_mismatch_by_master_region_access_kind\": {\n";
-    std::size_t mk_index = 0;
-    for (const auto &[key, sample_size] : sample_size_by_master_region_access_kind) {
-      const std::size_t mismatch_count = normalized_mismatch_by_master_region_access_kind.count(key) ? normalized_mismatch_by_master_region_access_kind.at(key) : 0U;
-      const double mismatch_rate = sample_size == 0 ? 0.0 : static_cast<double>(mismatch_count) / static_cast<double>(sample_size);
-      summary << "    \"" << json_escape(key) << "\": {\"mismatch_count\": " << mismatch_count
-              << ", \"sample_size\": " << sample_size
-              << ", \"mismatch_rate\": " << mismatch_rate << "}";
-      ++mk_index;
-      if (mk_index < sample_size_by_master_region_access_kind.size()) summary << ',';
+    summary << "  \"observed_bucket_stats_by_master_region_access_kind_cache_bucket\": {\n";
+    std::size_t observed_bucket_index = 0;
+    for (const auto &[key, stats] : observed_bucket_stats_by_master_region_access_kind_cache_bucket) {
+      const double wait_nonzero_rate = stats.sample_size == 0 ? 0.0 : static_cast<double>(stats.observed_wait_nonzero_count) / static_cast<double>(stats.sample_size);
+      const bool low_sample = stats.sample_size < 100U;
+      summary << "    \"" << json_escape(key) << "\": {"
+              << "\"sample_size\": " << stats.sample_size
+              << ", \"observed_wait_nonzero_count\": " << stats.observed_wait_nonzero_count
+              << ", \"observed_wait_nonzero_rate\": " << wait_nonzero_rate
+              << ", \"observed_elapsed_p50\": " << percentile(stats.observed_elapsed_values, 0.5)
+              << ", \"observed_elapsed_p90\": " << percentile(stats.observed_elapsed_values, 0.9)
+              << ", \"observed_elapsed_p99\": " << percentile(stats.observed_elapsed_values, 0.99)
+              << ", \"observed_wait_p50\": " << percentile(stats.observed_wait_values, 0.5)
+              << ", \"observed_wait_p90\": " << percentile(stats.observed_wait_values, 0.9)
+              << ", \"observed_wait_p99\": " << percentile(stats.observed_wait_values, 0.99)
+              << ", \"low_sample\": " << (low_sample ? "true" : "false")
+              << "}";
+      ++observed_bucket_index;
+      if (observed_bucket_index < observed_bucket_stats_by_master_region_access_kind_cache_bucket.size()) summary << ',';
       summary << "\n";
     }
     summary << "  },\n";
 
-    summary << "  \"normalized_delta_by_access_kind\": {\n";
-    std::size_t kind_index = 0;
-    for (const auto &[kind, deltas] : normalized_delta_by_access_kind) {
-      summary << "    \"" << json_escape(kind) << "\": {\"sample_size\": " << deltas.size()
-              << ", \"p90\": " << percentile(deltas, 0.9)
-              << ", \"p99\": " << percentile(deltas, 0.99) << "}";
-      ++kind_index;
-      if (kind_index < normalized_delta_by_access_kind.size()) summary << ',';
+    summary << "  \"symmetry_checks\": [\n";
+    for (std::size_t i = 0; i < symmetry_checks.size(); ++i) {
+      const auto &entry = symmetry_checks[i];
+      const double msh2_wait_rate = entry.msh2.sample_size == 0 ? 0.0 : static_cast<double>(entry.msh2.observed_wait_nonzero_count) / static_cast<double>(entry.msh2.sample_size);
+      const double ssh2_wait_rate = entry.ssh2.sample_size == 0 ? 0.0 : static_cast<double>(entry.ssh2.observed_wait_nonzero_count) / static_cast<double>(entry.ssh2.sample_size);
+      summary << "    {\"bucket\": \"" << json_escape(entry.bucket)
+              << "\", \"msh2\": {\"N\": " << entry.msh2.sample_size
+              << ", \"elapsed_p50\": " << percentile(entry.msh2.observed_elapsed_values, 0.5)
+              << ", \"elapsed_p90\": " << percentile(entry.msh2.observed_elapsed_values, 0.9)
+              << ", \"elapsed_p99\": " << percentile(entry.msh2.observed_elapsed_values, 0.99)
+              << ", \"wait_nonzero_rate\": " << msh2_wait_rate
+              << "}, \"ssh2\": {\"N\": " << entry.ssh2.sample_size
+              << ", \"elapsed_p50\": " << percentile(entry.ssh2.observed_elapsed_values, 0.5)
+              << ", \"elapsed_p90\": " << percentile(entry.ssh2.observed_elapsed_values, 0.9)
+              << ", \"elapsed_p99\": " << percentile(entry.ssh2.observed_elapsed_values, 0.99)
+              << ", \"wait_nonzero_rate\": " << ssh2_wait_rate
+              << "}, \"symmetric\": " << (entry.symmetric ? "true" : "false")
+              << ", \"notes\": \"" << json_escape(entry.notes) << "\"}";
+      if (i + 1 < symmetry_checks.size()) summary << ',';
       summary << "\n";
     }
-    summary << "  },\n";
+    summary << "  ],\n";
 
     summary << "  \"delta_histogram\": {\n";
     std::size_t hist_index = 0;
@@ -841,41 +976,117 @@ int main(int argc, char **argv) {
       if (hist_index < histogram.size()) summary << ',';
       summary << "\n";
     }
-    summary << "  },\n";
+    summary << "  }";
 
-    write_map("normalized_mismatch_by_master", normalized_by_master, true);
-    write_map("normalized_mismatch_by_region", normalized_by_region, true);
-    write_map("normalized_mismatch_by_size", normalized_by_size, true);
+    if (options.include_model_comparison) {
+      summary << ",\n";
+      summary << "  \"model_comparison\": {\n";
+      summary << "    \"source\": \"MODEL_COMPARISON\",\n";
+      summary << "    \"hypothesis_agreement_count\": " << normalized_agreement_count << ",\n";
+      summary << "    \"hypothesis_mismatch_count\": " << normalized_mismatch_count << ",\n";
+      summary << "    \"known_gap_count\": " << known_gap_count << ",\n";
+      summary << "    \"known_gap_byte_access_count\": " << known_gap_byte_access_count << ",\n";
+      summary << "    \"mean_model_predicted_service\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_base_latency) / static_cast<double>(records_processed)) << ",\n";
+      summary << "    \"mean_model_predicted_wait\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_contention_stall) / static_cast<double>(records_processed)) << ",\n";
+      summary << "    \"mean_model_predicted_total\": " << (records_processed == 0 ? 0.0 : static_cast<double>(sum_total_predicted) / static_cast<double>(records_processed)) << ",\n";
+      summary << "    \"mean_model_vs_trace_wait_delta\": " << mean_normalized_delta_wait << ",\n";
+      summary << "    \"median_model_vs_trace_wait_delta\": " << percentile(normalized_wait_deltas, 0.5) << ",\n";
+      summary << "    \"max_model_vs_trace_wait_delta\": " << (normalized_wait_deltas.empty() ? 0.0 : percentile(normalized_wait_deltas, 1.0)) << ",\n";
+      summary << "    \"p90_model_vs_trace_wait_delta\": " << percentile(normalized_wait_deltas, 0.9) << ",\n";
+      summary << "    \"p99_model_vs_trace_wait_delta\": " << percentile(normalized_wait_deltas, 0.99) << ",\n";
+      summary << "    \"final_cumulative_drift_wait\": " << (results.empty() ? 0 : results.back().cumulative_drift_wait) << ",\n";
+      summary << "    \"final_cumulative_drift_total\": " << (results.empty() ? 0 : results.back().cumulative_drift_total) << ",\n";
+      summary << "    \"drift_rate_wait_per_record\": "
+              << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_wait) / static_cast<double>(results.size())) << ",\n";
+      summary << "    \"drift_rate_total_per_record\": "
+              << (results.empty() ? 0.0 : static_cast<double>(results.back().cumulative_drift_total) / static_cast<double>(results.size())) << ",\n";
 
-    summary << "  \"top_cumulative_drifts\": [\n";
-    const std::size_t emit = std::min(options.top_k, top_cumulative.size());
-    for (std::size_t i = 0; i < emit; ++i) {
-      const auto *r = top_cumulative[i];
-      summary << "    {\"rank\": " << (i + 1) << ", \"seq\": " << r->record.seq << ", \"master\": \"" << json_escape(r->record.master)
-              << "\", \"addr\": \"" << json_escape(r->record.addr_text) << "\", \"size\": " << static_cast<unsigned>(r->record.size)
-              << ", \"cumulative_drift_wait\": " << r->cumulative_drift_wait << ", \"cumulative_drift_total\": " << r->cumulative_drift_total
-              << ", \"normalized_delta_wait\": " << r->normalized_delta_wait << ", \"normalized_delta_total\": " << r->normalized_delta_total
-              << ", \"classification\": \"" << json_escape(r->classification) << "\", \"region\": \"" << json_escape(region_name(r->record.addr))
-              << "\"}";
-      if (i + 1 < emit) summary << ',';
-      summary << '\n';
+      summary << "    \"hypothesis_mismatch_by_master_region_access_kind\": {\n";
+      std::size_t mk_index = 0;
+      for (const auto &[key, sample_size] : sample_size_by_master_region_access_kind) {
+        const std::size_t mismatch_count = normalized_mismatch_by_master_region_access_kind.count(key) ? normalized_mismatch_by_master_region_access_kind.at(key) : 0U;
+        const double mismatch_rate = sample_size == 0 ? 0.0 : static_cast<double>(mismatch_count) / static_cast<double>(sample_size);
+        summary << "      \"" << json_escape(key) << "\": {\"mismatch_count\": " << mismatch_count
+                << ", \"sample_size\": " << sample_size
+                << ", \"mismatch_rate\": " << mismatch_rate << "}";
+        ++mk_index;
+        if (mk_index < sample_size_by_master_region_access_kind.size()) summary << ',';
+        summary << "\n";
+      }
+      summary << "    },\n";
+
+      summary << "    \"model_vs_trace_wait_delta_by_access_kind\": {\n";
+      std::size_t kind_index = 0;
+      for (const auto &[kind, deltas] : normalized_delta_by_access_kind) {
+        summary << "      \"" << json_escape(kind) << "\": {\"sample_size\": " << deltas.size()
+                << ", \"p90\": " << percentile(deltas, 0.9)
+                << ", \"p99\": " << percentile(deltas, 0.99) << "}";
+        ++kind_index;
+        if (kind_index < normalized_delta_by_access_kind.size()) summary << ',';
+        summary << "\n";
+      }
+      summary << "    },\n";
+
+      summary << "    \"hypothesis_mismatch_by_master\": {\n";
+      std::size_t by_master_idx = 0;
+      for (const auto &[k, v] : normalized_by_master) {
+        summary << "      \"" << json_escape(k) << "\": " << v;
+        if (++by_master_idx < normalized_by_master.size()) summary << ',';
+        summary << "\n";
+      }
+      summary << "    },\n";
+
+      summary << "    \"hypothesis_mismatch_by_region\": {\n";
+      std::size_t by_region_idx = 0;
+      for (const auto &[k, v] : normalized_by_region) {
+        summary << "      \"" << json_escape(k) << "\": " << v;
+        if (++by_region_idx < normalized_by_region.size()) summary << ',';
+        summary << "\n";
+      }
+      summary << "    },\n";
+
+      summary << "    \"hypothesis_mismatch_by_size\": {\n";
+      std::size_t by_size_idx = 0;
+      for (const auto &[k, v] : normalized_by_size) {
+        summary << "      \"" << json_escape(k) << "\": " << v;
+        if (++by_size_idx < normalized_by_size.size()) summary << ',';
+        summary << "\n";
+      }
+      summary << "    },\n";
+
+      summary << "    \"top_cumulative_drifts\": [\n";
+      const std::size_t emit = std::min(options.top_k, top_cumulative.size());
+      for (std::size_t i = 0; i < emit; ++i) {
+        const auto *r = top_cumulative[i];
+        summary << "      {\"rank\": " << (i + 1) << ", \"seq\": " << r->record.seq << ", \"master\": \"" << json_escape(r->record.master)
+                << "\", \"addr\": \"" << json_escape(r->record.addr_text) << "\", \"size\": " << static_cast<unsigned>(r->record.size)
+                << ", \"cumulative_drift_wait\": " << r->cumulative_drift_wait << ", \"cumulative_drift_total\": " << r->cumulative_drift_total
+                << ", \"model_vs_trace_wait_delta\": " << r->normalized_delta_wait << ", \"model_vs_trace_total_delta\": " << r->normalized_delta_total
+                << ", \"classification\": \"" << json_escape(r->classification) << "\", \"region\": \"" << json_escape(region_name(r->record.addr))
+                << "\"}";
+        if (i + 1 < emit) summary << ',';
+        summary << '\n';
+      }
+      summary << "    ],\n";
+
+      summary << "    \"top_model_vs_trace_wait_deltas\": [\n";
+      const std::size_t emit_norm = std::min(options.top_k, top_normalized.size());
+      for (std::size_t i = 0; i < emit_norm; ++i) {
+        const auto *r = top_normalized[i];
+        summary << "      {\"rank\": " << (i + 1) << ", \"seq\": " << r->record.seq << ", \"master\": \"" << json_escape(r->record.master)
+                << "\", \"addr\": \"" << json_escape(r->record.addr_text) << "\", \"size\": " << static_cast<unsigned>(r->record.size)
+                << ", \"model_vs_trace_wait_delta\": " << r->normalized_delta_wait << ", \"model_vs_trace_total_delta\": " << r->normalized_delta_total
+                << ", \"cumulative_drift_wait\": " << r->cumulative_drift_wait << ", \"cumulative_drift_total\": " << r->cumulative_drift_total
+                << ", \"classification\": \"" << json_escape(r->classification) << "\", \"region\": \"" << json_escape(region_name(r->record.addr))
+                << "\"}";
+        if (i + 1 < emit_norm) summary << ',';
+        summary << '\n';
+      }
+      summary << "    ]\n";
+      summary << "  }\n";
+    } else {
+      summary << "\n";
     }
-    summary << "  ],\n";
-
-    summary << "  \"top_normalized_deltas\": [\n";
-    const std::size_t emit_norm = std::min(options.top_k, top_normalized.size());
-    for (std::size_t i = 0; i < emit_norm; ++i) {
-      const auto *r = top_normalized[i];
-      summary << "    {\"rank\": " << (i + 1) << ", \"seq\": " << r->record.seq << ", \"master\": \"" << json_escape(r->record.master)
-              << "\", \"addr\": \"" << json_escape(r->record.addr_text) << "\", \"size\": " << static_cast<unsigned>(r->record.size)
-              << ", \"normalized_delta_wait\": " << r->normalized_delta_wait << ", \"normalized_delta_total\": " << r->normalized_delta_total
-              << ", \"cumulative_drift_wait\": " << r->cumulative_drift_wait << ", \"cumulative_drift_total\": " << r->cumulative_drift_total
-              << ", \"classification\": \"" << json_escape(r->classification) << "\", \"region\": \"" << json_escape(region_name(r->record.addr))
-              << "\"}";
-      if (i + 1 < emit_norm) summary << ',';
-      summary << '\n';
-    }
-    summary << "  ]\n";
 
     summary << "}\n";
   }
@@ -908,34 +1119,45 @@ int main(int argc, char **argv) {
   for (const auto &[key, count] : included_access_kind_distribution) {
     std::cout << "    " << key << " => " << count << "\n";
   }
+  std::cout << "  cache_bucket_distribution:\n";
+  for (const auto &[key, count] : included_cache_bucket_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
+  }
 
   std::cout << "records_processed: " << records_processed << "\n";
   std::cout << "malformed_lines_skipped: " << malformed_lines << "\n";
   std::cout << "duplicate_seq_count: " << duplicate_seq_count << "\n";
   std::cout << "non_monotonic_seq_count: " << non_monotonic_seq_count << "\n";
-  std::cout << "agreement_count: " << cumulative_agreement_count << "\n";
-  std::cout << "mismatch_count: " << cumulative_mismatch_count << "\n";
-  std::cout << "known_gap_count: " << known_gap_count << "\n";
-  std::cout << "normalized_agreement_count: " << normalized_agreement_count << "\n";
-  std::cout << "normalized_mismatch_count: " << normalized_mismatch_count << "\n";
-  std::cout << "final_cumulative_drift_total: " << (results.empty() ? 0 : results.back().cumulative_drift_total) << "\n";
+  if (options.include_model_comparison) {
+    std::cout << "Model comparison: ENABLED (hypothesis mode)\n";
+    std::cout << "agreement_count: " << cumulative_agreement_count << "\n";
+    std::cout << "mismatch_count: " << cumulative_mismatch_count << "\n";
+    std::cout << "known_gap_count: " << known_gap_count << "\n";
+    std::cout << "normalized_agreement_count: " << normalized_agreement_count << "\n";
+    std::cout << "normalized_mismatch_count: " << normalized_mismatch_count << "\n";
+    std::cout << "final_cumulative_drift_total: " << (results.empty() ? 0 : results.back().cumulative_drift_total) << "\n";
+  } else {
+    std::cout << "Model comparison: DISABLED (trace-only mode)\n";
+  }
   std::cout << "delta_histogram:\n";
   for (const auto &[key, count] : histogram) {
     std::cout << "  " << key << " => " << count << "\n";
   }
 
-  std::cout << "top_cumulative_drifts:\n";
-  for (std::size_t i = 0; i < std::min(options.top_k, top_cumulative.size()); ++i) {
-    const auto *r = top_cumulative[i];
-    std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " cumulative_drift_total=" << r->cumulative_drift_total
-              << " normalized_delta_wait=" << r->normalized_delta_wait << " class=" << r->classification << "\n";
-  }
+  if (options.include_model_comparison) {
+    std::cout << "top_cumulative_drifts:\n";
+    for (std::size_t i = 0; i < std::min(options.top_k, top_cumulative.size()); ++i) {
+      const auto *r = top_cumulative[i];
+      std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " cumulative_drift_total=" << r->cumulative_drift_total
+                << " normalized_delta_wait=" << r->normalized_delta_wait << " class=" << r->classification << "\n";
+    }
 
-  std::cout << "top_normalized_deltas:\n";
-  for (std::size_t i = 0; i < std::min(options.top_k, top_normalized.size()); ++i) {
-    const auto *r = top_normalized[i];
-    std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " normalized_delta_wait=" << r->normalized_delta_wait
-              << " cumulative_drift_total=" << r->cumulative_drift_total << " class=" << r->classification << "\n";
+    std::cout << "top_normalized_deltas:\n";
+    for (std::size_t i = 0; i < std::min(options.top_k, top_normalized.size()); ++i) {
+      const auto *r = top_normalized[i];
+      std::cout << "  #" << (i + 1) << " seq=" << r->record.seq << " normalized_delta_wait=" << r->normalized_delta_wait
+                << " cumulative_drift_total=" << r->cumulative_drift_total << " class=" << r->classification << "\n";
+    }
   }
 
   return 0;
