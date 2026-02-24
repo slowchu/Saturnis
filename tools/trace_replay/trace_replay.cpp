@@ -384,6 +384,8 @@ int main(int argc, char **argv) {
   std::map<std::string, std::size_t> included_region_distribution;
   std::map<std::string, std::size_t> included_size_distribution;
   std::map<std::string, std::size_t> included_rw_distribution;
+  std::map<std::string, std::size_t> included_access_kind_distribution;
+  std::map<std::string, std::size_t> included_master_region_distribution;
   std::map<std::string, std::size_t> excluded_reason_counts;
   std::map<std::string, std::size_t> known_gap_bucket_counts;
 
@@ -398,6 +400,8 @@ int main(int argc, char **argv) {
     included_region_distribution[region_name(record.addr)] += 1;
     included_size_distribution[size_label(record.size)] += 1;
     included_rw_distribution[record.rw] += 1;
+    included_access_kind_distribution[record.kind] += 1;
+    included_master_region_distribution[record.master + " | " + region_name(record.addr)] += 1;
     if (record.size == 1U) {
       known_gap_bucket_counts["byte_access_wait_check_gap_candidate"] += 1;
     }
@@ -426,17 +430,15 @@ int main(int argc, char **argv) {
   std::map<std::string, std::size_t> normalized_by_master;
   std::map<std::string, std::size_t> normalized_by_region;
   std::map<std::string, std::size_t> normalized_by_size;
+  std::map<std::string, std::size_t> normalized_mismatch_by_master_region_access_kind;
+  std::map<std::string, std::size_t> sample_size_by_master_region_access_kind;
+  std::map<std::string, std::vector<std::int64_t>> normalized_delta_by_access_kind;
 
   std::vector<std::int64_t> normalized_wait_deltas;
   normalized_wait_deltas.reserve(records.size());
 
-  for (const auto &record : records) {
+  for (const auto &record : filtered_records) {
     const auto master = parse_master(record.master);
-    if (!master.has_value()) {
-      ++malformed_lines;
-      std::cerr << "warning: invalid master on line " << record.source_line << " skipped\n";
-      continue;
-    }
 
     const busarb::BusRequest req{*master, record.addr, record.rw == "W", record.size, record.tick_first_attempt};
     const std::uint64_t bus_before_commit = arbiter.bus_free_tick();
@@ -497,6 +499,12 @@ int main(int argc, char **argv) {
     normalized_by_master[record.master] += (r.normalized_delta_wait == 0 ? 0U : 1U);
     normalized_by_region[region_name(record.addr)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
     normalized_by_size[std::to_string(record.size)] += (r.normalized_delta_wait == 0 ? 0U : 1U);
+    const std::string mk = record.master + " | " + region_name(record.addr) + " | " + record.kind;
+    sample_size_by_master_region_access_kind[mk] += 1;
+    if (r.normalized_delta_wait != 0) {
+      normalized_mismatch_by_master_region_access_kind[mk] += 1;
+    }
+    normalized_delta_by_access_kind[record.kind].push_back(r.normalized_delta_wait);
     normalized_wait_deltas.push_back(r.normalized_delta_wait);
 
     results.push_back(r);
@@ -643,6 +651,34 @@ int main(int argc, char **argv) {
     write_map("included_region_distribution", included_region_distribution, true);
     write_map("included_size_distribution", included_size_distribution, true);
     write_map("included_rw_distribution", included_rw_distribution, true);
+    write_map("included_access_kind_distribution", included_access_kind_distribution, true);
+    write_map("included_master_region_distribution", included_master_region_distribution, true);
+
+    summary << "  \"normalized_mismatch_by_master_region_access_kind\": {\n";
+    std::size_t mk_index = 0;
+    for (const auto &[key, sample_size] : sample_size_by_master_region_access_kind) {
+      const std::size_t mismatch_count = normalized_mismatch_by_master_region_access_kind.count(key) ? normalized_mismatch_by_master_region_access_kind.at(key) : 0U;
+      const double mismatch_rate = sample_size == 0 ? 0.0 : static_cast<double>(mismatch_count) / static_cast<double>(sample_size);
+      summary << "    \"" << json_escape(key) << "\": {\"mismatch_count\": " << mismatch_count
+              << ", \"sample_size\": " << sample_size
+              << ", \"mismatch_rate\": " << mismatch_rate << "}";
+      ++mk_index;
+      if (mk_index < sample_size_by_master_region_access_kind.size()) summary << ',';
+      summary << "\n";
+    }
+    summary << "  },\n";
+
+    summary << "  \"normalized_delta_by_access_kind\": {\n";
+    std::size_t kind_index = 0;
+    for (const auto &[kind, deltas] : normalized_delta_by_access_kind) {
+      summary << "    \"" << json_escape(kind) << "\": {\"sample_size\": " << deltas.size()
+              << ", \"p90\": " << percentile(deltas, 0.9)
+              << ", \"p99\": " << percentile(deltas, 0.99) << "}";
+      ++kind_index;
+      if (kind_index < normalized_delta_by_access_kind.size()) summary << ',';
+      summary << "\n";
+    }
+    summary << "  },\n";
 
     summary << "  \"delta_histogram\": {\n";
     std::size_t hist_index = 0;
@@ -713,6 +749,10 @@ int main(int argc, char **argv) {
   }
   std::cout << "  rw_distribution:\n";
   for (const auto &[key, count] : included_rw_distribution) {
+    std::cout << "    " << key << " => " << count << "\n";
+  }
+  std::cout << "  access_kind_distribution:\n";
+  for (const auto &[key, count] : included_access_kind_distribution) {
     std::cout << "    " << key << " => " << count << "\n";
   }
 

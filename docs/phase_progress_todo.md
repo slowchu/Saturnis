@@ -58,3 +58,5 @@ This checklist tracks implementation status against the current roadmap directio
 - [ ] Runtime Ymir integration overhead validation (separate from Phase 1).
 - [ ] IF/MA stage-aware contention modeling.
 - [ ] Closed-loop retiming propagation.
+
+- Roadmap source of truth: `docs/saturnis_todo_revised.md`.

@@ -47,6 +47,8 @@ def main() -> int:
         "included_region_distribution",
         "included_size_distribution",
         "included_rw_distribution",
+        "included_access_kind_distribution",
+        "included_master_region_distribution",
         "agreement_count",
         "mismatch_count",
         "known_gap_count",
@@ -56,6 +58,8 @@ def main() -> int:
         "mean_base_latency",
         "mean_contention_stall",
         "mean_total_predicted",
+        "normalized_mismatch_by_master_region_access_kind",
+        "normalized_delta_by_access_kind",
         "delta_histogram",
         "top_cumulative_drifts",
         "top_normalized_deltas",
@@ -80,6 +84,10 @@ def main() -> int:
 
     if data["included_events"] + data["excluded_events"] != data["total_events"]:
         print("dataset hygiene invariant failed: included + excluded != total")
+        return 1
+
+    if "ifetch" not in data["normalized_delta_by_access_kind"] and "read" not in data["normalized_delta_by_access_kind"]:
+        print("expected normalized_delta_by_access_kind to contain at least one access kind bucket")
         return 1
 
 
